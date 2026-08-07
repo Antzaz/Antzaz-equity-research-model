@@ -1,0 +1,3 @@
+# Optional analyst forecast log. Add rows before the outcome is known.
+# Fill Actual later; the system will calculate forecast errors.
+Ticker,ForecastDate,FiscalYear,Metric,Forecast,Actual,Notes
