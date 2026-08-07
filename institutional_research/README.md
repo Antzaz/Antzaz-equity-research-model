@@ -21,7 +21,7 @@ The first version focuses on analyses that are practical with public data and us
 
 ## 1. Add your portfolio
 
-Edit `portfolio.csv`.
+Copy `portfolio_template.csv` to `portfolio.csv`, then edit your local `portfolio.csv`.
 
 You can use **either** shares:
 
@@ -42,8 +42,7 @@ MSFT,,,0.40,Quality compounder
 If every row has positive `Shares`, the engine calculates market-value weights.
 Otherwise every row must have a positive `ManualWeight`.
 
-Do not commit a real private portfolio to a public repository unless you are comfortable making it public.
-For a private portfolio, keep your local `portfolio.csv` uncommitted or move the repository to private.
+`portfolio.csv` and generated `outputs/` are ignored by Git so your real holdings stay local by default. If you intentionally want them in GitHub, remove those entries from `.gitignore`.
 
 ## 2. Install
 

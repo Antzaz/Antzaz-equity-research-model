@@ -24,7 +24,18 @@ def main():
     with open(BASE / "config.json", "r", encoding="utf-8") as f:
         config = json.load(f)
 
-    portfolio = load_portfolio(BASE / "portfolio.csv")
+    portfolio_path = BASE / "portfolio.csv"
+    if not portfolio_path.exists():
+        template = BASE / "portfolio_template.csv"
+        if template.exists():
+            import shutil
+            shutil.copyfile(template, portfolio_path)
+        raise ValueError(
+            "portfolio.csv was not found. A local copy has been created from "
+            "portfolio_template.csv. Add your holdings to portfolio.csv and run again."
+        )
+
+    portfolio = load_portfolio(portfolio_path)
     benchmark = config["benchmark"].upper()
     tickers = portfolio["Ticker"].tolist()
 

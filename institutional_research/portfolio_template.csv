@@ -1,4 +1,5 @@
-# Add your own holdings below. Use either Shares or ManualWeight.
+# Copy this file to portfolio.csv and add your own holdings.
+# Use either Shares or ManualWeight.
 # If every holding has Shares > 0, market-value weights are calculated automatically.
 # Otherwise fill ManualWeight as decimals (for example 0.25 = 25%).
 Ticker,Shares,AverageCost,ManualWeight,Notes
