@@ -5,6 +5,9 @@ Key design rules:
   cells with Excel formulas, so Excel recalculates them when the workbook opens.
 - Avoid merged cells on this sheet entirely. This makes repeated updater runs and
   workbook rewrites resilient to MergedCell read-only errors.
+- Strip legacy merges from the original Dashboard sheet before save. Excel was
+  repairing those merge records in sheet8.xml; the newer Visual Dashboard and
+  Analysis Charts sheets no longer need the old Dashboard merges.
 - Monte Carlo histogram bins are already numeric Python outputs, so those are copied
   as values. Scenario, stress, history, segment, P/E and DCF sensitivity series are
   linked to the model with formulas.
@@ -28,6 +31,35 @@ FMT_PCT='0.0%;[Red](0.0%);-'; FMT_PRICE='$#,##0.00;[Red]($#,##0.00);-'; FMT_BN='
 def _fill(c): return PatternFill("solid", fgColor=c)
 def _is_num(v): return isinstance(v, (int, float)) and not isinstance(v, bool)
 def _xlref(sheet, address): return f"='{sheet}'!{address}"
+
+
+def _sanitize_legacy_dashboard_merges(wb):
+    """Remove merge records from the original Dashboard sheet.
+
+    Excel reported: Removed Records: Merge cells from /xl/worksheets/sheet8.xml.
+    In the generated workbook, sheet8.xml maps to the legacy Dashboard sheet. The
+    underlying values/formulas are preserved; only merge definitions are removed.
+    """
+    if "Dashboard" not in wb.sheetnames:
+        return
+    ws = wb["Dashboard"]
+    for merged in list(ws.merged_cells.ranges):
+        try:
+            ws.unmerge_cells(str(merged))
+        except Exception:
+            pass
+
+    # Preserve the visual section hierarchy without relying on merged ranges.
+    for row in (1, 17, 26):
+        for c in range(1, 11):
+            ws.cell(row, c).fill = _fill(NAVY)
+            ws.cell(row, c).font = Font(bold=True, color=WHITE)
+    for c in range(1, 11):
+        ws.cell(3, c).fill = _fill(PALE_BLUE)
+        ws.cell(3, c).font = Font(bold=True)
+    for c in range(6, 11):
+        ws.cell(10, c).fill = _fill(NAVY)
+        ws.cell(10, c).font = Font(bold=True, color=WHITE)
 
 
 def _safe_visual_repair_advanced(wb, ticker):
@@ -121,13 +153,16 @@ def _margin_source_rows(wb):
         if name in (None,""):
             if rows: break
             continue
-        # Include only rows that have at least two margin cells or formulas/values in them.
         populated=sum(s.cell(rr,c).value not in (None,"") for c in margin_cols)
         if populated>=2: rows.append((rr,str(name)))
     return rows[:5],margin_cols
 
 
 def ensure_analysis_charts(wb,ticker):
+    # This runs near the end of update_model.py, making it the right place to clean
+    # the legacy Dashboard before the workbook is saved.
+    _sanitize_legacy_dashboard_merges(wb)
+
     required={"Company Data","Historical Financials","Three-Case Scenarios","DCF"}
     if not required.issubset(wb.sheetnames): return None
     if "Analysis Charts" in wb.sheetnames: wb.remove(wb["Analysis Charts"])
@@ -147,13 +182,10 @@ def ensure_analysis_charts(wb,ticker):
     ws["A3"]="Automated Monte Carlo, scenario, stress, history, segment and valuation visualizations. Linked formulas recalculate in Excel."
     ws["A3"].font=Font(italic=True,color=GREY)
 
-    company=wb["Company Data"]; hist=wb["Historical Financials"]; sc=wb["Three-Case Scenarios"]; dcf=wb["DCF"]
+    hist=wb["Historical Financials"]; sc=wb["Three-Case Scenarios"]; dcf=wb["DCF"]
     adv=wb["Advanced Analytics"] if "Advanced Analytics" in wb.sheetnames else None
 
-    # ------------------------------------------------------------------
     # Hidden helper tables. Use Excel links, not Python evaluation.
-    # ------------------------------------------------------------------
-    # Monte Carlo histogram: Python-generated hardcoded values are safe to copy.
     mc_end=2
     if adv:
         ws["X2"]="Value / Share"; ws["Y2"]="Frequency"
@@ -162,20 +194,17 @@ def ensure_analysis_charts(wb,ticker):
             if _is_num(v) and _is_num(f):
                 mc_end+=1; ws.cell(mc_end,24,float(v)); ws.cell(mc_end,25,float(f)); ws.cell(mc_end,24).number_format=FMT_PRICE
 
-    # Scenario helper links.
     ws["AA2"]="Scenario"; ws["AB2"]="Value / Share"
     for r,(name,addr) in enumerate([("Bear","B39"),("Base","C39"),("Bull","D39"),("Probability Weighted","E39")],3):
         ws.cell(r,27,name); ws.cell(r,28,_xlref("Three-Case Scenarios",addr)); ws.cell(r,28).number_format=FMT_PRICE
     ws["AA7"]="Current Price"; ws["AB7"]=_xlref("Company Data","B8"); ws["AB7"].number_format=FMT_PRICE
 
-    # Stress helper links.
     ws["AD2"]="Stress Test"; ws["AE2"]="Value / Share"
     stress_end=13
     for out_r,src_r in enumerate(range(48,59),3):
         ws.cell(out_r,30,_xlref("Three-Case Scenarios",f"A{src_r}"))
         ws.cell(out_r,31,_xlref("Three-Case Scenarios",f"G{src_r}")); ws.cell(out_r,31).number_format=FMT_PRICE
 
-    # Historical performance helper links.
     for c,label in enumerate(["Year","Revenue","Free Cash Flow","Operating Margin","FCF Margin"],33): ws.cell(2,c,label)
     for out_r,src_col in enumerate(range(2,8),3):
         letter=get_column_letter(src_col)
@@ -186,13 +215,11 @@ def ensure_analysis_charts(wb,ticker):
         ws.cell(out_r,37,_xlref("Historical Financials",f"{letter}17")); ws.cell(out_r,37).number_format=FMT_PCT
     hist_end=8
 
-    # Business-line links.
     ws["AM2"]="Business Line"; ws["AN2"]="Latest Revenue"; business_end=2
     for src_r,src_c,name in _business_source_rows(wb):
         business_end+=1; ws.cell(business_end,39,name)
         ws.cell(business_end,40,_xlref("Segment Analysis",f"{get_column_letter(src_c)}{src_r}")); ws.cell(business_end,40).number_format=FMT_BN
 
-    # Segment-margin links.
     ws["AP2"]="Segment"; ws["AQ2"]="Year -2 Margin"; ws["AR2"]="Year -1 Margin"; ws["AS2"]="Latest Margin"
     margin_rows,margin_cols=_margin_source_rows(wb); margin_end=2
     for src_r,name in margin_rows:
@@ -200,14 +227,12 @@ def ensure_analysis_charts(wb,ticker):
         for out_c,src_c in zip(range(43,46),margin_cols[-3:]):
             ws.cell(margin_end,out_c,_xlref("Segment Analysis",f"{get_column_letter(src_c)}{src_r}")); ws.cell(margin_end,out_c).number_format=FMT_PCT
 
-    # Historical P/E links.
     pe_end=2
     if adv:
         ws["AU2"]="Year"; ws["AV2"]="Year-End P/E"
         for src_r in range(7,13):
             pe_end+=1; ws.cell(pe_end,47,_xlref("Advanced Analytics",f"A{src_r}")); ws.cell(pe_end,48,_xlref("Advanced Analytics",f"D{src_r}")); ws.cell(pe_end,48).number_format=FMT_MULT
 
-    # DCF sensitivity helper links.
     ws["AX2"]="WACC / TGR"
     for out_c,src_c in enumerate(range(2,7),51):
         ws.cell(2,out_c,_xlref("DCF",f"{get_column_letter(src_c)}21")); ws.cell(2,out_c).number_format=FMT_PCT
@@ -216,9 +241,7 @@ def ensure_analysis_charts(wb,ticker):
         for out_c,src_c in enumerate(range(2,7),51):
             ws.cell(out_r,out_c,_xlref("DCF",f"{get_column_letter(src_c)}{src_r}")); ws.cell(out_r,out_c).number_format=FMT_PRICE
 
-    # ------------------------------------------------------------------
-    # Visible charts. Chart ranges contain formulas Excel will recalculate.
-    # ------------------------------------------------------------------
+    # Visible charts.
     _band(ws,1,8,5,"Monte Carlo Valuation")
     if mc_end>=4:
         ch=BarChart(); ch.type="col"; ch.style=10; ch.title="Monte Carlo Valuation Distribution — 5,000 Simulations"; ch.height=8; ch.width=13.5; ch.legend=None
@@ -274,4 +297,6 @@ def ensure_analysis_charts(wb,ticker):
         _card(ws,9,12,95,96,"Probability > Current Price",_xlref("Advanced Analytics","J38"),FMT_PCT)
         _card(ws,13,16,95,96,"Reverse DCF Implied FCF CAGR",_xlref("Advanced Analytics","B38"),FMT_PCT)
 
+    # Run once more after all sheet work in case a future change adds a merge back.
+    _sanitize_legacy_dashboard_merges(wb)
     return ws
