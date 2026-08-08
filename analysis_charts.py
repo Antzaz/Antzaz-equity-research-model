@@ -2,13 +2,15 @@
 
 The chart helper tables live in hidden columns to keep the workbook clean. Microsoft
 Excel does not plot hidden source cells by default, so every chart created here sets
-``visible_cells_only = False``. This serializes as ``plotVisOnly=0`` and is required
-for the charts to display in desktop Excel.
+``visible_cells_only = False``. The sheet also includes units, value labels where they
+are useful, and compact interpretation/source references so each chart can be read
+without having to infer what the axes or numbers mean.
 """
 
 import statistics
 from openpyxl.styles import PatternFill, Font, Alignment
 from openpyxl.chart import BarChart, LineChart, Reference
+from openpyxl.chart.label import DataLabelList
 from openpyxl.formatting.rule import ColorScaleRule
 from openpyxl.utils import get_column_letter
 
@@ -100,6 +102,28 @@ def _add_chart(ws,ch,anchor):
     ws.add_chart(ch,anchor)
 
 
+def _value_labels(ch):
+    """Show numeric values on charts where labels improve readability."""
+    try:
+        ch.dLbls=DataLabelList()
+        ch.dLbls.showVal=True
+    except Exception:
+        pass
+
+
+def _reference_strip(ws,row,start_col,end_col,entries):
+    """Create a compact, merge-free explanation/source strip below a chart."""
+    for r in range(row,row+2):
+        for c in range(start_col,end_col+1):
+            ws.cell(r,c).fill=_fill(LIGHT)
+            ws.cell(r,c).font=Font(size=9,color="404040")
+    for col,text,bold in entries:
+        cell=ws.cell(row if col >= start_col else row,col)
+        cell=ws.cell(row,col)
+        cell.value=text
+        cell.font=Font(size=9,bold=bold,color=NAVY if bold else "404040")
+
+
 def _find_row(ws,label):
     for r in range(1,ws.max_row+1):
         if str(ws.cell(r,1).value or "").strip()==label:
@@ -161,7 +185,7 @@ def ensure_analysis_charts(wb,ticker):
     for c in range(24,57): ws.column_dimensions[get_column_letter(c)].hidden=True
     for c in range(1,17): ws.cell(1,c).fill=_fill(NAVY); ws.cell(2,c).fill=_fill(NAVY)
     ws["A1"]=f"{ticker} — Analysis Charts"; ws["A1"].font=Font(bold=True,color=WHITE,size=18)
-    ws["A3"]="Monte Carlo, scenarios, stress tests, operating history, segments and valuation sensitivity."; ws["A3"].font=Font(italic=True,color=GREY)
+    ws["A3"]="Monte Carlo, scenarios, stress tests, operating history, segments and valuation sensitivity. Units and references are shown below each chart."; ws["A3"].font=Font(italic=True,color=GREY)
 
     hist=wb["Historical Financials"]; sc=wb["Three-Case Scenarios"]; dcf=wb["DCF"]
     adv=wb["Advanced Analytics"] if "Advanced Analytics" in wb.sheetnames else None
@@ -172,7 +196,7 @@ def ensure_analysis_charts(wb,ticker):
         for sr in range(33,53):
             v=adv.cell(sr,18).value; f=adv.cell(sr,19).value
             if _is_num(v) and _is_num(f):
-                mc_end+=1; ws.cell(mc_end,24,float(v)); ws.cell(mc_end,25,float(f)); ws.cell(mc_end,24).number_format=FMT_PRICE
+                mc_end+=1; ws.cell(mc_end,24,round(float(v),0)); ws.cell(mc_end,25,float(f)); ws.cell(mc_end,24).number_format=FMT_PRICE
 
     # Scenario helper AA:AB
     ws["AA2"]="Scenario"; ws["AB2"]="Value / Share"
@@ -196,12 +220,12 @@ def ensure_analysis_charts(wb,ticker):
         ws.cell(out_r,37,_xlref("Historical Financials",f"{letter}17")); ws.cell(out_r,37).number_format=FMT_PCT
 
     # Business helper AM:AN
-    ws["AM2"]="Business Line"; ws["AN2"]="Latest Revenue"; business_end=2
+    ws["AM2"]="Business Line"; ws["AN2"]="2025 Revenue ($bn)"; business_end=2
     for src_r,src_c,name in _business_rows(wb):
         business_end+=1; ws.cell(business_end,39,name); ws.cell(business_end,40,_xlref("Segment Analysis",f"{get_column_letter(src_c)}{src_r}")); ws.cell(business_end,40).number_format=FMT_BN
 
     # Segment margin helper AP:AS
-    ws["AP2"]="Segment"; ws["AQ2"]="Year -2 Margin"; ws["AR2"]="Year -1 Margin"; ws["AS2"]="Latest Margin"
+    ws["AP2"]="Segment"; ws["AQ2"]="2023 Margin"; ws["AR2"]="2024 Margin"; ws["AS2"]="2025 Margin"
     margin_rows,margin_cols=_margin_rows(wb); margin_end=2
     for src_r,name in margin_rows:
         margin_end+=1; ws.cell(margin_end,42,name)
@@ -218,40 +242,54 @@ def ensure_analysis_charts(wb,ticker):
     _band(ws,1,8,5,"Monte Carlo Valuation")
     if mc_end>=4:
         ch=BarChart(); ch.type="col"; ch.style=10; ch.title="Monte Carlo Valuation Distribution — 5,000 Simulations"; ch.height=8; ch.width=13.5; ch.legend=None
-        ch.add_data(Reference(ws,min_col=25,min_row=2,max_row=mc_end),titles_from_data=True); ch.set_categories(Reference(ws,min_col=24,min_row=3,max_row=mc_end)); ch.x_axis.numFmt="$0"; _add_chart(ws,ch,"A7")
+        ch.add_data(Reference(ws,min_col=25,min_row=2,max_row=mc_end),titles_from_data=True); ch.set_categories(Reference(ws,min_col=24,min_row=3,max_row=mc_end)); ch.x_axis.numFmt="$0"; ch.x_axis.title="Intrinsic value / share ($)"; ch.y_axis.title="Simulation frequency"; _add_chart(ws,ch,"A7")
+    _reference_strip(ws,23,1,8,[(1,"X: intrinsic value/share ($)",True),(4,"Y: simulation count",True),(6,"Source: Advanced Analytics",False)])
+    ws["A24"]="P10 = 10th-percentile downside"; ws["D24"]="Median = midpoint of 5,000 runs"; ws["F24"]="P(>Price) = simulations above market"
 
     # Scenarios
     _band(ws,9,16,5,"Scenario Valuation")
     ch=BarChart(); ch.type="col"; ch.style=10; ch.title="Bear / Base / Bull vs Current Price"; ch.height=8; ch.width=13.5; ch.legend=None
-    ch.add_data(Reference(ws,min_col=28,min_row=2,max_row=7),titles_from_data=True); ch.set_categories(Reference(ws,min_col=27,min_row=3,max_row=7)); ch.y_axis.numFmt="$0"; _add_chart(ws,ch,"I7")
+    ch.add_data(Reference(ws,min_col=28,min_row=2,max_row=7),titles_from_data=True); ch.set_categories(Reference(ws,min_col=27,min_row=3,max_row=7)); ch.y_axis.numFmt="$0"; ch.y_axis.title="Intrinsic value / share ($)"; _value_labels(ch); _add_chart(ws,ch,"I7")
+    _reference_strip(ws,23,9,16,[(9,"Value: intrinsic value/share ($)",True),(12,"Cases: Bear / Base / Bull",True),(14,"Source: Three-Case Scenarios",False)])
+    ws["I24"]="Probability Weighted = scenario-weighted value"; ws["M24"]="Current Price = market reference"
 
     # Stress tests
     _band(ws,1,8,27,"Stress Testing")
     ch=BarChart(); ch.type="bar"; ch.style=10; ch.title="Stress-Test Intrinsic Value / Share"; ch.height=9; ch.width=13.5; ch.legend=None
-    ch.add_data(Reference(ws,min_col=31,min_row=2,max_row=13),titles_from_data=True); ch.set_categories(Reference(ws,min_col=30,min_row=3,max_row=13)); ch.x_axis.numFmt="$0"; _add_chart(ws,ch,"A29")
+    ch.add_data(Reference(ws,min_col=31,min_row=2,max_row=13),titles_from_data=True); ch.set_categories(Reference(ws,min_col=30,min_row=3,max_row=13)); ch.x_axis.numFmt="$0"; ch.x_axis.title="Intrinsic value / share ($)"; _value_labels(ch); _add_chart(ws,ch,"A29")
+    _reference_strip(ws,48,1,8,[(1,"Value: intrinsic value/share ($)",True),(4,"Base Control = unstressed case",True),(6,"Source: Three-Case Scenarios",False)])
+    ws["A49"]="Each case stresses one driver; Severe Bear combines multiple adverse assumptions."
 
     # Revenue and FCF
     _band(ws,9,16,27,"Historical Financial Performance")
-    ch=LineChart(); ch.style=10; ch.title="Revenue & Free Cash Flow"; ch.height=9; ch.width=13.5; ch.legend.position="b"
+    ch=LineChart(); ch.style=10; ch.title="Revenue & Free Cash Flow"; ch.height=9; ch.width=13.5; ch.legend.position="b"; ch.y_axis.title="Revenue / FCF ($bn)"; ch.x_axis.title="Fiscal year"
     ch.add_data(Reference(ws,min_col=34,max_col=35,min_row=2,max_row=8),titles_from_data=True); ch.set_categories(Reference(ws,min_col=33,min_row=3,max_row=8)); _add_chart(ws,ch,"I29")
+    _reference_strip(ws,48,9,16,[(9,"Units: $bn",True),(11,"Revenue = reported sales",False),(13,"FCF = OCF − Capex",False),(15,"Source: Historical Financials",False)])
+    ws["I49"]="Use the two lines to compare growth with cash conversion."
 
     # Business mix
     _band(ws,1,8,51,"Business Mix")
     if business_end>=4:
         ch=BarChart(); ch.type="bar"; ch.style=10; ch.title="Latest Revenue by Business Line"; ch.height=8.5; ch.width=13.5; ch.legend=None
-        ch.add_data(Reference(ws,min_col=40,min_row=2,max_row=business_end),titles_from_data=True); ch.set_categories(Reference(ws,min_col=39,min_row=3,max_row=business_end)); ch.x_axis.numFmt="$0"; _add_chart(ws,ch,"A53")
+        ch.add_data(Reference(ws,min_col=40,min_row=2,max_row=business_end),titles_from_data=True); ch.set_categories(Reference(ws,min_col=39,min_row=3,max_row=business_end)); ch.x_axis.numFmt="$0"; ch.x_axis.title="2025 revenue ($bn)"; _value_labels(ch); _add_chart(ws,ch,"A53")
+    _reference_strip(ws,70,1,8,[(1,"Units: 2025 revenue ($bn)",True),(4,"Issuer-disclosed revenue groups",False),(6,"Source: Segment Analysis / 10-K",False)])
+    ws["A71"]="Not estimated standalone product revenue."
 
     # Segment margins
     _band(ws,9,16,51,"Segment Profitability")
     if margin_end>=4:
-        ch=LineChart(); ch.style=10; ch.title="Segment Operating Margin Trend"; ch.height=8.5; ch.width=13.5; ch.legend.position="b"
+        ch=LineChart(); ch.style=10; ch.title="Segment Operating Margin Trend"; ch.height=8.5; ch.width=13.5; ch.legend.position="b"; ch.y_axis.title="Operating margin"; ch.x_axis.title="Reported segment"
         ch.add_data(Reference(ws,min_col=43,max_col=45,min_row=2,max_row=margin_end),titles_from_data=True); ch.set_categories(Reference(ws,min_col=42,min_row=3,max_row=margin_end)); ch.y_axis.numFmt="0%"; _add_chart(ws,ch,"I53")
+    _reference_strip(ws,70,9,16,[(9,"Margin = operating income ÷ revenue",True),(13,"Source: Segment Analysis / 10-K",False)])
+    ws["I71"]="Other Bets is deeply negative because operating losses exceed its small revenue base."
 
     # Historical P/E
     _band(ws,1,8,73,"Historical Valuation")
     if pe_end>=4:
-        ch=LineChart(); ch.style=10; ch.title="Year-End P/E"; ch.height=8; ch.width=13.5; ch.legend=None
+        ch=LineChart(); ch.style=10; ch.title="Year-End P/E"; ch.height=8; ch.width=13.5; ch.legend=None; ch.y_axis.title="Year-end P/E (x)"; ch.x_axis.title="Fiscal year"
         ch.add_data(Reference(ws,min_col=48,min_row=2,max_row=pe_end),titles_from_data=True); ch.set_categories(Reference(ws,min_col=47,min_row=3,max_row=pe_end)); ch.y_axis.numFmt="0.0x"; _add_chart(ws,ch,"A75")
+    _reference_strip(ws,92,1,8,[(1,"P/E = year-end price ÷ diluted EPS",True),(4,"Units: x",True),(6,"Source: Advanced Analytics",False)])
+    ws["A93"]="Use history as a valuation reference range, not a standalone signal."
 
     # Visible DCF heatmap links directly to DCF sheet.
     _band(ws,9,16,73,"DCF Sensitivity"); ws["I75"]="WACC / TGR"
@@ -264,12 +302,42 @@ def ensure_analysis_charts(wb,ticker):
     _header(ws,75,9,14)
     for r in range(76,81): ws.cell(r,9).fill=_fill(PALE_BLUE); ws.cell(r,9).font=Font(bold=True)
     ws.conditional_formatting.add("J76:N80",ColorScaleRule(start_type="min",start_color="F8696B",mid_type="percentile",mid_value=50,mid_color="FFEB84",end_type="max",end_color="63BE7B"))
+    for r in range(83,86):
+        for c in range(9,17): ws.cell(r,c).fill=_fill(LIGHT); ws.cell(r,c).font=Font(size=9,color="404040")
+    ws["I83"]="Rows: WACC"; ws["K83"]="Columns: Terminal Growth (TGR)"; ws["N83"]="Cells: intrinsic value/share ($)"
+    for a in ("I83","K83","N83"): ws[a].font=Font(size=9,bold=True,color=NAVY)
+    ws["I84"]="Lower WACC / higher TGR → higher value; higher WACC / lower TGR → lower value."
+    ws["I85"]="Source: DCF sheet"
 
     if adv:
         _card(ws,1,4,95,96,"Monte Carlo P10",_xlref("Advanced Analytics","J33"),FMT_PRICE)
         _card(ws,5,8,95,96,"Monte Carlo Median",_xlref("Advanced Analytics","J35"),FMT_PRICE)
         _card(ws,9,12,95,96,"Probability > Current Price",_xlref("Advanced Analytics","J38"),FMT_PCT)
         _card(ws,13,16,95,96,"Reverse DCF Implied FCF CAGR",_xlref("Advanced Analytics","B38"),FMT_PCT)
+
+    # Consolidated guide for users who want definitions in one place.
+    _band(ws,1,16,101,"Chart Reference Guide")
+    ws["A102"]="Chart / Units"; ws["E102"]="Meaning / Workbook Reference"
+    for c in range(1,17):
+        ws.cell(102,c).fill=_fill(BLUE); ws.cell(102,c).font=Font(bold=True,color=WHITE)
+    guide=[
+        ("Monte Carlo — $/share + frequency","Distribution of 5,000 simulated DCF outcomes. P10 = downside percentile; Median = midpoint. Reference: Advanced Analytics."),
+        ("Scenario Valuation — $/share","Bear/Base/Bull DCF values, probability-weighted value and current price. Reference: Three-Case Scenarios."),
+        ("Stress Testing — $/share","Intrinsic value after stressing one Base assumption; Severe Bear combines adverse assumptions. Reference: Three-Case Scenarios."),
+        ("Revenue & FCF — $bn","Reported revenue and free cash flow (OCF less Capex) by year. Reference: Historical Financials."),
+        ("Business Mix — $bn","Issuer-disclosed 2025 revenue by business line. Reference: Segment Analysis."),
+        ("Segment Profitability — %","Operating income divided by segment revenue; negative values indicate operating losses. Reference: Segment Analysis."),
+        ("Historical P/E — x","Year-end share price divided by diluted EPS. Reference: Advanced Analytics."),
+        ("DCF Sensitivity — $/share","Intrinsic value across WACC and terminal-growth combinations. Reference: DCF."),
+    ]
+    for r,(label,meaning) in enumerate(guide,103):
+        ws.cell(r,1,label); ws.cell(r,5,meaning)
+        ws.cell(r,1).font=Font(bold=True,color=NAVY,size=9); ws.cell(r,5).font=Font(size=9,color="404040")
+        ws.cell(r,5).alignment=Alignment(wrap_text=True,vertical="top")
+        ws.row_dimensions[r].height=27
+    for c in range(1,17): ws.cell(112,c).fill=_fill(LIGHT)
+    ws["A112"]="External source: Alphabet Inc. 2025 Form 10-K for reported segment/business-line figures. Monte Carlo, scenario, stress and DCF values are model outputs based on workbook assumptions."
+    ws["A112"].font=Font(italic=True,color=GREY,size=9)
 
     _sanitize_dashboard(wb)
     return ws
