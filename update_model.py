@@ -4,7 +4,7 @@ Usage:
     python update_model.py GOOGL
 
 The updater refreshes SEC/Yahoo data, scenarios, stress tests, financial statements,
-business segments, advanced valuation analytics, and the visual dashboard.
+business segments, advanced valuation analytics, the visual dashboard, and analysis charts.
 """
 
 import sys, subprocess, importlib, re, os
@@ -31,6 +31,7 @@ from stress_test import ensure_stress_test
 from company_analysis import ensure_financial_statements, ensure_segment_analysis
 from advanced_analytics_v2 import ensure_advanced_analytics
 from visualization_v2 import ensure_visual_dashboard
+from analysis_charts import ensure_analysis_charts
 
 BASE=Path(__file__).resolve().parent
 TEMPLATE=BASE/"GOOGL_Equity_Research_CLEAN_v7.xlsx"
@@ -281,6 +282,8 @@ def main():
     except Exception as exc: print(f"Warning: Advanced Analytics module failed: {exc}")
     try: ensure_visual_dashboard(wb,ticker)
     except Exception as exc: print(f"Warning: Visual Dashboard module failed: {exc}")
+    try: ensure_analysis_charts(wb,ticker)
+    except Exception as exc: print(f"Warning: Analysis Charts module failed: {exc}")
 
     wb["Dashboard"]["A1"]=f"{ticker} Long-Term Value Investing Dashboard"
     try:
