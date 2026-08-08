@@ -8,7 +8,7 @@ Cross-company safeguards:
 - scenarios are calibrated to company-specific economics;
 - segment analysis uses a standardized cross-company SEC parser with manual fallback;
 - institutional expectations, moat, base-rate and market-implied layers are generated;
-- invalid Excel worksheet names are repaired or rejected before save;
+- stale Alphabet template labels/sources are removed before save;
 - all Excel charts are forced to plot hidden helper data.
 """
 
@@ -34,6 +34,7 @@ from analysis_charts import ensure_analysis_charts
 from model_quality_v3 import calibrate_scenario_cash_flow, ensure_model_quality
 from institutional_layers import ensure_institutional_layers
 from segment_chart_fix import repair_segment_charts
+from cross_company_cleanup import refresh_cross_company_tabs
 
 BASE=Path(__file__).resolve().parent
 TEMPLATE=BASE/"GOOGL_Equity_Research_CLEAN_v7.xlsx"
@@ -41,7 +42,6 @@ OUTDIR=BASE/"updated_models"; OUTDIR.mkdir(exist_ok=True)
 SEC_HEADERS={"User-Agent":os.getenv("SEC_USER_AGENT","Personal Equity Research Model contact@example.com")}
 PEER_GROUPS={"GOOGL":["MSFT","META","AMZN","AAPL","NFLX"],"GOOG":["MSFT","META","AMZN","AAPL","NFLX"],"NVDA":["AMD","AVGO","TSM","INTC","QCOM"],"MSFT":["ORCL","CRM","ADBE","NOW","GOOGL"],"META":["GOOGL","AMZN","NFLX","MSFT","PINS"],"AMZN":["WMT","COST","MSFT","GOOGL","META"]}
 DEFAULT_PEERS=["MSFT","META","AMZN","AAPL","NFLX"]
-
 
 def sec_json(url):
     r=requests.get(url,headers=SEC_HEADERS,timeout=30); r.raise_for_status(); return r.json()
@@ -51,7 +51,6 @@ def cik_for(ticker):
     return None
 def company_facts(ticker):
     cik=cik_for(ticker); return sec_json(f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json") if cik else None
-
 
 def annual_series(facts,tags,preferred_unit=None):
     if not facts: return {}
@@ -208,6 +207,8 @@ def main():
     except Exception as exc: print(f"Warning: Model Quality / Research Workbench failed: {exc}")
     try: ensure_institutional_layers(wb,ticker)
     except Exception as exc: print(f"Warning: Institutional Layers failed: {exc}")
+    try: refresh_cross_company_tabs(wb,ticker)
+    except Exception as exc: print(f"Warning: Cross-company cleanup failed: {exc}")
     try: repair_segment_charts(wb,ticker)
     except Exception as exc: print(f"Warning: Segment chart repair failed: {exc}")
     _ensure_excel_sheet_names(wb)
