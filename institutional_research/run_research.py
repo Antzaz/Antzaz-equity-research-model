@@ -15,6 +15,20 @@ from src.reverse_dcf import reverse_dcf_table
 from src.stress import beta_stress_test
 from src.forecast_tracker import analyze_forecasts
 from src.export import write_outputs
+from src.professional_portfolio import (
+    benchmark_relative_metrics,
+    concentration_metrics,
+    risk_budget_table,
+    liquidity_analysis,
+    factor_proxy_sensitivity,
+    rolling_risk_table,
+    historical_stress_windows,
+    static_return_attribution,
+    load_expected_returns,
+    optimize_portfolios,
+    constraint_report,
+    active_share_from_file,
+)
 
 
 BASE = Path(__file__).resolve().parent
@@ -38,9 +52,11 @@ def main():
     portfolio = load_portfolio(portfolio_path)
     benchmark = config["benchmark"].upper()
     tickers = portfolio["Ticker"].tolist()
+    proxy_map = {k: str(v).upper() for k, v in config.get("factor_proxies", {}).items()}
+    all_market_tickers = list(dict.fromkeys(tickers + [benchmark] + list(proxy_map.values())))
 
     print("Downloading market data...")
-    prices = download_prices(tickers + [benchmark], period=config["history_period"])
+    prices = download_prices(all_market_tickers, period=config["history_period"])
     missing = [t for t in tickers + [benchmark] if t not in prices.columns]
     if missing:
         raise RuntimeError(f"Missing price history for: {', '.join(missing)}")
@@ -109,6 +125,78 @@ def main():
 
     forecasts = analyze_forecasts(BASE / "forecasts.csv")
 
+    # Professional portfolio-construction layer.
+    relative = benchmark_relative_metrics(
+        portfolio_returns,
+        benchmark_returns,
+        risk_free_rate=float(config["risk_free_rate"]),
+        trading_days=int(config["trading_days"]),
+    )
+    concentration = concentration_metrics(holdings)
+    risk_budget = risk_budget_table(holdings)
+
+    constraints_cfg = config.get("portfolio_constraints", {})
+    liquidity = liquidity_analysis(
+        holdings,
+        info,
+        participation_rate=float(constraints_cfg.get("liquidity_participation_rate", 0.10)),
+    )
+
+    proxy_available = {
+        name: ticker for name, ticker in proxy_map.items() if ticker in prices.columns
+    }
+    if proxy_available:
+        proxy_prices = prices[list(dict.fromkeys(proxy_available.values()))]
+        proxy_returns_raw = proxy_prices.pct_change()
+        proxy_returns = pd.DataFrame(index=proxy_returns_raw.index)
+        for name, ticker in proxy_available.items():
+            proxy_returns[name] = proxy_returns_raw[ticker]
+        factor_proxy = factor_proxy_sensitivity(
+            portfolio_returns,
+            proxy_returns,
+            trading_days=int(config["trading_days"]),
+        )
+    else:
+        factor_proxy = pd.DataFrame()
+
+    rolling_risk = rolling_risk_table(
+        portfolio_returns,
+        benchmark_returns,
+        trading_days=int(config["trading_days"]),
+    )
+    historical_stress = historical_stress_windows(
+        portfolio_returns,
+        benchmark_returns,
+        config.get("historical_stress_windows", []),
+    )
+    attribution = static_return_attribution(asset_returns, weights)
+
+    expected_returns = load_expected_returns(BASE / "expected_returns.csv", tickers)
+    optimizations = optimize_portfolios(
+        asset_returns,
+        holdings,
+        expected_returns,
+        risk_free_rate=float(config["risk_free_rate"]),
+        max_position=float(constraints_cfg.get("max_position", 0.25)),
+    )
+    constraints = constraint_report(
+        holdings,
+        risk_summary,
+        relative,
+        liquidity,
+        constraints_cfg,
+    )
+
+    active_share_detail = active_share_from_file(
+        weights,
+        BASE / "benchmark_weights.csv",
+    )
+    active_share = (
+        active_share_detail.attrs.get("active_share")
+        if not active_share_detail.empty
+        else None
+    )
+
     correlation = asset_returns.corr()
     correlation_out = correlation.reset_index().rename(columns={"index": "Ticker"})
     covariance_out = covariance.reset_index().rename(columns={"index": "Ticker"})
@@ -121,6 +209,9 @@ def main():
     bench_common = benchmark_returns.reindex(portfolio_returns.index)
     port_series["BenchmarkReturn"] = bench_common.values
     port_series["BenchmarkGrowth"] = (1 + bench_common.fillna(0)).cumprod().values
+    port_series["ActiveReturn"] = (
+        port_series["PortfolioReturn"] - port_series["BenchmarkReturn"]
+    )
 
     sector = (
         holdings.assign(Sector=holdings["Sector"].fillna("Unknown"))
@@ -131,15 +222,34 @@ def main():
     summaries = {
         "portfolio": {
             **risk_summary,
+            **relative,
+            **concentration,
             "benchmark": benchmark,
             "holdings": int(len(holdings)),
             "weight_method": weight_method,
+            "active_share": active_share,
             "current_market_value": float(holdings["MarketValue"].sum())
                 if holdings["MarketValue"].notna().all() else None,
         },
         "monte_carlo": mc_summary,
         "reverse_dcf_assumptions": config["reverse_dcf"],
+        "portfolio_constraints": constraints_cfg,
+        "factor_proxy_note": (
+            "ETF proxy sensitivities are public-data diagnostics, not a commercial "
+            "multi-factor risk model."
+        ),
+        "attribution_note": (
+            "Return attribution uses static current weights and is analytical, not "
+            "transaction-level realized performance attribution."
+        ),
     }
+
+    concentration_table = pd.DataFrame(
+        [{"Metric": k, "Value": v} for k, v in concentration.items()]
+    )
+    relative_table = pd.DataFrame(
+        [{"Metric": k, "Value": v} for k, v in relative.items()]
+    )
 
     tables = {
         "holdings_analysis": holdings,
@@ -147,13 +257,25 @@ def main():
         "correlation_matrix": correlation_out,
         "covariance_matrix": covariance_out,
         "risk_contribution": risk_contribution,
+        "risk_budget": risk_budget,
+        "concentration_summary": concentration_table,
+        "benchmark_relative": relative_table,
+        "liquidity_analysis": liquidity,
+        "rolling_risk": rolling_risk,
+        "historical_stress_windows": historical_stress,
+        "return_attribution": attribution,
         "factor_scores": factors,
         "factor_exposure": factor_portfolio,
+        "factor_proxy_sensitivity": factor_proxy,
         "sector_exposure": sector,
         "monte_carlo_distribution": mc_distribution,
         "reverse_dcf": reverse_dcf,
         "stress_tests": stress,
         "forecast_accuracy": forecasts,
+        "expected_returns_inputs": expected_returns,
+        "portfolio_optimizations": optimizations,
+        "constraint_report": constraints,
+        "active_share_detail": active_share_detail,
     }
 
     snapshot, latest = write_outputs(BASE / "outputs", tables, summaries)
@@ -162,6 +284,10 @@ def main():
     print(f"Latest outputs: {latest}")
     print(f"Snapshot:       {snapshot}")
     print()
+    if active_share is None:
+        print("Optional: add benchmark_weights.csv to calculate true Active Share.")
+    if expected_returns.empty:
+        print("Optional: add expected_returns.csv to enable expected-return / max-Sharpe sizing.")
     print("Next:")
     print("  python -m streamlit run dashboard.py")
 
