@@ -5,6 +5,7 @@ Usage: python update_model.py GOOGL
 Cross-company safeguards:
 - annual SEC facts are keyed by actual reporting-period end, not filing FY labels;
 - quarterly facts embedded in 10-Ks are excluded from annual history;
+- the same corrected annual selector is used by the Financial Statements module;
 - stale template raw inputs are cleared before a new ticker is written;
 - scenario margins/capex are calibrated to the company's own economics;
 - a model-quality layer reconciles cash flow, adds upside sensitivities and manual research tools.
@@ -23,6 +24,7 @@ import requests, yfinance as yf
 from openpyxl import load_workbook
 from openpyxl.workbook.properties import CalcProperties
 from stress_test import ensure_stress_test
+import company_analysis as _company_analysis
 from company_analysis import ensure_financial_statements, ensure_segment_analysis
 from advanced_analytics_v2 import ensure_advanced_analytics
 from visualization_v2 import ensure_visual_dashboard
@@ -46,7 +48,13 @@ def company_facts(ticker):
     cik=cik_for(ticker); return sec_json(f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json") if cik else None
 
 def annual_series(facts,tags,preferred_unit=None):
-    """Latest filed annual-duration facts keyed by actual period-end year."""
+    """Latest filed annual-duration facts keyed by actual period-end year.
+
+    10-K filings often repeat quarterly/comparative facts while marking the filing as
+    fiscal-year material. Grouping by the filing's FY field can therefore map a quarter
+    into the wrong annual column. Duration facts are accepted only when they span a
+    roughly annual period; instant balance-sheet facts (no start date) are retained.
+    """
     if not facts: return {}
     gaap=facts.get("facts",{}).get("us-gaap",{}); best={}
     for rank,tag in enumerate(tags):
@@ -162,6 +170,10 @@ def main():
     try: facts=company_facts(ticker)
     except Exception as exc: print(f"Warning: SEC Company Facts unavailable: {exc}"); facts=None
     hist=build_history(ticker,facts); wb=load_workbook(TEMPLATE,data_only=False); put_company(wb,ticker,info); put_history(wb,hist); update_scenarios(wb,hist,info); ensure_stress_test(wb); calibrate_scenario_cash_flow(wb); update_peers(wb,ticker); update_filings(wb,ticker)
+    # Financial Statements previously had its own FY-keyed selector. Reuse the
+    # corrected period-end/duration selector so all raw annual tabs agree.
+    try: _company_analysis._merged_annual_series=annual_series
+    except Exception: pass
     try: ensure_financial_statements(wb,ticker,facts)
     except Exception as exc: print(f"Warning: Financial Statements module failed: {exc}")
     try: ensure_segment_analysis(wb,ticker,SEC_HEADERS)
