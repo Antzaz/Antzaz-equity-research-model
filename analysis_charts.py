@@ -1,12 +1,70 @@
-"""Create a native Excel Analysis Charts sheet from existing model outputs."""
+"""Create a native Excel Analysis Charts sheet from existing model outputs.
+
+This module also installs a small type-safety hotfix for visualization_v2. The visual
+layer runs after Advanced Analytics and must not perform Python arithmetic directly on
+Excel formula strings such as "=C39". Advanced Analytics already calculates its
+scorecard numerically, so the safe repair step only normalizes historical EPS / P-E
+presentation and date formatting.
+"""
+
+import statistics
 
 from openpyxl.styles import PatternFill, Font, Alignment
 from openpyxl.chart import BarChart, LineChart, Reference
 from openpyxl.formatting.rule import ColorScaleRule
 from openpyxl.utils import get_column_letter
 
+# visualization_v2 is imported by update_model before this module. Replacing its
+# module-global repair function here also affects the previously imported
+# ensure_visual_dashboard function, because that function resolves globals at runtime.
+import visualization_v2 as _visualization_v2
+
 NAVY="17365D"; BLUE="2F75B5"; WHITE="FFFFFF"; LIGHT="F5F9FC"; PALE_BLUE="D9EAF7"; GREEN="008000"; GREY="666666"
 FMT_PCT='0.0%;[Red](0.0%);-'; FMT_PRICE='$#,##0.00;[Red]($#,##0.00);-'; FMT_BN='#,##0.0;[Red](#,##0.0);-'; FMT_MULT='0.0x;[Red](0.0x);-'
+
+
+def _safe_visual_repair_advanced(wb, ticker):
+    """Repair display-only fields without dividing Excel formula strings in Python."""
+    if "Advanced Analytics" not in wb.sheetnames:
+        return
+
+    ws = wb["Advanced Analytics"]
+    if str(ticker or "").upper() in {"GOOGL", "GOOG"}:
+        eps = {2020: 2.93, 2021: 5.61, 2022: 4.56, 2023: 5.80, 2024: 8.04, 2025: 10.81}
+        pe_values = []
+        for r in range(7, 13):
+            year = ws.cell(r, 1).value
+            if year in eps:
+                ws.cell(r, 3, eps[year])
+                ws.cell(r, 3).number_format = FMT_PRICE
+                price = ws.cell(r, 2).value
+                if isinstance(price, (int, float)) and eps[year]:
+                    pe = float(price) / eps[year]
+                    ws.cell(r, 4, pe)
+                    ws.cell(r, 4).number_format = FMT_MULT
+                    pe_values.append(pe)
+                else:
+                    # Keep a formula for Excel if the historical price itself is not a
+                    # numeric cached value; do not try to evaluate it in Python.
+                    ws.cell(r, 4, f'=IFERROR(B{r}/C{r},"")')
+                    ws.cell(r, 4).number_format = FMT_MULT
+        if pe_values:
+            ws["G7"] = min(pe_values)
+            ws["G8"] = statistics.median(pe_values)
+            ws["G9"] = max(pe_values)
+            for cell in ("G7", "G8", "G9"):
+                ws[cell].number_format = FMT_MULT
+
+    for r in range(7, 15):
+        ws.cell(r, 9).number_format = "yyyy-mm-dd"
+
+    # Do not rebuild the scorecard here. advanced_analytics_v2 already wrote numeric
+    # values for B43:B49 and F42. The previous implementation re-read C39/G58 from
+    # Three-Case Scenarios, where openpyxl sees formulas as strings, causing:
+    # TypeError: unsupported operand type(s) for /: 'str' and 'float'.
+
+
+_visualization_v2._repair_advanced = _safe_visual_repair_advanced
 
 
 def _fill(c): return PatternFill("solid",fgColor=c)
