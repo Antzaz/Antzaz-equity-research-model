@@ -56,19 +56,20 @@ def repair_segment_charts(wb,ticker):
     else:
         ws["A55"]="No reliable disclosed business-line revenue was extracted. Complete the yellow Segment Analysis inputs to enable this chart."; ws["A55"].font=Font(italic=True,color=GREY)
 
-    seg_section=_find(seg,"Reported Operating Segments"); margins=[]; margin_col=None; margin_header="Latest Margin"
+    seg_section=_find(seg,"Reported Operating Segments"); margins=[]; margin_col=None; op_col=None; margin_header="Latest Margin"
     if seg_section:
         header=seg_section+1
         for c in range(1,min(18,seg.max_column)+1):
             text=str(seg.cell(header,c).value or "")
             if "Margin" in text and "Δ" not in text: margin_col=c; margin_header=text
-        if margin_col:
+            if "Op. Income" in text or "Operating Income" in text: op_col=c
+        if margin_col and op_col:
             for r in range(header+1,min(seg.max_row,header+15)+1):
-                name=seg.cell(r,1).value; val=seg.cell(r,margin_col).value
+                name=seg.cell(r,1).value; op_val=seg.cell(r,op_col).value
                 if name in (None,""):
                     if margins: break
                     continue
-                if val in (None,""): continue
+                if op_val in (None,""): continue
                 margins.append((r,str(name)))
     ws["AP2"]="Segment"; ws["AQ2"]=margin_header
     for out_r,(src_r,name) in enumerate(margins[:10],3):
