@@ -8,6 +8,7 @@ Cross-company safeguards:
 - scenarios are calibrated to company-specific economics;
 - segment analysis uses a standardized cross-company SEC parser with manual fallback;
 - institutional expectations, moat, base-rate and market-implied layers are generated;
+- invalid Excel worksheet names are repaired or rejected before save;
 - all Excel charts are forced to plot hidden helper data.
 """
 
@@ -41,6 +42,7 @@ SEC_HEADERS={"User-Agent":os.getenv("SEC_USER_AGENT","Personal Equity Research M
 PEER_GROUPS={"GOOGL":["MSFT","META","AMZN","AAPL","NFLX"],"GOOG":["MSFT","META","AMZN","AAPL","NFLX"],"NVDA":["AMD","AVGO","TSM","INTC","QCOM"],"MSFT":["ORCL","CRM","ADBE","NOW","GOOGL"],"META":["GOOGL","AMZN","NFLX","MSFT","PINS"],"AMZN":["WMT","COST","MSFT","GOOGL","META"]}
 DEFAULT_PEERS=["MSFT","META","AMZN","AAPL","NFLX"]
 
+
 def sec_json(url):
     r=requests.get(url,headers=SEC_HEADERS,timeout=30); r.raise_for_status(); return r.json()
 def cik_for(ticker):
@@ -49,6 +51,7 @@ def cik_for(ticker):
     return None
 def company_facts(ticker):
     cik=cik_for(ticker); return sec_json(f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json") if cik else None
+
 
 def annual_series(facts,tags,preferred_unit=None):
     if not facts: return {}
@@ -153,6 +156,22 @@ def _fix_all_charts(wb):
         for ch in getattr(ws,"_charts",[]):
             try: ch.visible_cells_only=False; ch.display_blanks="gap"
             except Exception: pass
+
+def _ensure_excel_sheet_names(wb):
+    """Repair known invalid titles and refuse to save an XLSX Excel would repair."""
+    replacements={"Base Rates & Thesis Probabilities":"Base Rates & Probabilities"}
+    for old,new in replacements.items():
+        if old in wb.sheetnames:
+            if new in wb.sheetnames and new!=old: wb.remove(wb[new])
+            wb[old].title=new
+            print(f"Excel compatibility: renamed worksheet {old!r} -> {new!r}")
+    invalid=[]
+    bad_chars=re.compile(r'[:\\/?*\[\]]')
+    for name in wb.sheetnames:
+        if len(name)>31 or bad_chars.search(name): invalid.append(name)
+    if invalid:
+        raise ValueError("Invalid Excel worksheet name(s): "+", ".join(repr(x) for x in invalid)+". Excel limits worksheet names to 31 characters and forbids : \\ / ? * [ ].")
+
 def get_ticker():
     raw=sys.argv[1] if len(sys.argv)>1 else input("Ticker (e.g. GOOGL): "); raw=raw.strip()
     if " " in raw or ".py" in raw.lower():
@@ -191,6 +210,7 @@ def main():
     except Exception as exc: print(f"Warning: Institutional Layers failed: {exc}")
     try: repair_segment_charts(wb,ticker)
     except Exception as exc: print(f"Warning: Segment chart repair failed: {exc}")
+    _ensure_excel_sheet_names(wb)
     _fix_all_charts(wb)
     if "Dashboard" in wb.sheetnames: wb["Dashboard"]["A1"]=f"{ticker} Long-Term Value Investing Dashboard"
     try:
