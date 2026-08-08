@@ -3,12 +3,12 @@
 Usage: python update_model.py GOOGL
 
 Cross-company safeguards:
-- annual SEC facts are keyed by actual reporting-period end, not filing FY labels;
-- quarterly facts embedded in 10-Ks are excluded from annual history;
-- the same corrected annual selector is used by the Financial Statements module;
-- stale template raw inputs are cleared before a new ticker is written;
-- scenario margins/capex are calibrated to the company's own economics;
-- a model-quality layer reconciles cash flow, adds upside sensitivities and manual research tools.
+- annual SEC facts use actual reporting-period ends and annual durations;
+- stale template inputs are cleared on each ticker run;
+- scenarios are calibrated to company-specific economics;
+- segment analysis uses a standardized cross-company SEC parser with manual fallback;
+- institutional expectations, moat, base-rate and market-implied layers are generated;
+- all Excel charts are forced to plot hidden helper data.
 """
 
 import sys, subprocess, importlib, re, os, statistics
@@ -26,10 +26,13 @@ from openpyxl.workbook.properties import CalcProperties
 from stress_test import ensure_stress_test
 import company_analysis as _company_analysis
 from company_analysis import ensure_financial_statements, ensure_segment_analysis
+from segment_analysis_v2 import ensure_segment_analysis_v2
 from advanced_analytics_v2 import ensure_advanced_analytics
 from visualization_v2 import ensure_visual_dashboard
 from analysis_charts import ensure_analysis_charts
 from model_quality_v3 import calibrate_scenario_cash_flow, ensure_model_quality
+from institutional_layers import ensure_institutional_layers
+from segment_chart_fix import repair_segment_charts
 
 BASE=Path(__file__).resolve().parent
 TEMPLATE=BASE/"GOOGL_Equity_Research_CLEAN_v7.xlsx"
@@ -48,13 +51,6 @@ def company_facts(ticker):
     cik=cik_for(ticker); return sec_json(f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json") if cik else None
 
 def annual_series(facts,tags,preferred_unit=None):
-    """Latest filed annual-duration facts keyed by actual period-end year.
-
-    10-K filings often repeat quarterly/comparative facts while marking the filing as
-    fiscal-year material. Grouping by the filing's FY field can therefore map a quarter
-    into the wrong annual column. Duration facts are accepted only when they span a
-    roughly annual period; instant balance-sheet facts (no start date) are retained.
-    """
     if not facts: return {}
     gaap=facts.get("facts",{}).get("us-gaap",{}); best={}
     for rank,tag in enumerate(tags):
@@ -76,7 +72,6 @@ def annual_series(facts,tags,preferred_unit=None):
             stamp=(str(x.get("filed") or ""),str(end),-rank)
             if year not in best or stamp>best[year][0]: best[year]=(stamp,val)
     return {y:v for y,(_,v) in best.items()}
-
 def build_history(ticker,facts=None):
     facts=facts or company_facts(ticker); revenue=annual_series(facts,["RevenueFromContractWithCustomerExcludingAssessedTax","SalesRevenueNet","Revenues"]); cost=annual_series(facts,["CostOfRevenue","CostOfGoodsAndServicesSold"]); gross=annual_series(facts,["GrossProfit"]); op=annual_series(facts,["OperatingIncomeLoss"]); ni=annual_series(facts,["NetIncomeLoss","ProfitLoss"]); eps=annual_series(facts,["EarningsPerShareDiluted"],"USD/shares"); ocf=annual_series(facts,["NetCashProvidedByUsedInOperatingActivities"]); capex=annual_series(facts,["PaymentsToAcquirePropertyPlantAndEquipment","PaymentsToAcquireProductiveAssets"]); depr=annual_series(facts,["DepreciationDepletionAndAmortizationPropertyPlantAndEquipment","DepreciationDepletionAndAmortization"]); rd=annual_series(facts,["ResearchAndDevelopmentExpense"]); sbc=annual_series(facts,["ShareBasedCompensation"]); years=sorted(revenue)[-6:] if revenue else []; out={}
     for y in years:
@@ -85,7 +80,6 @@ def build_history(ticker,facts=None):
         cx=abs(capex[y]) if y in capex else None; fcf=ocf.get(y)-cx if ocf.get(y) is not None and cx is not None else None; shares=ni[y]/eps[y] if y in ni and y in eps and eps[y] else None
         out[y]={"revenue":rev,"cost":c,"gross":gp,"op":op.get(y),"ni":ni.get(y),"eps":eps.get(y),"shares":shares,"ocf":ocf.get(y),"capex":cx,"fcf":fcf,"depr":depr.get(y),"rd":rd.get(y),"sbc":sbc.get(y)}
     return out
-
 def yf_info(ticker):
     try: return yf.Ticker(ticker).info or {}
     except Exception: return {}
@@ -110,7 +104,6 @@ def _template_history_fallback(wb):
         except Exception: continue
         raw=lambda v:float(v)*1e9 if isinstance(v,(int,float)) else None; out[year]={"revenue":raw(ws.cell(4,c).value),"op":raw(ws.cell(9,c).value),"capex":raw(ws.cell(15,c).value),"depr":raw(ws.cell(18,c).value),"ocf":raw(ws.cell(14,c).value),"ni":raw(ws.cell(11,c).value),"eps":ws.cell(12,c).value if isinstance(ws.cell(12,c).value,(int,float)) else None,"sbc":raw(ws.cell(21,c).value)}
     return out
-
 def update_scenarios(wb,hist,info):
     ws=wb["Three-Case Scenarios"]; merged=dict(_template_history_fallback(wb)); merged.update(hist or {}); years=sorted(y for y,d in merged.items() if d and d.get("revenue")); hc=info.get("revenueGrowth") or .10; opm=info.get("operatingMargins") or .20; cap=.10; dep=.04; cap_hist=[]
     if len(years)>=2:
@@ -155,6 +148,11 @@ def update_filings(wb,ticker):
         for c,v in enumerate([form,period,filed,url,"SEC filing"],1): ws.cell(row,c).value=v
         row+=1
         if row>15: break
+def _fix_all_charts(wb):
+    for ws in wb.worksheets:
+        for ch in getattr(ws,"_charts",[]):
+            try: ch.visible_cells_only=False; ch.display_blanks="gap"
+            except Exception: pass
 def get_ticker():
     raw=sys.argv[1] if len(sys.argv)>1 else input("Ticker (e.g. GOOGL): "); raw=raw.strip()
     if " " in raw or ".py" in raw.lower():
@@ -170,22 +168,30 @@ def main():
     try: facts=company_facts(ticker)
     except Exception as exc: print(f"Warning: SEC Company Facts unavailable: {exc}"); facts=None
     hist=build_history(ticker,facts); wb=load_workbook(TEMPLATE,data_only=False); put_company(wb,ticker,info); put_history(wb,hist); update_scenarios(wb,hist,info); ensure_stress_test(wb); calibrate_scenario_cash_flow(wb); update_peers(wb,ticker); update_filings(wb,ticker)
-    # Financial Statements previously had its own FY-keyed selector. Reuse the
-    # corrected period-end/duration selector so all raw annual tabs agree.
     try: _company_analysis._merged_annual_series=annual_series
     except Exception: pass
     try: ensure_financial_statements(wb,ticker,facts)
     except Exception as exc: print(f"Warning: Financial Statements module failed: {exc}")
-    try: ensure_segment_analysis(wb,ticker,SEC_HEADERS)
+    try:
+        if ticker in {"GOOGL","GOOG"}: ensure_segment_analysis(wb,ticker,SEC_HEADERS)
+        else: ensure_segment_analysis_v2(wb,ticker,SEC_HEADERS)
     except Exception as exc: print(f"Warning: Segment Analysis module failed: {exc}")
     try: ensure_advanced_analytics(wb,ticker,info)
     except Exception as exc: print(f"Warning: Advanced Analytics module failed: {exc}")
     try: ensure_visual_dashboard(wb,ticker)
     except Exception as exc: print(f"Warning: Visual Dashboard module failed: {exc}")
+    try:
+        if ticker not in {"GOOGL","GOOG"}: ensure_segment_analysis_v2(wb,ticker,SEC_HEADERS)
+    except Exception as exc: print(f"Warning: Final Segment Analysis refresh failed: {exc}")
     try: ensure_analysis_charts(wb,ticker)
     except Exception as exc: print(f"Warning: Analysis Charts module failed: {exc}")
     try: ensure_model_quality(wb,ticker)
     except Exception as exc: print(f"Warning: Model Quality / Research Workbench failed: {exc}")
+    try: ensure_institutional_layers(wb,ticker)
+    except Exception as exc: print(f"Warning: Institutional Layers failed: {exc}")
+    try: repair_segment_charts(wb,ticker)
+    except Exception as exc: print(f"Warning: Segment chart repair failed: {exc}")
+    _fix_all_charts(wb)
     if "Dashboard" in wb.sheetnames: wb["Dashboard"]["A1"]=f"{ticker} Long-Term Value Investing Dashboard"
     try:
         if getattr(wb,"calculation",None) is None: wb.calculation=CalcProperties(calcMode="auto",fullCalcOnLoad=True,forceFullCalc=True)
