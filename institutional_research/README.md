@@ -1,29 +1,90 @@
 # Institutional Research Lab
 
-A portfolio research and validation layer designed to sit beside the existing single-company equity-research model.
+A portfolio research, construction and validation layer designed to sit beside the single-company equity-research model.
 
-The first version focuses on analyses that are practical with public data and useful for an individual investor:
+The project now follows a professional-style workflow:
 
-- portfolio holdings, weights and unrealized P&L
+**investment intent → exposures → risk budget → constraints → portfolio construction → trade sizing → monitoring → attribution**
+
+It uses public data, so it should be treated as an institutional-style research framework rather than an institutional data stack.
+
+## Current analytics
+
+### Portfolio and benchmark
+- holdings, weights and unrealized P&L
 - benchmark-relative return and beta
-- volatility, Sharpe, Sortino and alpha
-- historical VaR and Expected Shortfall
+- annualized volatility, Sharpe and Sortino
+- tracking error and information ratio
+- daily active hit rate
+- upside and downside capture
 - maximum drawdown
-- correlation and covariance
-- contribution to portfolio volatility
-- portfolio-relative factor scores
-- beta-based stress scenarios
-- historical-bootstrap Monte Carlo
-- simplified reverse DCF / market-implied FCF growth
+- historical VaR and Expected Shortfall
+- correlations and covariance
+
+### Risk budgeting and concentration
+- marginal and component contribution to risk
+- capital weight vs risk contribution
+- risk-to-capital ratio by holding
+- top-1 / top-3 / top-5 concentration
+- Herfindahl concentration index
+- effective number of holdings
+- sector concentration and effective number of sectors
+- configurable portfolio-constraint monitor
+
+### Factor and style diagnostics
+- value, quality, growth, momentum and low-volatility holding-relative scores
+- public ETF proxy sensitivities for market, size, value, growth, momentum, quality and low volatility
+
+The ETF sensitivities are diagnostics, not a replacement for a commercial Barra/Axioma/MSCI factor risk model.
+
+### Portfolio construction
+The engine can calculate:
+- minimum-variance portfolio
+- equal-risk-contribution portfolio
+- expected-return / max-Sharpe portfolio when `expected_returns.csv` is supplied
+- current vs target weights
+- one-way turnover
+- target market values
+- estimated trade values and share changes
+
+Position and other risk limits are controlled in `config.json`.
+
+### Liquidity / capacity
+- average daily share volume
+- average daily dollar volume
+- position as % of ADV
+- estimated days to liquidate at a configurable participation rate
+
+This is a first-pass public-data liquidity screen, not an institutional transaction-cost model.
+
+### Stress and scenario analysis
+- configurable beta-based forward shocks
+- configurable historical stress windows
+- rolling 1M / 3M / 6M / 1Y returns, volatility and tracking error
+- bootstrap Monte Carlo
+
+### Attribution and decision discipline
+- static-weight arithmetic return contribution by security
+- benchmark-relative portfolio metrics
 - analyst forecast-error tracking
-- flat CSV exports for Power BI
-- interactive Streamlit dashboard
+- optional portfolio decision journal template
 
-## 1. Add your portfolio
+Static-weight attribution is a research diagnostic. True realized attribution requires transaction history and point-in-time weights.
 
-Copy `portfolio_template.csv` to `portfolio.csv`, then edit your local `portfolio.csv`.
+### Valuation
+- simplified reverse DCF / market-implied FCF growth
 
-You can use **either** shares:
+## Private portfolio inputs
+
+Copy the templates below to the private filenames shown. The private files are ignored by Git.
+
+### Holdings
+
+```powershell
+Copy-Item portfolio_template.csv portfolio.csv
+```
+
+Use shares:
 
 ```csv
 Ticker,Shares,AverageCost,ManualWeight,Notes
@@ -39,21 +100,40 @@ GOOGL,,,0.60,Core position
 MSFT,,,0.40,Quality compounder
 ```
 
-If every row has positive `Shares`, the engine calculates market-value weights.
-Otherwise every row must have a positive `ManualWeight`.
+### Expected returns and conviction
 
-`portfolio.csv` and generated `outputs/` are ignored by Git so your real holdings stay local by default. If you intentionally want them in GitHub, remove those entries from `.gitignore`.
+```powershell
+Copy-Item expected_returns_template.csv expected_returns.csv
+```
 
-## 2. Install
+`ExpectedReturn` should be your forward annual expected return, not a historical average. `MinWeight` and `MaxWeight` are optional security-specific sizing constraints.
 
-From PowerShell:
+Max-Sharpe optimization is disabled unless expected returns are supplied for every holding. This avoids silently optimizing on historical returns as though they were forecasts.
+
+### Active Share
+
+```powershell
+Copy-Item benchmark_weights_template.csv benchmark_weights.csv
+```
+
+Populate it with actual benchmark constituent weights. Active Share is not calculated unless this file is present and valid.
+
+### Decision journal
+
+```powershell
+Copy-Item portfolio_decision_journal_template.csv portfolio_decision_journal.csv
+```
+
+Use it before trades to record the sizing decision, expected return, conviction, key risk, falsification condition and review date.
+
+## Install
 
 ```powershell
 cd "C:\Users\Antza\Documents\Antzaz-equity-research-model\institutional_research"
 python -m pip install -r requirements.txt
 ```
 
-## 3. Run the research engine
+## Run
 
 ```powershell
 python run_research.py
@@ -66,81 +146,62 @@ outputs/latest/
 outputs/snapshots/YYYYMMDD_HHMMSS/
 ```
 
-The snapshots let you preserve how the analysis looked at different dates.
+Snapshots preserve how the portfolio analysis looked at different dates.
 
-## 4. Launch the interactive dashboard
+## Dashboard
 
 ```powershell
 python -m streamlit run dashboard.py
 ```
 
-Or double-click `start_dashboard.bat`.
+or double-click `start_dashboard.bat`.
 
-The dashboard opens in your browser.
+The dashboard now contains dedicated views for:
+- portfolio
+- risk
+- construction / constraints
+- factors
+- attribution
+- liquidity
+- Monte Carlo
+- reverse DCF
+- forecast accuracy
 
-## 5. Power BI
+## Important configuration
 
-The same analysis is exported as flat CSV files. See `powerbi/README.md`.
+`config.json` contains:
+- benchmark
+- history period
+- risk-free rate
+- factor weights and public factor proxies
+- maximum position / sector / risk-contribution limits
+- beta and tracking-error limits
+- liquidity participation assumptions
+- stress scenarios
+- historical crisis windows
 
-Power BI should be treated as the visualization layer; Python remains the analytics engine.
+The defaults are examples, not recommendations. Set them to match your own investment policy and risk capacity.
 
-## Forecast tracking
+## Professional-quality limitations
 
-Use `forecasts.csv` to record forecasts **before** the outcome is known.
+Yahoo Finance is convenient but is not point-in-time institutional data. This project should not be used to claim a clean historical factor backtest or precise institutional attribution.
 
-Example:
-
-```csv
-Ticker,ForecastDate,FiscalYear,Metric,Forecast,Actual,Notes
-GOOGL,2026-08-08,2027,Revenue,500,,Base-case forecast
-```
-
-After results are reported, enter `Actual` and rerun the engine. The dashboard will calculate
-signed and absolute forecast errors and indicate whether you systematically over- or under-forecast.
-
-## Stress scenarios
-
-Edit `stress_scenarios` inside `config.json`.
-
-Each scenario uses:
-
-`estimated holding return = beta × benchmark shock + idiosyncratic shock`
-
-This is deliberately transparent and is a first-pass portfolio stress framework, not a full nonlinear risk model.
-
-## Reverse DCF
-
-The first reverse-DCF implementation solves the constant annual FCF growth rate needed to reconcile
-a company's current market cap with:
-
-- current free cash flow
-- cash and debt
-- configured WACC
-- configured terminal growth
-- configured explicit forecast period
-
-Edit these assumptions in `config.json`.
-
-## Important limitations
-
-This project is an **institutional-style research framework**, not an institutional data stack.
-
-Yahoo Finance is convenient for live/public analysis, but it is not point-in-time fundamentals data.
-Therefore this version should not be used to claim an unbiased historical factor backtest.
-
-For true historical cross-sectional backtesting, the next phase should use point-in-time data with:
+A professional-grade next step would require point-in-time data with:
 - delisted companies
-- historical index membership
-- filing availability dates
-- restatement handling
+- historical index membership and benchmark constituent weights
+- filing-availability dates and restatements
 - corporate actions
-- realistic transaction costs
+- historical analyst estimates and revisions
+- transaction history and actual portfolio weights through time
+- bid/ask spreads, market impact and transaction costs
+- security-level currencies and FX hedges
+- tax lots and tax-aware optimization where relevant
 
-Typical professional-quality sources include CRSP/Compustat or a point-in-time commercial equity database.
+Commercial or academic-quality sources may include CRSP/Compustat, FactSet, Bloomberg, LSEG, MSCI/Barra, Axioma or equivalent point-in-time databases.
 
-## Roadmap
+## Future roadmap
 
-### Phase 2 — backtesting
+### Phase 2 — point-in-time factor backtesting
 - monthly cross-sectional universe
 - value / quality / growth / momentum signals
 - walk-forward testing
@@ -150,16 +211,26 @@ Typical professional-quality sources include CRSP/Compustat or a point-in-time c
 - parameter perturbation
 - sub-period and regime testing
 
-### Phase 3 — market expectations
-- richer reverse DCF
-- consensus estimates
-- estimate revisions
+### Phase 3 — richer market expectations
+- point-in-time consensus estimates
+- estimate revisions and breadth
 - earnings surprises
 - options-implied volatility / skew
+- positioning / short-interest data
 
-### Phase 4 — portfolio construction
-- optimizer with position/sector constraints
-- factor exposure constraints
-- expected return vs risk
-- risk budgeting
-- rebalancing / turnover controls
+### Phase 4 — advanced portfolio construction
+- sector-aware constrained optimizer
+- benchmark-factor exposure constraints
+- expected-return confidence / Bayesian shrinkage
+- Black-Litterman-style view integration
+- transaction-cost-aware rebalancing
+- tax-aware optimization
+- currency and FX-risk budgeting
+
+### Phase 5 — realized portfolio attribution
+- transaction ledger
+- time-weighted and money-weighted returns
+- realized security and sector attribution
+- allocation / selection / interaction attribution
+- realized turnover and implementation shortfall
+- decision-journal outcome analytics
