@@ -1,6 +1,6 @@
 {
   "benchmark": "SPY",
-  "history_period": "5y",
+  "history_period": "10y",
   "trading_days": 252,
   "risk_free_rate": 0.04,
   "monte_carlo": {
@@ -22,6 +22,25 @@
     "momentum": 0.25,
     "low_volatility": 0.1
   },
+  "factor_proxies": {
+    "Market_SPY": "SPY",
+    "SmallCap_IWM": "IWM",
+    "Value_IWD": "IWD",
+    "Growth_IWF": "IWF",
+    "Momentum_MTUM": "MTUM",
+    "Quality_QUAL": "QUAL",
+    "LowVol_USMV": "USMV"
+  },
+  "portfolio_constraints": {
+    "max_position": 0.25,
+    "max_sector": 0.45,
+    "max_risk_contribution": 0.35,
+    "max_beta": 1.35,
+    "max_tracking_error": 0.20,
+    "max_days_to_liquidate": 5.0,
+    "liquidity_participation_rate": 0.10,
+    "rebalance_threshold": 0.03
+  },
   "stress_scenarios": [
     {
       "name": "Market -10%",
@@ -42,6 +61,18 @@
       "name": "Market +10%",
       "benchmark_shock": 0.1,
       "idiosyncratic_shock": 0.0
+    }
+  ],
+  "historical_stress_windows": [
+    {
+      "name": "COVID shock",
+      "start": "2020-02-19",
+      "end": "2020-03-23"
+    },
+    {
+      "name": "2022 rate / growth selloff",
+      "start": "2022-01-03",
+      "end": "2022-10-12"
     }
   ]
 }
