@@ -26,6 +26,7 @@ import requests, yfinance as yf
 from openpyxl import load_workbook
 from openpyxl.workbook.properties import CalcProperties
 from stress_test import ensure_stress_test
+from visualization import ensure_visual_dashboard
 
 BASE=Path(__file__).resolve().parent
 TEMPLATE=BASE/"GOOGL_Equity_Research_CLEAN_v7.xlsx"
@@ -243,7 +244,7 @@ def main():
     if not TEMPLATE.exists(): raise FileNotFoundError(TEMPLATE)
     info=yf_info(ticker); hist=build_history(ticker)
     wb=load_workbook(TEMPLATE,data_only=False)
-    put_company(wb,ticker,info); put_history(wb,hist); update_scenarios(wb,hist,info); ensure_stress_test(wb); update_peers(wb,ticker); update_filings(wb,ticker)
+    put_company(wb,ticker,info); put_history(wb,hist); update_scenarios(wb,hist,info); ensure_stress_test(wb); update_peers(wb,ticker); update_filings(wb,ticker); ensure_visual_dashboard(wb,ticker)
     wb["Dashboard"]["A1"]=f"{ticker} Long-Term Value Investing Dashboard"
     try:
         if getattr(wb, "calculation", None) is None:
