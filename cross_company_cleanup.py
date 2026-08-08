@@ -2,14 +2,14 @@
 
 The clean template originated as an Alphabet model. This module removes stale template
 labels/sources, creates a generic Business Portfolio Map from the current Segment Analysis,
-and adds an automatic context panel beside the manual Research Notes workbench.
+adds an automatic context panel beside the manual Research Notes workbench, and repairs
+cross-company data-quality checks after all company-specific modules have run.
 """
 
 from openpyxl.styles import PatternFill, Font, Alignment
-from openpyxl.utils import get_column_letter
 
 NAVY="17365D"; BLUE="2F75B5"; WHITE="FFFFFF"; LIGHT="F5F9FC"; GOLD="FFF2CC"
-GREY="666666"; LINK_GREEN="008000"; INPUT_BLUE="0000FF"
+PALE_GREEN="E2F0D9"; PALE_RED="FCE4D6"; GREY="666666"; LINK_GREEN="008000"; INPUT_BLUE="0000FF"
 FMT_BN='#,##0.0;[Red](#,##0.0);-'; FMT_PCT='0.0%;[Red](0.0%);-'; FMT_PRICE='$#,##0.00;[Red]($#,##0.00);-'
 
 
@@ -43,6 +43,21 @@ def _business_start(seg):
     for r in range(1,seg.max_row+1):
         if str(seg.cell(r,1).value or "").strip()=="Revenue by Business Line": return r
     return None
+
+def _segment_counts(seg):
+    if seg is None: return 0,0
+    segments=0
+    for r in range(7,min(seg.max_row,30)+1):
+        name=seg.cell(r,1).value; latest=_num(seg.cell(r,4).value)
+        if name and latest is not None: segments+=1
+        if str(name or "").strip()=="Revenue by Business Line": break
+    business=0; bs=_business_start(seg)
+    if bs:
+        for r in range(bs+2,min(seg.max_row,bs+20)+1):
+            name=seg.cell(r,1).value; latest=_num(seg.cell(r,4).value)
+            if name and latest is not None: business+=1
+            if str(name or "").strip()=="Source & Data Quality": break
+    return segments,business
 
 def _refresh_labels(wb,ticker):
     if "Comparative Analysis" in wb.sheetnames:
@@ -98,11 +113,10 @@ def ensure_business_portfolio_map(wb,ticker):
     filings=wb["Filings"] if "Filings" in wb.sheetnames else None
     if filings:
         for r in range(4,min(filings.max_row,30)+1):
-            if str(filings.cell(r,1).value or "")=="10-K": overview[-1]=(overview[-1][0],overview[-1][1],"Latest 10-K",filings.cell(r,4).value); break
+            if str(filings.cell(r,1).value or "")=="10-K":
+                overview[-1]=(overview[-1][0],overview[-1][1],"Latest 10-K",filings.cell(r,4).value); break
     for r,row in enumerate(overview,7):
         for c,v in enumerate(row,1): ws.cell(r,c,v)
-    for cell in ("B9","D9","B10","D10","B11","D11"):
-        if "Margin" in str(ws.cell(ws[cell].row,ws[cell].column-1).value or ""): ws[cell].number_format=FMT_PCT
     ws["B9"].number_format=FMT_PRICE; ws["D9"].number_format=FMT_BN; ws["B10"].number_format=FMT_BN; ws["D10"].number_format=FMT_PCT; ws["B11"].number_format=FMT_PCT
 
     _section(ws,15,"Reported Operating Segments",14)
@@ -168,8 +182,35 @@ def seed_research_context(wb,ticker):
         ws.cell(r,10,lab); ws.cell(r,11,val); ws.cell(r,11).number_format=fmt; ws.cell(r,11).font=Font(color=LINK_GREEN)
     ws.column_dimensions["J"].width=24; ws.column_dimensions["K"].width=38; ws.column_dimensions["L"].width=4; ws.column_dimensions["M"].width=4
 
+def repair_data_quality(wb,ticker):
+    if "Data Quality" not in wb.sheetnames: return
+    ws=wb["Data Quality"]; seg=wb["Segment Analysis"] if "Segment Analysis" in wb.sheetnames else None
+    status=_segment_status(seg); seg_count,bus_count=_segment_counts(seg)
+    if status.startswith("AUTO") and (seg_count>0 or bus_count>0): dq_status="PASS"
+    elif status.startswith("MANUAL"): dq_status="MANUAL"
+    else: dq_status="REVIEW"
+    for r in range(6,ws.max_row+1):
+        if str(ws.cell(r,1).value or "").strip()=="Segment analysis":
+            ws.cell(r,2).value=dq_status
+            ws.cell(r,3).value=f"{seg_count} segment(s), {bus_count} revenue group(s); {status}"
+            ws.cell(r,4).value="PASS requires actual issuer-disclosed rows, not merely the existence of a Segment Analysis tab."
+            ws.cell(r,2).fill=_fill(PALE_GREEN if dq_status=="PASS" else GOLD)
+            break
+    # Add/refresh a template-leak check.
+    row=None
+    for r in range(6,ws.max_row+1):
+        if str(ws.cell(r,1).value or "").strip()=="Legacy template labels": row=r; break
+    if row is None: row=ws.max_row+1
+    comp_ok=("Comparative Analysis" not in wb.sheetnames or wb["Comparative Analysis"]["B3"].value==ticker)
+    dash_ok=("Dashboard" not in wb.sheetnames or wb["Dashboard"]["B18"].value in (None,ticker))
+    leak_status="PASS" if comp_ok and dash_ok else "FAIL"
+    vals=["Legacy template labels",leak_status,f"Comparative={comp_ok}; Dashboard={dash_ok}","Detects stale template-company labels after switching tickers."]
+    for c,v in enumerate(vals,1): ws.cell(row,c).value=v
+    ws.cell(row,2).fill=_fill(PALE_GREEN if leak_status=="PASS" else PALE_RED)
+
 def refresh_cross_company_tabs(wb,ticker):
     _refresh_labels(wb,ticker)
     _refresh_historical_sources(wb)
     ensure_business_portfolio_map(wb,ticker)
     seed_research_context(wb,ticker)
+    repair_data_quality(wb,ticker)
