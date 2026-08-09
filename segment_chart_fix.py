@@ -13,6 +13,7 @@ from openpyxl.chart.label import DataLabelList
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 from ai_effect_analysis import ensure_ai_impact_analysis
+from amzn_model_repair import repair_amzn_model
 
 GREY="666666"; FMT_BN='#,##0.0;[Red](#,##0.0);-'; FMT_PCT='0.0%;[Red](0.0%);-'
 
@@ -31,9 +32,23 @@ def _labels(ch):
         ch.dLbls=DataLabelList(); ch.dLbls.showVal=True
     except Exception: pass
 
+def _shorten_final_titles(wb):
+    if "Three-Case Scenarios" in wb.sheetnames:
+        wb["Three-Case Scenarios"]["A1"]="Three-Case Scenarios — 10-Year DCF"
+    if "AI Impact Analysis" in wb.sheetnames:
+        ai=wb["AI Impact Analysis"]
+        ai["A3"]="Institutional AI lens: reported monetization, segment exposure, capital intensity, disruption risk, and AI upside/downside versus the existing Base DCF."
+        ai["A23"]="AI Segment Exposure & Scoring"
+        ai["A33"]="AI Surprise Scenarios vs Base Case"
+
 def repair_segment_charts(wb,ticker):
+    # Last-line issuer fallback. For AMZN this repairs verified 10-K data when a local
+    # HTML parser fails, before charts and the AI exposure layer read Segment Analysis.
+    repair_amzn_model(wb,ticker)
+
     if not {"Analysis Charts","Segment Analysis"}.issubset(wb.sheetnames):
         ensure_ai_impact_analysis(wb,ticker)
+        _shorten_final_titles(wb)
         return
     ws=wb["Analysis Charts"]; seg=wb["Segment Analysis"]; _remove_target_charts(ws)
     for row in ws.iter_rows(min_row=2,max_row=20,min_col=39,max_col=45):
@@ -90,3 +105,4 @@ def repair_segment_charts(wb,ticker):
     ws["A112"]=f"External segment source: {ticker} annual filing / Segment Analysis sheet. Monte Carlo, scenario, stress and DCF values are model outputs based on workbook assumptions."; ws["A112"].font=Font(italic=True,color=GREY,size=9)
 
     ensure_ai_impact_analysis(wb,ticker)
+    _shorten_final_titles(wb)
