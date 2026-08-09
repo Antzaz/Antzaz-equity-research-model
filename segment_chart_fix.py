@@ -1,9 +1,9 @@
 """Final cross-company reliability, peer, segment-chart and AI refresh stage.
 
 This stage deliberately runs after the first-pass workbook build. It repairs shorter
-historical records, applies verified issuer fallbacks, recalibrates cash conversion,
-rebuilds analytics that depended on stale history, enforces dynamic same-sector peers,
-and then recreates segment/business charts from the final disclosure schema.
+historical records, applies verified issuer fallbacks, anchors near-term revenue to current
+consensus when available, recalibrates cash conversion, rebuilds analytics that depended
+on stale history, enforces dynamic same-sector peers, and recreates segment/business charts.
 """
 
 from openpyxl.chart import BarChart, Reference
@@ -14,7 +14,8 @@ from openpyxl.utils import get_column_letter
 from ai_effect_analysis import ensure_ai_impact_analysis
 from amzn_model_repair import repair_amzn_model
 from cvs_model_repair import repair_cvs_model
-from gev_model_repair import repair_gev_model
+from gev_model_repair import repair_gev_model, apply_gev_guidance_assumptions, repair_gev_expectations
+from consensus_rebase import rebase_near_term_revenue
 from cross_company_cleanup import refresh_cross_company_tabs
 from dynamic_peer_engine import ensure_dynamic_peer_comps
 from model_reliability import prepare_model_reliability, finalize_model_reliability
@@ -37,12 +38,10 @@ def _chart_row(ch):
     try: return ch.anchor._from.row
     except Exception: return None
 
-def _remove_target_charts(ws):
-    ws._charts=[ch for ch in ws._charts if _chart_row(ch)!=52]
+def _remove_target_charts(ws): ws._charts=[ch for ch in ws._charts if _chart_row(ch)!=52]
 
 def _labels(ch):
-    try:
-        ch.dLbls=DataLabelList(); ch.dLbls.showVal=True
+    try: ch.dLbls=DataLabelList(); ch.dLbls.showVal=True
     except Exception: pass
 
 def _shorten_final_titles(wb):
@@ -52,56 +51,54 @@ def _shorten_final_titles(wb):
 
 def _peer_quality_check(wb,ticker,peers):
     if "Data Quality" not in wb.sheetnames: return
-    target_sector=str(wb["Company Data"]["B6"].value or "") if "Company Data" in wb.sheetnames else ""
-    peer_ws=wb["Peer Comps"] if "Peer Comps" in wb.sheetnames else None
-    sectors=[]
+    target_sector=str(wb["Company Data"]["B6"].value or "") if "Company Data" in wb.sheetnames else ""; peer_ws=wb["Peer Comps"] if "Peer Comps" in wb.sheetnames else None; sectors=[]
     if peer_ws:
         for r in range(5,10):
             if peer_ws.cell(r,2).value: sectors.append(str(peer_ws.cell(r,9).value or ""))
-    ok=bool(sectors) and all(s==target_sector for s in sectors)
-    status="PASS" if ok and len(sectors)>=3 else ("REVIEW" if ok else "FAIL")
-    ws=wb["Data Quality"]; row=None
+    ok=bool(sectors) and all(s==target_sector for s in sectors); status="PASS" if ok and len(sectors)>=3 else ("REVIEW" if ok else "FAIL"); ws=wb["Data Quality"]; row=None
     for r in range(1,ws.max_row+1):
         if str(ws.cell(r,1).value or "").strip()=="Peer comps sector alignment": row=r; break
-    row=row or ws.max_row+1
-    ws.cell(row,1,"Peer comps sector alignment"); ws.cell(row,2,status); ws.cell(row,3,f"{len(sectors)} peer(s); target sector={target_sector}; peer sectors={sectors}"); ws.cell(row,4,"Every comparison company must match the target company's detected sector; exact industry is preferred.")
-    ws.cell(row,2).fill=_fill(PALE_GREEN if status=="PASS" else GOLD); ws.cell(row,2).font=Font(bold=True)
+    row=row or ws.max_row+1; ws.cell(row,1,"Peer comps sector alignment"); ws.cell(row,2,status); ws.cell(row,3,f"{len(sectors)} peer(s); target sector={target_sector}; peer sectors={sectors}"); ws.cell(row,4,"Every comparison company must match the target company's detected sector; exact industry is preferred."); ws.cell(row,2).fill=_fill(PALE_GREEN if status=="PASS" else GOLD); ws.cell(row,2).font=Font(bold=True)
     for c in range(1,5): ws.cell(row,c).alignment=Alignment(wrap_text=True,vertical="top")
 
 def _apply_final_controls(wb,ticker):
-    # 1) Establish the historical-layout invariant before rebuilding anything downstream.
+    # Establish latest-actual alignment before rebuilding downstream layers.
     prepare_model_reliability(wb,ticker)
 
-    # 2) Verified issuer disclosures fill extraction gaps only where directly supported.
+    # Verified issuer disclosures fill extraction gaps only where directly supported.
     repair_amzn_model(wb,ticker); repair_cvs_model(wb,ticker); repair_gev_model(wb,ticker)
-    prepare_model_reliability(wb,ticker)  # picks up issuer-fallback D&A and re-syncs scenario D&A intensity
+    prepare_model_reliability(wb,ticker)
 
-    # 3) Recalibrate forward cash conversion after the history / D&A repair.
+    # Near-term Base revenue uses current public analyst consensus when available; issuer-specific
+    # guidance can then refine disclosed margin/outlook assumptions without overriding the generic path.
+    try: rebase_near_term_revenue(wb,ticker)
+    except Exception as exc: print(f"Warning: consensus revenue rebase failed: {exc}")
+    try: apply_gev_guidance_assumptions(wb,ticker)
+    except Exception as exc: print(f"Warning: GEV guidance anchor failed: {exc}")
+
     try: calibrate_scenario_cash_flow(wb)
     except Exception as exc: print(f"Warning: final cash-flow calibration failed: {exc}")
 
-    # 4) Automatic peer classification and discovery: industry first, same-sector fallback only.
     peers=[]
     try: peers=ensure_dynamic_peer_comps(wb,ticker)
     except Exception as exc: print(f"Warning: dynamic peer selection failed: {exc}")
 
-    # 5) Rebuild layers that may have consumed stale/left-aligned history earlier in the run.
     try: ensure_advanced_analytics(wb,ticker)
     except Exception as exc: print(f"Warning: final Advanced Analytics refresh failed: {exc}")
     try: ensure_model_quality(wb,ticker)
     except Exception as exc: print(f"Warning: final Model Quality refresh failed: {exc}")
     try: ensure_institutional_layers(wb,ticker)
     except Exception as exc: print(f"Warning: final Institutional Layers refresh failed: {exc}")
+    try: repair_gev_expectations(wb,ticker)
+    except Exception as exc: print(f"Warning: GEV expectations guidance control failed: {exc}")
 
-    # 6) Rebuild operating maps after issuer segment fallbacks.
     try: refresh_cross_company_tabs(wb,ticker)
     except Exception as exc: print(f"Warning: final cross-company refresh failed: {exc}")
 
-    # Institutional-layer regeneration must never restore stale template peers.
+    # Never allow an earlier template peer list to survive a later module refresh.
     try: peers=ensure_dynamic_peer_comps(wb,ticker)
     except Exception as exc: print(f"Warning: final dynamic peer refresh failed: {exc}")
 
-    # 7) Proper three-way Bayesian update and final cross-sheet / history controls.
     try: ensure_bayesian_base_rates(wb,ticker)
     except Exception as exc: print(f"Warning: Bayesian base-rate refresh failed: {exc}")
     try: repair_cross_sheet_context(wb)
@@ -112,9 +109,7 @@ def _apply_final_controls(wb,ticker):
 
 def repair_segment_charts(wb,ticker):
     _apply_final_controls(wb,ticker)
-
-    if not {"Analysis Charts","Segment Analysis"}.issubset(wb.sheetnames):
-        ensure_ai_impact_analysis(wb,ticker); _shorten_final_titles(wb); return
+    if not {"Analysis Charts","Segment Analysis"}.issubset(wb.sheetnames): ensure_ai_impact_analysis(wb,ticker); _shorten_final_titles(wb); return
     ws=wb["Analysis Charts"]; seg=wb["Segment Analysis"]; _remove_target_charts(ws)
     for row in ws.iter_rows(min_row=2,max_row=20,min_col=39,max_col=45):
         for cell in row: cell.value=None
@@ -134,10 +129,8 @@ def repair_segment_charts(wb,ticker):
     ws["AM2"]="Business Line / Revenue Group"; ws["AN2"]=f"{latest_year} Revenue ($bn)"
     for out_r,(src_r,name) in enumerate(business[:10],3): ws.cell(out_r,39,name); ws.cell(out_r,40,f"='Segment Analysis'!D{src_r}"); ws.cell(out_r,40).number_format=FMT_BN
     if business:
-        end=2+min(10,len(business)); ch=BarChart(); ch.type="bar"; ch.style=10; ch.title=f"{latest_year} Revenue Mix"; ch.height=8.5; ch.width=13.5; ch.legend=None; ch.add_data(Reference(ws,min_col=40,min_row=2,max_row=end),titles_from_data=True); ch.set_categories(Reference(ws,min_col=39,min_row=3,max_row=end)); ch.x_axis.numFmt="$0"; ch.x_axis.title=f"{latest_year} revenue ($bn)"; ch.visible_cells_only=False; ch.display_blanks="gap"; _labels(ch); ws.add_chart(ch,"A53")
-        ws["A70"]=f"Units: {latest_year} revenue ($bn)"; ws["D70"]="Issuer-disclosed segments / revenue groups"; ws["F70"]="Source: Segment Analysis / annual filing"; ws["A71"]="Business mix uses only disclosed categories; no standalone product revenue is invented."
-    else:
-        ws["A55"]="No reliable disclosed business-line revenue was extracted. Complete the yellow Segment Analysis inputs to enable this chart."; ws["A55"].font=Font(italic=True,color=GREY)
+        end=2+min(10,len(business)); ch=BarChart(); ch.type="bar"; ch.style=10; ch.title=f"{latest_year} Revenue Mix"; ch.height=8.5; ch.width=13.5; ch.legend=None; ch.add_data(Reference(ws,min_col=40,min_row=2,max_row=end),titles_from_data=True); ch.set_categories(Reference(ws,min_col=39,min_row=3,max_row=end)); ch.x_axis.numFmt="$0"; ch.x_axis.title=f"{latest_year} revenue ($bn)"; ch.visible_cells_only=False; ch.display_blanks="gap"; _labels(ch); ws.add_chart(ch,"A53"); ws["A70"]=f"Units: {latest_year} revenue ($bn)"; ws["D70"]="Issuer-disclosed segments / revenue groups"; ws["F70"]="Source: Segment Analysis / annual filing"; ws["A71"]="Business mix uses only disclosed categories; no standalone product revenue is invented."
+    else: ws["A55"]="No reliable disclosed business-line revenue was extracted. Complete the yellow Segment Analysis inputs to enable this chart."; ws["A55"].font=Font(italic=True,color=GREY)
 
     seg_section=_find(seg,"Reported Operating Segments"); margins=[]; margin_col=None; profit_col=None; margin_header="Latest Margin"; profit_header="Segment profitability"
     if seg_section:
@@ -157,12 +150,8 @@ def repair_segment_charts(wb,ticker):
     ws["AP2"]="Segment"; ws["AQ2"]=margin_header
     for out_r,(src_r,name) in enumerate(margins[:10],3): ws.cell(out_r,42,name); ws.cell(out_r,43,f"='Segment Analysis'!{get_column_letter(margin_col)}{src_r}"); ws.cell(out_r,43).number_format=FMT_PCT
     if margins:
-        end=2+min(10,len(margins)); ch=BarChart(); ch.type="bar"; ch.style=10; ch.title=f"{margin_header} by Segment"; ch.height=8.5; ch.width=13.5; ch.legend=None; ch.add_data(Reference(ws,min_col=43,min_row=2,max_row=end),titles_from_data=True); ch.set_categories(Reference(ws,min_col=42,min_row=3,max_row=end)); ch.x_axis.numFmt="0%"; ch.x_axis.title=margin_header; ch.visible_cells_only=False; ch.display_blanks="gap"; _labels(ch); ws.add_chart(ch,"I53")
-        ws["I70"]=f"Margin = {profit_header} ÷ segment revenue"; ws["M70"]="Source: Segment Analysis / annual filing"; ws["I71"]="Profitability uses the issuer's disclosed segment performance measure; missing economics are not estimated."
-    else:
-        ws["I55"]="Segment profitability is not disclosed or not reliably extracted. Chart remains blank rather than estimating it."; ws["I55"].font=Font(italic=True,color=GREY)
+        end=2+min(10,len(margins)); ch=BarChart(); ch.type="bar"; ch.style=10; ch.title=f"{margin_header} by Segment"; ch.height=8.5; ch.width=13.5; ch.legend=None; ch.add_data(Reference(ws,min_col=43,min_row=2,max_row=end),titles_from_data=True); ch.set_categories(Reference(ws,min_col=42,min_row=3,max_row=end)); ch.x_axis.numFmt="0%"; ch.x_axis.title=margin_header; ch.visible_cells_only=False; ch.display_blanks="gap"; _labels(ch); ws.add_chart(ch,"I53"); ws["I70"]=f"Margin = {profit_header} ÷ segment revenue"; ws["M70"]="Source: Segment Analysis / annual filing"; ws["I71"]="Profitability uses the issuer's disclosed segment performance measure; missing economics are not estimated."
+    else: ws["I55"]="Segment profitability is not disclosed or not reliably extracted. Chart remains blank rather than estimating it."; ws["I55"].font=Font(italic=True,color=GREY)
     ws["A112"]=f"External segment source: {ticker} annual filing / Segment Analysis sheet. Monte Carlo, scenario, stress and DCF values are model outputs based on workbook assumptions."; ws["A112"].font=Font(italic=True,color=GREY,size=9)
 
-    ensure_ai_impact_analysis(wb,ticker)
-    finalize_model_reliability(wb,ticker)
-    _shorten_final_titles(wb)
+    ensure_ai_impact_analysis(wb,ticker); finalize_model_reliability(wb,ticker); _shorten_final_titles(wb)
