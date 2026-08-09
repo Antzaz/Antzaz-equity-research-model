@@ -3,12 +3,16 @@
 The original chart layer assumed Alphabet's disclosure layout. This overlay runs after
 Analysis Charts is built, discovers the actual Segment Analysis schema, and recreates
 both charts with dynamic year labels and generic interpretation.
+
+It also refreshes the institutional AI Impact Analysis after segment data is finalized,
+so the updater gains the AI module without duplicating orchestration logic.
 """
 
 from openpyxl.chart import BarChart, Reference
 from openpyxl.chart.label import DataLabelList
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
+from ai_effect_analysis import ensure_ai_impact_analysis
 
 GREY="666666"; FMT_BN='#,##0.0;[Red](#,##0.0);-'; FMT_PCT='0.0%;[Red](0.0%);-'
 
@@ -28,7 +32,9 @@ def _labels(ch):
     except Exception: pass
 
 def repair_segment_charts(wb,ticker):
-    if not {"Analysis Charts","Segment Analysis"}.issubset(wb.sheetnames): return
+    if not {"Analysis Charts","Segment Analysis"}.issubset(wb.sheetnames):
+        ensure_ai_impact_analysis(wb,ticker)
+        return
     ws=wb["Analysis Charts"]; seg=wb["Segment Analysis"]; _remove_target_charts(ws)
     for row in ws.iter_rows(min_row=2,max_row=20,min_col=39,max_col=45):
         for cell in row: cell.value=None
@@ -82,3 +88,5 @@ def repair_segment_charts(wb,ticker):
     else:
         ws["I55"]="Segment operating income is not disclosed or not reliably extracted. Profitability chart intentionally remains blank rather than estimating it."; ws["I55"].font=Font(italic=True,color=GREY)
     ws["A112"]=f"External segment source: {ticker} annual filing / Segment Analysis sheet. Monte Carlo, scenario, stress and DCF values are model outputs based on workbook assumptions."; ws["A112"].font=Font(italic=True,color=GREY,size=9)
+
+    ensure_ai_impact_analysis(wb,ticker)
