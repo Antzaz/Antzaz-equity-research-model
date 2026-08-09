@@ -4,8 +4,9 @@ The original chart layer assumed Alphabet's disclosure layout. This overlay runs
 Analysis Charts is built, discovers the actual Segment Analysis schema, and recreates
 both charts with dynamic year labels and generic interpretation.
 
-It also refreshes the institutional AI Impact Analysis after segment data is finalized,
-so the updater gains the AI module without duplicating orchestration logic.
+The same final stage also applies issuer fallbacks, refreshes cross-company tabs,
+forces industry-first / same-sector peer comps, rebuilds the three-way Bayesian sheet,
+and refreshes the institutional AI Impact Analysis after segment data is finalized.
 """
 
 from openpyxl.chart import BarChart, Reference
@@ -14,6 +15,14 @@ from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 from ai_effect_analysis import ensure_ai_impact_analysis
 from amzn_model_repair import repair_amzn_model
+from cvs_model_repair import repair_cvs_model
+from cross_company_cleanup import refresh_cross_company_tabs
+from sector_peer_bayes import (
+    ensure_sector_peer_comps,
+    ensure_bayesian_base_rates,
+    repair_cross_sheet_context,
+    add_final_quality_checks,
+)
 
 GREY="666666"; FMT_BN='#,##0.0;[Red](#,##0.0);-'; FMT_PCT='0.0%;[Red](0.0%);-'
 
@@ -22,11 +31,14 @@ def _find(ws,label):
     for r in range(1,ws.max_row+1):
         if str(ws.cell(r,1).value or "").strip().lower()==target: return r
     return None
+
 def _chart_row(ch):
     try: return ch.anchor._from.row
     except Exception: return None
+
 def _remove_target_charts(ws):
     ws._charts=[ch for ch in ws._charts if _chart_row(ch)!=52]
+
 def _labels(ch):
     try:
         ch.dLbls=DataLabelList(); ch.dLbls.showVal=True
@@ -41,10 +53,32 @@ def _shorten_final_titles(wb):
         ai["A23"]="AI Segment Exposure & Scoring"
         ai["A33"]="AI Surprise Scenarios vs Base Case"
 
-def repair_segment_charts(wb,ticker):
-    # Last-line issuer fallback. For AMZN this repairs verified 10-K data when a local
-    # HTML parser fails, before charts and the AI exposure layer read Segment Analysis.
+def _apply_final_controls(wb,ticker):
+    # Verified issuer fallbacks run before any downstream sheet reads Segment Analysis.
     repair_amzn_model(wb,ticker)
+    repair_cvs_model(wb,ticker)
+
+    # Rebuild operating maps / data-quality checks after issuer fallbacks so empty maps are
+    # not carried forward from an earlier failed SEC parser pass.
+    try: refresh_cross_company_tabs(wb,ticker)
+    except Exception as exc: print(f"Warning: final cross-company refresh failed: {exc}")
+
+    # Comparables are industry-first and are never allowed to cross the company's sector.
+    try: ensure_sector_peer_comps(wb,ticker)
+    except Exception as exc: print(f"Warning: sector peer selection failed: {exc}")
+
+    # Replace the old Bear/Bull-only update with a full Bear/Base/Bull weighted LR model.
+    try: ensure_bayesian_base_rates(wb,ticker)
+    except Exception as exc: print(f"Warning: Bayesian base-rate refresh failed: {exc}")
+
+    # Repair recurring unqualified formula copies after cross-company tabs are rebuilt.
+    try: repair_cross_sheet_context(wb)
+    except Exception as exc: print(f"Warning: cross-sheet context repair failed: {exc}")
+    try: add_final_quality_checks(wb,ticker)
+    except Exception as exc: print(f"Warning: final quality checks failed: {exc}")
+
+def repair_segment_charts(wb,ticker):
+    _apply_final_controls(wb,ticker)
 
     if not {"Analysis Charts","Segment Analysis"}.issubset(wb.sheetnames):
         ensure_ai_impact_analysis(wb,ticker)
