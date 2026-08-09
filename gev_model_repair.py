@@ -1,10 +1,10 @@
 """Verified GE Vernova fallback repairs and current-guidance anchors.
 
 Runs only for GEV. It restores directly disclosed FY2023-FY2025 segment revenue and
-Segment EBITDA when generic SEC HTML-table extraction fails, adds the consolidated
-Equipment/Services revenue mix, supplies D&A history when Company Facts tags are
-incomplete, and anchors near-term scenario margins to current company guidance without
-mislabeling adjusted EBITDA as reported EBIT.
+Segment EBITDA when generic SEC HTML-table extraction fails, adds consolidated
+Equipment/Services revenue mix, restores high-confidence D&A / SBC / balance-sheet
+items, and anchors near-term scenarios to current company guidance without presenting
+adjusted EBITDA guidance as reported EBIT.
 """
 
 from openpyxl.styles import Font, Alignment
@@ -12,6 +12,7 @@ from openpyxl.comments import Comment
 
 SEC_SEG="https://www.sec.gov/Archives/edgar/data/1996810/000199681026000015/R132.htm"
 SEC_10K="https://www.sec.gov/Archives/edgar/data/1996810/000199681026000015/gev-20251231.htm"
+SEC_2024="https://www.sec.gov/Archives/edgar/data/1996810/000199681025000011/gev-20241231.htm"
 Q2_2026="https://www.gevernova.com/news/articles/ge-vernova-releases-second-quarter-2026-financial-results"
 Q4_2025="https://www.sec.gov/Archives/edgar/data/1996810/000199681026000012/gevpressrelease4q25.htm"
 BLUE="0000FF"; GREEN="008000"; BLACK="000000"; GREY="666666"
@@ -24,6 +25,16 @@ SEGMENTS=[
 ]
 REVENUE_GROUPS=[("Equipment",[18.258,18.952,20.934]),("Services",[14.981,15.983,17.134])]
 D_AND_A={2022:1.797,2023:.964,2024:1.172,2025:.853}
+SBC={2024:.155,2025:.257}
+BS={
+    "Cash & Cash Equivalents":{2023:1.551,2024:8.205,2025:8.848},
+    "Cash, Cash Equivalents & Restricted Cash":{2023:1.551,2024:8.205,2025:8.848},
+    "Accounts Receivable":{2023:7.409,2024:8.174,2025:9.803},
+    "Other Current Assets":{2023:.352,2024:.562,2025:1.445},
+    "Property & Equipment, Net":{2023:5.228,2024:5.150,2025:6.006},
+    "Accounts Payable":{2023:7.900,2024:8.578,2025:8.809},
+    "Long-Term Debt":{2025:.265},
+}
 
 def _num(v,default=None):
     try:
@@ -44,27 +55,63 @@ def _segment_has_data(ws):
         if str(ws.cell(r,1).value or "") in {"Power","Wind","Electrification"} and isinstance(ws.cell(r,4).value,(int,float)): return True
     return False
 
-def _repair_history_d_and_a(wb):
+def _find_row(ws,label):
+    target=str(label).strip().lower()
+    for r in range(1,ws.max_row+1):
+        if str(ws.cell(r,1).value or "").strip().lower()==target: return r
+    return None
+
+def _repair_history_supporting_data(wb):
     if "Historical Financials" not in wb.sheetnames: return
     h=wb["Historical Financials"]
     for c in range(2,8):
         y=h.cell(3,c).value
-        if isinstance(y,(int,float)) and int(y) in D_AND_A and not isinstance(h.cell(18,c).value,(int,float)):
-            _input(h.cell(18,c),D_AND_A[int(y)],SEC_10K,FMT_BN)
-    if "Financial Statements" in wb.sheetnames:
-        ws=wb["Financial Statements"]; da_row=None; header_row=None
-        for r in range(1,ws.max_row+1):
-            if str(ws.cell(r,1).value or "").strip()=="Depreciation & Amortization": da_row=r
-            if str(ws.cell(r,1).value or "").strip()=="Metric" and r>40: header_row=r
-        if da_row and header_row:
+        if not isinstance(y,(int,float)): continue
+        y=int(y)
+        if y in D_AND_A and not isinstance(h.cell(18,c).value,(int,float)): _input(h.cell(18,c),D_AND_A[y],SEC_10K,FMT_BN)
+        if y in SBC and not isinstance(h.cell(21,c).value,(int,float)): _input(h.cell(21,c),SBC[y],SEC_10K,FMT_BN)
+
+def _repair_financial_statements(wb):
+    if "Financial Statements" not in wb.sheetnames: return
+    ws=wb["Financial Statements"]
+    # D&A / SBC in the cash-flow statement.
+    header_row=None; da_row=_find_row(ws,"Depreciation & Amortization"); sbc_row=_find_row(ws,"Stock-Based Compensation")
+    for r in range(40,ws.max_row+1):
+        if str(ws.cell(r,1).value or "").strip()=="Metric": header_row=r; break
+    if header_row:
+        for c in range(2,8):
+            y=ws.cell(header_row,c).value
+            if not isinstance(y,(int,float)): continue
+            y=int(y)
+            if da_row and y in D_AND_A and not isinstance(ws.cell(da_row,c).value,(int,float)): _input(ws.cell(da_row,c),D_AND_A[y],SEC_10K,FMT_BN)
+            if sbc_row and y in SBC and not isinstance(ws.cell(sbc_row,c).value,(int,float)): _input(ws.cell(sbc_row,c),SBC[y],SEC_10K,FMT_BN)
+    # Balance-sheet items. The first Metric row after the Balance Sheet heading is the year header.
+    bs_header=None
+    for r in range(20,min(ws.max_row,50)+1):
+        if str(ws.cell(r,1).value or "").strip()=="Metric": bs_header=r; break
+    if bs_header:
+        cash_row=_find_row(ws,"Cash & Cash Equivalents")
+        if cash_row: ws.cell(cash_row,1).value="Cash, Cash Equivalents & Restricted Cash"
+        for label,series in BS.items():
+            row=_find_row(ws,label)
+            if not row: continue
             for c in range(2,8):
-                y=ws.cell(header_row,c).value
-                if isinstance(y,(int,float)) and int(y) in D_AND_A and not isinstance(ws.cell(da_row,c).value,(int,float)):
-                    _input(ws.cell(da_row,c),D_AND_A[int(y)],SEC_10K,FMT_BN)
+                y=ws.cell(bs_header,c).value
+                if isinstance(y,(int,float)) and int(y) in series and not isinstance(ws.cell(row,c).value,(int,float)):
+                    source=SEC_2024 if int(y) in {2023,2024} else SEC_10K
+                    _input(ws.cell(row,c),series[int(y)],source,FMT_BN)
+    # Ending cash in the cash-flow statement when the years are visible.
+    cash_end=_find_row(ws,"Ending Cash")
+    if cash_end and header_row:
+        cash_series={2023:1.551,2024:8.205,2025:8.848}
+        for c in range(2,8):
+            y=ws.cell(header_row,c).value
+            if isinstance(y,(int,float)) and int(y) in cash_series and not isinstance(ws.cell(cash_end,c).value,(int,float)):
+                _input(ws.cell(cash_end,c),cash_series[int(y)],SEC_10K if int(y)==2025 else SEC_2024,FMT_BN)
 
 def repair_gev_model(wb,ticker):
     if str(ticker).upper()!="GEV": return False
-    _repair_history_d_and_a(wb)
+    _repair_history_supporting_data(wb); _repair_financial_statements(wb)
     if "Segment Analysis" not in wb.sheetnames: return False
     ws=wb["Segment Analysis"]
     if not _segment_has_data(ws):
@@ -108,10 +155,11 @@ def apply_gev_guidance_assumptions(wb,ticker):
     h=wb["Historical Financials"]; s=wb["Three-Case Scenarios"]; rev=_num(h["G4"].value); da=_num(h["G18"].value)
     if not rev: return False
     da_pct=(da/rev) if da is not None and da>=0 else .022
-    # Revenue: official Q2 2026 midpoint; current consensus module may already have reset N/O.
-    if not isinstance(s["N12"].value,(int,float)): s["N12"]=(46.0/rev)-1
-    rev26=rev*(1+_num(s["N12"].value,46.0/rev-1)); rev27=rev26*(1+_num(s["O12"].value,.12))
-    s["P12"]=(56.0/rev27)-1 if rev27>0 else .08  # company 2028 revenue outlook
+    # Official 2026 guidance midpoint takes precedence over a generic consensus anchor.
+    s["N12"]=(46.0/rev)-1; rev26=46.0
+    # O12 may have been anchored to current public consensus by consensus_rebase.py.
+    g27=_num(s["O12"].value,.12); rev27=rev26*(1+g27)
+    s["P12"]=(56.0/rev27)-1 if rev27>0 else .08
     long_g=[.08,.075,.07,.065,.06,.055,.05]
     for c,v in zip(("Q","R","S","T","U","V","W"),long_g): s[f"{c}12"]=v
     base_m=[.13-da_pct,.165-da_pct,.20-da_pct,.18,.185,.19,.19,.19,.19,.19]
@@ -119,7 +167,6 @@ def apply_gev_guidance_assumptions(wb,ticker):
     for bc,cc,xc,m in zip(bear_cols,base_cols,bull_cols,base_m):
         s[f"{cc}14"]=m; s[f"{bc}14"]=max(-.10,m-.03); s[f"{xc}14"]=min(.60,m+.02)
         s[f"{bc}14"].number_format=s[f"{cc}14"].number_format=s[f"{xc}14"].number_format=FMT_PCT
-    # Keep Bear/Bull revenue spreads around the final Base growth path.
     for bc,cc,xc in zip(bear_cols,base_cols,bull_cols):
         g=_num(s[f"{cc}12"].value,0); s[f"{bc}12"]=max(-.20,g-.03); s[f"{xc}12"]=min(.50,g+.03); s[f"{bc}12"].number_format=s[f"{cc}12"].number_format=s[f"{xc}12"].number_format=FMT_PCT
     s["AK9"]="GEV margin guidance anchor"; s["AL9"]="2026 Base EBIT proxy uses midpoint of 12%-14% adjusted EBITDA guidance less latest D&A/revenue; 2028 uses 20% adjusted EBITDA outlook less D&A/revenue. Analyst conversion, not reported EBIT guidance."; s["AL9"].font=Font(italic=True,color=GREY); s["AL9"].alignment=Alignment(wrap_text=True)
