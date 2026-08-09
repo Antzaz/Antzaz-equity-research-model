@@ -1,12 +1,9 @@
-"""Company-agnostic SEC segment analysis.
+"""Company-agnostic SEC segment analysis with resilient HTML parsing.
 
-Uses issuer 10-K tables and known reportable-segment/business-line labels where available.
-The extractor supports both common disclosure layouts:
-1) one row per segment/business line; and
-2) grouped blocks where a segment-name row is followed by Net sales / Operating income rows.
-
-It never invents undisclosed segment economics. When reliable extraction is unavailable,
-the same standardized sheet is produced with clearly marked manual-input cells.
+The module extracts issuer-disclosed operating-segment and business-line data from
+an issuer's latest 10-K. It uses a lightweight lxml row parser first and pandas
+read_html as a secondary parser. If neither path produces reliable data, it keeps
+the standardized manual-input sheet instead of inventing economics.
 """
 
 import re
@@ -18,13 +15,17 @@ try:
     import pandas as pd
 except Exception:
     pd = None
+try:
+    from lxml import html as lxml_html
+except Exception:
+    lxml_html = None
 
 from openpyxl.styles import PatternFill, Font, Alignment
 from openpyxl.formatting.rule import ColorScaleRule
 from openpyxl.utils import get_column_letter
 
 NAVY="17365D"; BLUE="2F75B5"; WHITE="FFFFFF"; GOLD="FFF2CC"
-INPUT_BLUE="0000FF"; GREY="666666"; LINK_GREEN="008000"
+INPUT_BLUE="0000FF"; GREY="666666"
 FMT_BN='#,##0.0;[Red](#,##0.0);-'; FMT_PCT='0.0%;[Red](0.0%);-'
 
 CONFIGS={
@@ -45,12 +46,6 @@ CONFIGS={
     "WMT":{"segments":["Walmart U.S.","Walmart International","Sam's Club"]},
 }
 
-GOOGL_REV_FALLBACK={
-    "Google Services":[272.543,304.930,342.721],"Google Cloud":[33.088,43.229,58.705],"Other Bets":[1.527,1.648,1.537],
-    "Google Search & other":[175.033,198.084,224.532],"YouTube ads":[31.510,36.147,40.367],"Google Network":[31.312,30.359,29.792],
-    "Google subscriptions, platforms, and devices":[34.688,40.340,48.030]
-}
-GOOGL_OP_FALLBACK={"Google Services":[95.858,121.263,139.404],"Google Cloud":[1.716,6.112,13.910],"Other Bets":[-4.095,-4.444,-7.515]}
 BLACKLIST=("total","consolidated","revenue","net sales","operating income","operating loss","segment profit","year ended","three months","six months","nine months","cost of","income from","eliminations","corporate","other income","depreciation","assets","liabilities","capital expenditures")
 
 
@@ -94,18 +89,56 @@ def _latest_10k_html(ticker,headers):
         return None,None
     return None,None
 
-def _tables(html):
-    if not html or pd is None: return []
-    try: return pd.read_html(StringIO(html))
-    except Exception: return []
+def _clean_text(value):
+    return re.sub(r"\s+"," ",str(value or "").replace("\xa0"," ")).strip()
+
+def _lxml_tables(raw_html):
+    if not raw_html or lxml_html is None: return []
+    try:
+        root=lxml_html.fromstring(raw_html)
+        out=[]
+        for table in root.xpath("//table"):
+            rows=[]
+            for tr in table.xpath(".//tr"):
+                cells=tr.xpath("./th|./td")
+                if not cells: continue
+                vals=[_clean_text(" ".join(cell.itertext())) for cell in cells]
+                if any(vals): rows.append(vals)
+            if len(rows)>=2: out.append(rows)
+        return out
+    except Exception:
+        return []
+
+def _pandas_tables(raw_html):
+    if not raw_html or pd is None: return []
+    try:
+        dfs=pd.read_html(StringIO(raw_html))
+        out=[]
+        for df in dfs:
+            rows=[]
+            cols=[_clean_text(x) for x in getattr(df,"columns",[])]
+            if any(cols): rows.append(cols)
+            for _,row in df.iterrows(): rows.append([_clean_text(v) for v in row.tolist()])
+            if len(rows)>=2: out.append(rows)
+        return out
+    except Exception:
+        return []
+
+def _tables(raw_html):
+    rows=_lxml_tables(raw_html)
+    if rows: return rows,f"lxml ({len(rows)} tables)"
+    rows=_pandas_tables(raw_html)
+    if rows: return rows,f"pandas ({len(rows)} tables)"
+    if lxml_html is None and pd is None: return [],"no HTML parser available"
+    return [],"HTML table parsing failed"
 
 def _row_text(values):
-    return re.sub(r"\s+"," "," | ".join(str(v) for v in values)).strip()
+    return _clean_text(" | ".join(_clean_text(v) for v in values))
 
 def _numbers(values):
     out=[]
     for val in values:
-        text=str(val).replace("−","-")
+        text=_clean_text(val).replace("−","-").replace("—","")
         for token in re.findall(r"\(?-?\$?\s*\d[\d,]*(?:\.\d+)?\)?",text):
             raw=token.strip(); neg=raw.startswith("(") and raw.endswith(")")
             clean=raw.replace("$","").replace(",","").replace(" ","").strip("()")
@@ -117,7 +150,7 @@ def _numbers(values):
 
 def _text_name(values):
     for val in values:
-        s=re.sub(r"\s+"," ",str(val).strip())
+        s=_clean_text(val)
         if s and s.lower() not in {"nan","none"} and re.search(r"[A-Za-z]",s) and len(s)<=100:
             return s
     return None
@@ -130,51 +163,39 @@ def _row_metric(text):
         return "revenue"
     return None
 
-def _metric_context(df,row_idx):
-    parts=[]
-    for rr in range(max(0,row_idx-6),row_idx+1):
-        parts.append(_row_text(df.iloc[rr].tolist()))
-    text=" ".join(parts)
+def _metric_context(rows,row_idx):
+    text=" ".join(_row_text(rows[rr]) for rr in range(max(0,row_idx-12),row_idx+1))
     return _row_metric(text)
 
-def _find_label(text,labels):
-    low=text.lower()
-    matches=[lab for lab in labels if lab.lower() in low]
-    return max(matches,key=len) if matches else None
+def _normalize_label_text(text):
+    s=_clean_text(text).strip(":")
+    s=re.sub(r"\s*\(\d+\)\s*$","",s)
+    return s.strip()
+
+def _find_label(values,labels):
+    cells=[_normalize_label_text(v) for v in values if _clean_text(v)]
+    if not cells: return None
+    first=cells[0].lower()
+    exact=[lab for lab in labels if first==lab.lower()]
+    if exact: return max(exact,key=len)
+    pref=[lab for lab in labels if re.match(rf"^[^A-Za-z0-9]*{re.escape(lab.lower())}(?:\s|$)",first)]
+    return max(pref,key=len) if pref else None
 
 def _extract_known(tables,labels):
-    """Extract direct rows and grouped segment blocks.
-
-    Direct layout example: `Advertising services | 46,906 | 56,214 | 68,635`.
-    Grouped layout example (Amazon Note 10):
-        `North America`
-        `Net sales | 352,828 | 387,497 | 426,305`
-        `Operating income | 14,877 | 24,967 | 29,619`
-    """
     out={lab:{"revenue":[],"op":[]} for lab in labels}
-    for df in tables:
+    for rows in tables:
         current_label=None
-        for pos,(_,row) in enumerate(df.iterrows()):
-            values=row.tolist(); text=_row_text(values); nums=_numbers(values); lab=_find_label(text,labels)
-
-            # A label-only row starts a grouped segment block.
+        for pos,values in enumerate(rows):
+            text=_row_text(values); nums=_numbers(values); lab=_find_label(values,labels)
             if lab and len(nums)<2:
                 current_label=lab
                 continue
-
-            # Direct row extraction (business-line tables and some segment tables).
             if lab and len(nums)>=2:
-                metric=_row_metric(text) or _metric_context(df,pos)
-                if metric:
-                    out[lab][metric].append(nums[-3:])
-
-            # Grouped segment extraction: metric row belongs to most recent segment header.
+                metric=_row_metric(text) or _metric_context(rows,pos)
+                if metric: out[lab][metric].append(nums[-3:])
             if current_label and len(nums)>=2:
                 metric=_row_metric(text)
-                if metric:
-                    out[current_label][metric].append(nums[-3:])
-
-            # End a grouped block when consolidated/total rows begin.
+                if metric: out[current_label][metric].append(nums[-3:])
             low=text.lower()
             if current_label and any(x in low for x in ("consolidated","total reportable segments","corporate and other")):
                 current_label=None
@@ -182,15 +203,15 @@ def _extract_known(tables,labels):
 
 def _discover_segments(tables):
     candidates={}
-    for df in tables:
-        whole=" ".join(str(x) for x in df.astype(str).values.flatten()).lower()
+    for rows in tables:
+        whole=" ".join(_row_text(r) for r in rows).lower()
         if "segment" not in whole or not any(k in whole for k in ("revenue","net sales")): continue
-        for pos,(_,row) in enumerate(df.iterrows()):
-            vals=row.tolist(); name=_text_name(vals); nums=_numbers(vals)
+        for pos,vals in enumerate(rows):
+            name=_text_name(vals); nums=_numbers(vals)
             if not name or len(nums)<2: continue
             low=name.lower()
-            if any(b in low for b in BLACKLIST) or len(low)<2 or _metric_context(df,pos)!="revenue": continue
-            candidates.setdefault(name,[]).append(nums[-3:])
+            if any(b in low for b in BLACKLIST) or len(low)<2 or _metric_context(rows,pos)!="revenue": continue
+            candidates.setdefault(_normalize_label_text(name),[]).append(nums[-3:])
     ranked=sorted(candidates.items(),key=lambda kv:(-len(kv[1]),len(kv[0])))
     return [name for name,_ in ranked[:10]]
 
@@ -263,46 +284,36 @@ def _write_sheet(wb,ticker,years,segments,business,url,auto_status):
     ws.column_dimensions["H"].width=38; ws.freeze_panes="A7"; return ws
 
 def ensure_segment_analysis_v2(wb,ticker,headers):
-    ticker=ticker.upper(); html,url=_latest_10k_html(ticker,headers); tables=_tables(html); cfg=CONFIGS.get(ticker,{})
+    ticker=ticker.upper(); raw_html,url=_latest_10k_html(ticker,headers); tables,parser_status=_tables(raw_html); cfg=CONFIGS.get(ticker,{})
     seg_labels=list(cfg.get("segments",[])); bus_labels=list(cfg.get("business",[]))
     if not seg_labels: seg_labels=_discover_segments(tables)
     labels=list(dict.fromkeys(seg_labels+bus_labels)); extracted=_extract_known(tables,labels) if labels else {}; total=_company_revenue(wb); raw_rev={}
     for lab in labels:
         raw=_pick(extracted.get(lab,{}).get("revenue",[]))
         if raw: raw_rev[lab]=raw
-    if ticker in {"GOOGL","GOOG"}:
-        for lab,vals in GOOGL_REV_FALLBACK.items():
-            if lab in labels and lab not in raw_rev: raw_rev[lab]=vals
 
     scale=1.0
-    non_google_raw={k:v for k,v in raw_rev.items() if not (ticker in {"GOOGL","GOOG"} and k in GOOGL_REV_FALLBACK and v==GOOGL_REV_FALLBACK[k])}
-    if non_google_raw:
-        latest=[abs(v[-1]) for v in non_google_raw.values() if v]; med=statistics.median(latest) if latest else 0
+    if raw_rev:
+        latest=[abs(v[-1]) for v in raw_rev.values() if v]; med=statistics.median(latest) if latest else 0
         if total and med>total*10: scale=.001
         elif med>10000: scale=.001
 
     segments=[]
     for lab in seg_labels:
         rev=raw_rev.get(lab)
-        if rev:
-            sc=1.0 if ticker in {"GOOGL","GOOG"} and lab in GOOGL_REV_FALLBACK and rev==GOOGL_REV_FALLBACK[lab] else scale
-            rev=[_num(x)*sc if _num(x) is not None else None for x in rev]
+        if rev: rev=[_num(x)*scale if _num(x) is not None else None for x in rev]
         op_raw=_pick(extracted.get(lab,{}).get("op",[]))
-        if ticker in {"GOOGL","GOOG"} and not op_raw and lab in GOOGL_OP_FALLBACK:
-            op=list(GOOGL_OP_FALLBACK[lab])
-        elif op_raw:
-            op=[_num(x)*scale if _num(x) is not None else None for x in op_raw]
-        else:
-            op=None
+        op=[_num(x)*scale if _num(x) is not None else None for x in op_raw] if op_raw else None
         if rev or op: segments.append((lab,rev or [None,None,None],op))
 
     if not bus_labels: bus_labels=seg_labels
     business=[]
     for lab in bus_labels:
         rev=raw_rev.get(lab)
-        if rev:
-            sc=1.0 if ticker in {"GOOGL","GOOG"} and lab in GOOGL_REV_FALLBACK and rev==GOOGL_REV_FALLBACK[lab] else scale
-            business.append((lab,[_num(x)*sc if _num(x) is not None else None for x in rev]))
+        if rev: business.append((lab,[_num(x)*scale if _num(x) is not None else None for x in rev]))
 
-    status=(f"AUTO — SEC 10-K: {len(segments)} operating segment(s), {len(business)} revenue group(s)" if segments or business else "MANUAL REQUIRED — no reliable segment table extracted")
+    if segments or business:
+        status=f"AUTO — SEC 10-K: {len(segments)} operating segment(s), {len(business)} revenue group(s); parser={parser_status}"
+    else:
+        status=f"MANUAL REQUIRED — no reliable segment table extracted; parser={parser_status}"
     return _write_sheet(wb,ticker,_years(wb),segments,business,url,status)
