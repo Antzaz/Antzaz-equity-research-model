@@ -1,0 +1,91 @@
+name: Equity research smoke test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/equity-smoke.yml'
+  workflow_dispatch:
+
+jobs:
+  tsm-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+          cache-dependency-path: requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Build TSM workbook
+        env:
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+        run: python update_model.py TSM
+      - name: Validate consolidated workbook and data scales
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from openpyxl import load_workbook
+
+          files=sorted(Path('updated_models').glob('TSM_Equity_Research_*.xlsx'))
+          assert files, 'TSM workbook was not generated'
+          path=files[-1]
+          wb=load_workbook(path,data_only=False,read_only=False)
+
+          removed={'Visual Dashboard','Comparative Analysis','Valuation Cross-Checks'}
+          survivors=removed.intersection(wb.sheetnames)
+          assert not survivors, f'Duplicate presentation sheets still present: {sorted(survivors)}'
+          assert 'Leadership & Culture' in wb.sheetnames, 'Leadership & Culture sheet missing'
+          assert 'Peer Comps' in wb.sheetnames, 'Peer Comps sheet missing'
+          assert 'Expectations & Consensus' in wb.sheetnames, 'Expectations & Consensus sheet missing'
+
+          hist=wb['Historical Financials']
+          latest_rev=hist['G4'].value
+          assert isinstance(latest_rev,(int,float)) and 50 < latest_rev < 500, f'TSM latest revenue scale looks wrong: {latest_rev}'
+
+          peer=wb['Peer Comps']
+          market_share=peer['M4'].value
+          assert isinstance(market_share,(int,float)) and 0.60 < market_share < 0.80, f'TSM market share missing/wrong: {market_share}'
+
+          exp=wb['Expectations & Consensus']
+          revenue_rows=[]
+          for r in range(7,exp.max_row+1):
+              if str(exp.cell(r,1).value or '').strip()=='Revenue':
+                  revenue_rows.append((r,exp.cell(r,3).value,exp.cell(r,4).value))
+          checked=0
+          for r,cons,model in revenue_rows[:2]:
+              if isinstance(cons,(int,float)) and isinstance(model,(int,float)) and model>0:
+                  ratio=cons/model
+                  assert 0.25 < ratio < 4.0, f'Consensus currency scale mismatch row {r}: consensus={cons}, model={model}, ratio={ratio}'
+                  checked+=1
+          assert checked>=1, 'No comparable revenue consensus row available for currency validation'
+
+          broken=[]
+          for ws in wb.worksheets:
+              for row in ws.iter_rows():
+                  for cell in row:
+                      value=cell.value
+                      if isinstance(value,str) and value.startswith('='):
+                          for name in removed:
+                              if name in value:
+                                  broken.append(f'{ws.title}!{cell.coordinate}->{name}')
+          assert not broken, f'Formula references to removed sheets remain: {broken[:10]}'
+
+          people=wb['Leadership & Culture']
+          employee=people['B7'].value
+          leadership=people['B11'].value
+          assert isinstance(employee,(int,float)), 'Employee signal not populated'
+          assert isinstance(leadership,(int,float)) and 0 <= leadership <= 100, f'Leadership proxy invalid: {leadership}'
+
+          print('TSM smoke test PASS')
+          print('Workbook:',path)
+          print('Latest revenue $bn:',latest_rev)
+          print('Industry market share:',market_share)
+          print('Employee signal:',employee)
+          print('Leadership proxy:',leadership)
+          PY
