@@ -4,6 +4,10 @@ The TARGET ticker determines the peer universe. Exact-industry peers are preferr
 when there are too few, same-sector companies may fill the remaining slots. Candidates
 from a different sector are always rejected. If live classification cannot be resolved,
 stale template peers are cleared and the model is marked for review.
+
+Peer Comps now separates two concepts that are often confused:
+- Industry Market Share %: populated only when a comparable external industry source exists.
+- Peer-Set Market Cap %: the company's market cap divided by the selected peer set total.
 """
 
 import math
@@ -16,6 +20,8 @@ except Exception:
     EquityQuery = None
 
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+
+from market_context import market_share_record, preferred_peer_symbols
 
 NAVY="17365D"; BLUE="2F75B5"; WHITE="FFFFFF"; GREY="666666"
 INPUT_BLUE="0000FF"; LINK_GREEN="008000"; GOLD="FFF2CC"
@@ -42,7 +48,7 @@ INDUSTRY_FALLBACK={
     "Insurance—Life":["PRU","AFL","PFG","GL","UNM","MFC","SLF"],
     "Healthcare Plans":["UNH","ELV","CI","HUM","CNC","MOH"],
     "Specialty Industrial Machinery":["ETN","PH","CMI","EMR","ROK","ITW","AME","IR"],
-    "Semiconductors":["NVDA","AVGO","AMD","QCOM","INTC","MU","TXN","ADI","MRVL"],
+    "Semiconductors":["NVDA","AVGO","AMD","QCOM","INTC","MU","TXN","ADI","MRVL","UMC","GFS"],
     "Software - Infrastructure":["MSFT","ORCL","CRM","NOW","PLTR","SNOW","DDOG","MDB"],
     "Software—Infrastructure":["MSFT","ORCL","CRM","NOW","PLTR","SNOW","DDOG","MDB"],
     "Internet Content & Information":["GOOGL","META","PINS","SNAP","RDDT"],
@@ -53,6 +59,7 @@ COUNTRY_TO_REGION={
     "United States":"US","Canada":"CA","Finland":"FI","Sweden":"SE","Norway":"NO","Denmark":"DK",
     "Germany":"DE","France":"FR","United Kingdom":"GB","Switzerland":"CH","Netherlands":"NL","Japan":"JP",
     "Australia":"AU","China":"CN","Hong Kong":"HK","India":"IN","Singapore":"SG","Italy":"IT","Spain":"ES",
+    "Taiwan":"TW","South Korea":"KR",
 }
 
 
@@ -62,8 +69,7 @@ def _num(v,default=None):
     try:
         if isinstance(v,bool): return default
         return float(v)
-    except Exception:
-        return default
+    except Exception: return default
 
 
 def _info(symbol):
@@ -111,11 +117,13 @@ def _symbols_from_screen(result):
     return out
 
 
-def _discover_candidates(sector,industry,sector_key,industry_key,region):
+def _discover_candidates(ticker,sector,industry,sector_key,industry_key,region):
     if yf is None or sector=="Unknown": return []
     out=[]
 
-    # Exact-industry sources first.
+    # Business-model-specific seeds can lead discovery, but every symbol is revalidated.
+    out.extend(preferred_peer_symbols(ticker,industry))
+
     if industry_key:
         try:
             dom=yf.Industry(industry_key,region=region)
@@ -135,7 +143,6 @@ def _discover_candidates(sector,industry,sector_key,industry_key,region):
             pass
     out.extend(INDUSTRY_FALLBACK.get(industry,[]))
 
-    # Same-sector fallback sources second.
     if sector_key:
         try: out.extend(_symbols_from_frame(yf.Sector(sector_key,region=region).top_companies))
         except Exception: pass
@@ -175,11 +182,15 @@ def select_dynamic_peers(wb,ticker,count=5):
     sector,industry,sector_key,industry_key,target_mc,region=_target_classification(target)
     if sector=="Unknown": return target,sector,industry,[]
     ranked=[]
-    for symbol in _discover_candidates(sector,industry,sector_key,industry_key,region):
+    preferred=set(preferred_peer_symbols(ticker,industry))
+    for symbol in _discover_candidates(ticker,sector,industry,sector_key,industry_key,region):
         if symbol==ticker.upper(): continue
         info=_info(symbol)
         score=_rank(sector,industry,target_mc,info)
-        if score is not None: ranked.append((score,symbol,info))
+        if score is not None:
+            # Validated business-model-specific peers get a small ranking preference.
+            if symbol in preferred: score-=2.0
+            ranked.append((score,symbol,info))
     ranked.sort(key=lambda x:x[0])
     return target,sector,industry,[(symbol,info) for _,symbol,info in ranked[:count]]
 
@@ -199,13 +210,8 @@ def _header(ws,row,start,end):
 
 
 def _unmerge_peer_area(ws):
-    """Unmerge any range touching A1:L12 before clearing it.
-
-    openpyxl exposes non-anchor cells in a merged range as read-only MergedCell objects.
-    Clearing first therefore raises: 'MergedCell' object attribute 'value' is read-only.
-    """
     for merged in list(ws.merged_cells.ranges):
-        if merged.min_row<=12 and merged.max_row>=1 and merged.min_col<=12 and merged.max_col>=1:
+        if merged.min_row<=12 and merged.max_row>=1 and merged.min_col<=15 and merged.max_col>=1:
             ws.unmerge_cells(str(merged))
 
 
@@ -224,7 +230,10 @@ def _repair_comparative(wb,ticker,sector,industry,peer_count):
         ws.cell(r,1,metric); ws.cell(r,2,f"='Peer Comps'!{col}4")
         ws.cell(r,3,f'=IFERROR(MEDIAN(\'Peer Comps\'!{col}5:{col}{last}),"")')
         ws.cell(r,4,f'=IFERROR(B{r}/C{r}-1,"")'); ws.cell(r,5,direction)
-        ws.cell(r,6,f'=IF(D{r}="","",IF(D{r}{"<" if direction=="Lower" else ">"}0,"{"Attractive" if direction=="Lower" else "Better"}","{"Premium" if direction=="Lower" else "Worse"}"))')
+        op="<" if direction=="Lower" else ">"
+        good="Attractive" if direction=="Lower" else "Better"
+        bad="Premium" if direction=="Lower" else "Worse"
+        ws.cell(r,6,f'=IF(D{r}="","",IF(D{r}{op}0,"{good}","{bad}"))')
         ws.cell(r,7,note); ws.cell(r,2).font=Font(color=LINK_GREEN); ws.cell(r,3).font=Font(color=LINK_GREEN)
         for c in (2,3): ws.cell(r,c).number_format=FMT_MULT if r<=6 else FMT_PCT
         ws.cell(r,4).number_format=FMT_PCT
@@ -247,31 +256,45 @@ def ensure_dynamic_peer_comps(wb,ticker,count=5):
     ws=wb["Peer Comps"]
 
     _unmerge_peer_area(ws)
-    for row in ws.iter_rows(min_row=1,max_row=max(12,ws.max_row),min_col=1,max_col=12):
+    for row in ws.iter_rows(min_row=1,max_row=max(12,ws.max_row),min_col=1,max_col=15):
         for cell in row: cell.value=None
 
-    for c in range(1,13):
+    for c in range(1,16):
         ws.cell(1,c).fill=_fill(NAVY); ws.cell(2,c).fill=_fill(NAVY)
     label=industry if industry!="Unknown" else sector
     ws["A1"]=f"{label} — Industry / Sector Peer Comps"; ws["A1"].font=Font(bold=True,color=WHITE,size=18)
-    ws["A2"]="Target sector/industry is detected automatically from the target ticker. Exact-industry peers are preferred; same-sector fallback only. Cross-sector peers are excluded."
+    ws["A2"]="Exact-industry peers are preferred; same-sector fallback only. Industry market share is shown only when an external source is comparable. Peer-set market-cap share is calculated separately."
     ws["A2"].font=Font(italic=True,color=GREY); ws["A2"].alignment=Alignment(wrap_text=True)
 
-    headers=["Company","Ticker","Forward P/E","EV/Revenue","EV/EBITDA","Revenue Growth","Operating Margin","ROE","Sector","Industry","Discovery","Source URL"]
+    headers=["Company","Ticker","Forward P/E","EV/Revenue","EV/EBITDA","Revenue Growth","Operating Margin","ROE","Sector","Industry","Discovery","Source URL","Industry Market Share %","Peer-Set Market Cap %","Market Share Basis / Source"]
     for c,v in enumerate(headers,1): ws.cell(3,c,v)
-    _header(ws,3,1,12)
+    _header(ws,3,1,15)
 
     if sector!="Unknown":
-        rows=[_metric_row(ticker,target,sector,industry,"Target classification")]
+        all_rows=[(ticker,target,"Target classification")]
         for symbol,info in peers:
             method="Exact industry" if str(info.get("industry") or "").strip()==industry else "Same-sector fallback"
-            rows.append(_metric_row(symbol,info,sector,industry,method))
-        for r,row in enumerate(rows,4):
+            if symbol in set(preferred_peer_symbols(ticker,industry)):
+                method="Business-model peer; sector revalidated"
+            all_rows.append((symbol,info,method))
+        total_mc=sum(_num(info.get("marketCap"),0) or 0 for _,info,_ in all_rows)
+        for r,(symbol,info,method) in enumerate(all_rows,4):
+            row=_metric_row(symbol,info,sector,industry,method)
             for c,v in enumerate(row,1): ws.cell(r,c,v)
+            share=market_share_record(symbol)
+            ws.cell(r,13,share.get("share") if share else None)
+            mc=_num(info.get("marketCap"))
+            ws.cell(r,14,(mc/total_mc) if mc and total_mc>0 else None)
+            if share:
+                basis=f"{share.get('period','')} {share.get('basis','')} — {share.get('method','')}; {share.get('source','')}"
+                ws.cell(r,15,basis.strip())
+            else:
+                ws.cell(r,15,"Not populated: no like-for-like industry market-share source mapped")
             for c in range(3,11): ws.cell(r,c).font=Font(color=INPUT_BLUE)
             ws.cell(r,12).font=Font(color=LINK_GREEN)
             for c in (3,4,5): ws.cell(r,c).number_format=FMT_MULT
-            for c in (6,7,8): ws.cell(r,c).number_format=FMT_PCT
+            for c in (6,7,8,13,14): ws.cell(r,c).number_format=FMT_PCT
+            ws.cell(r,15).alignment=Alignment(wrap_text=True,vertical="top")
     else:
         ws["A4"]=ticker; ws["B4"]=ticker
         ws["A5"]="REVIEW — target sector could not be resolved from live ticker metadata. No peer set was generated; stale template peers were removed."
@@ -281,8 +304,8 @@ def ensure_dynamic_peer_comps(wb,ticker,count=5):
         ws["A5"]="REVIEW — no validated same-sector peers were returned. Stale template peers were removed rather than reused."
         ws["A5"].fill=_fill(GOLD); ws["A5"].font=Font(color=INPUT_BLUE,bold=True); ws["A5"].alignment=Alignment(wrap_text=True)
 
-    ws["A11"]="Method"; ws["B11"]="yfinance live target classification + Industry/Sector discovery + EquityQuery screening; every candidate is revalidated against the target sector."
-    widths={"A":31,"B":10,"C":13,"D":13,"E":13,"F":15,"G":16,"H":13,"I":18,"J":28,"K":20,"L":48}
+    ws["A11"]="Method"; ws["B11"]="yfinance live classification/discovery with sector revalidation. Market-share sources are explicit and comparable-basis only; peer-set market-cap share is calculated from selected companies."
+    widths={"A":31,"B":10,"C":13,"D":13,"E":13,"F":15,"G":16,"H":13,"I":18,"J":28,"K":25,"L":48,"M":20,"N":20,"O":68}
     for col,w in widths.items(): ws.column_dimensions[col].width=w
     ws.freeze_panes="A4"
     _repair_comparative(wb,ticker,sector,industry,len(peers))
