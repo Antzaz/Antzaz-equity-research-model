@@ -14,7 +14,7 @@ from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 
 from segment_source_engine import collect_segment_documents, verified_fallback
-from segment_analysis_v2 import _tables, _discover_segments, _extract_known, _pick
+from segment_analysis_v2 import _tables, _discover_segments, _extract_known, _pick, _numbers
 
 GOLD = "FFF2CC"
 INPUT_BLUE = "0000FF"
@@ -58,12 +58,10 @@ def _parse_business_division_list(fragment):
     text = _clean(fragment).strip(" .:;-")
     if not text:
         return []
-    # Stop before the next explanatory sentence.
     text = re.split(r"\.\s+(?:All |Together |These |The |Group |Financial |Our |We )", text, maxsplit=1)[0]
     parts = [x.strip(" .:;-") for x in re.split(r"\s*;\s*|\s*,\s*", text) if x.strip()]
     if len(parts) >= 2:
         last = parts[-1]
-        # In a comma-separated list, split the first title-cased final conjunction only.
         m = re.search(r"\s+and\s+(?=(?:the\s+)?[A-Z])", last)
         if m:
             left = last[:m.start()].strip(); right = last[m.end():].strip()
@@ -172,6 +170,70 @@ def _set_source(cell, text, url=None):
             pass
 
 
+def _label_for_cell(value, labels):
+    key = _key(value)
+    if not key:
+        return None
+    for label in labels:
+        if key == _key(label):
+            return label
+    return None
+
+
+def _table_year(rows, upto=10):
+    years = []
+    for row in rows[:upto]:
+        for value in row:
+            years.extend(int(x) for x in re.findall(r"(?:19|20)\d{2}", str(value)))
+    return max(years) if years else None
+
+
+def _matrix_extract(tables, labels):
+    """Extract matrix-style segment tables where segments are columns and metrics are rows.
+
+    This is common for banks and diversified financials. Values are returned by explicit
+    calendar year so the sheet can place 2023/2024/2025 numbers in the correct columns.
+    """
+    out = {label: {"revenue": {}, "op": {}} for label in labels}
+    for rows in tables:
+        if len(rows) < 3:
+            continue
+        year = _table_year(rows)
+        if year is None:
+            continue
+        for header_idx, header in enumerate(rows[:15]):
+            col_map = {}
+            for col, value in enumerate(header):
+                label = _label_for_cell(value, labels)
+                if label:
+                    col_map[col] = label
+            if len(col_map) < 2:
+                continue
+            for row in rows[header_idx + 1 : min(len(rows), header_idx + 35)]:
+                low = _clean(" | ".join(str(x) for x in row)).lower()
+                metric = None
+                if any(k in low for k in (
+                    "total revenues", "total revenue", "net revenues", "net revenue",
+                    "external revenues", "external revenue", "net sales",
+                )):
+                    metric = "revenue"
+                elif any(k in low for k in (
+                    "operating profit before tax", "profit before tax", "pretax profit",
+                    "segment profit", "segment income", "operating income",
+                )):
+                    metric = "op"
+                if metric is None:
+                    continue
+                for col, label in col_map.items():
+                    if col >= len(row):
+                        continue
+                    nums = _numbers([row[col]])
+                    if nums:
+                        out[label][metric][year] = nums[-1]
+            break
+    return out
+
+
 def enrich_segment_analysis(wb, ticker, headers):
     ticker = str(ticker).upper().strip()
     if "Segment Analysis" not in wb.sheetnames:
@@ -187,14 +249,12 @@ def enrich_segment_analysis(wb, ticker, headers):
     discovered = []
     source_for = {}
     numeric_tables = []
-    parser_notes = []
     for doc in docs:
         html = doc.get("html")
         text = doc.get("text") or ""
         names = []
         if html:
-            tables, parser = _tables(html)
-            parser_notes.append(f"{doc.get('kind')}: {parser}")
+            tables, _ = _tables(html)
             if tables:
                 numeric_tables.append((doc, tables))
                 try:
@@ -215,8 +275,6 @@ def enrich_segment_analysis(wb, ticker, headers):
 
     fallback = verified_fallback(ticker)
     fallback_names = list(fallback.get("segments", []))
-    # Verified fallback protects against PDFs / JavaScript IR pages that cannot be parsed.
-    # Live discovery still takes precedence for naming and source attribution.
     if len(discovered) < 2 and fallback_names:
         for name in fallback_names:
             k = _key(name)
@@ -251,13 +309,9 @@ def enrich_segment_analysis(wb, ticker, headers):
         _set_source(ws.cell(row, 16), kind, url)
         existing[_key(name)] = row
 
-    # Use all names currently on the sheet as extraction targets. This allows official
-    # 20-F/6-K/annual-report tables to fill rows originally created by the older parser.
     labels = [str(ws.cell(r, 1).value) for r in range(first_row, block_end + 1) if ws.cell(r, 1).value]
-    raw_by_label = {lab: {"revenue": None, "op": None, "source": None} for lab in labels}
+    raw_by_label = {lab: {"revenue": None, "op": None, "source": None, "matrix": {"revenue": {}, "op": {}}} for lab in labels}
 
-    # Alias Group Functions / Group Items because UBS and other banks may use both labels
-    # across narrative and tabular disclosures.
     extract_labels = list(labels)
     alias_owner = {}
     for lab in labels:
@@ -269,9 +323,22 @@ def enrich_segment_analysis(wb, ticker, headers):
 
     for doc, tables in numeric_tables:
         try:
+            matrix = _matrix_extract(tables, extract_labels)
+        except Exception:
+            matrix = {}
+        for label, payload in matrix.items():
+            owner = alias_owner.get(label, label)
+            if owner not in raw_by_label:
+                continue
+            for metric in ("revenue", "op"):
+                if payload.get(metric):
+                    raw_by_label[owner]["matrix"][metric].update(payload[metric])
+                    raw_by_label[owner]["source"] = raw_by_label[owner]["source"] or doc
+
+        try:
             extracted = _extract_known(tables, extract_labels)
         except Exception:
-            continue
+            extracted = {}
         for label in extract_labels:
             owner = alias_owner.get(label, label)
             if owner not in raw_by_label:
@@ -280,24 +347,48 @@ def enrich_segment_analysis(wb, ticker, headers):
             op = _pick(extracted.get(label, {}).get("op", []))
             if rev and raw_by_label[owner]["revenue"] is None:
                 raw_by_label[owner]["revenue"] = rev
-                raw_by_label[owner]["source"] = doc
+                raw_by_label[owner]["source"] = raw_by_label[owner]["source"] or doc
             if op and raw_by_label[owner]["op"] is None:
                 raw_by_label[owner]["op"] = op
                 raw_by_label[owner]["source"] = raw_by_label[owner]["source"] or doc
 
-    scale = _scale_for(
-        [v["revenue"] for v in raw_by_label.values() if v.get("revenue")],
-        _company_revenue(wb),
-    )
+    scale_inputs = [v["revenue"] for v in raw_by_label.values() if v.get("revenue")]
+    for payload in raw_by_label.values():
+        vals = list(payload["matrix"]["revenue"].values())
+        if vals:
+            scale_inputs.append(vals)
+    scale = _scale_for(scale_inputs, _company_revenue(wb))
+
+    sheet_years = {}
+    for c in (2, 3, 4):
+        value = ws.cell(header_row, c).value
+        match = re.search(r"(?:19|20)\d{2}", str(value))
+        if match:
+            sheet_years[int(match.group(0))] = c
 
     filled_numeric = 0
     for label, payload in raw_by_label.items():
         row = existing.get(_key(label))
         if row is None:
             continue
+        any_fill = False
+
+        for metric, col_offset in (("revenue", 0), ("op", 5)):
+            for year, value in payload["matrix"][metric].items():
+                c = sheet_years.get(int(year))
+                if c is None:
+                    continue
+                target_col = c + col_offset
+                num = _num(value)
+                if num is not None and ws.cell(row, target_col).value in (None, ""):
+                    ws.cell(row, target_col).value = num * scale
+                    ws.cell(row, target_col).number_format = FMT_BN
+                    ws.cell(row, target_col).fill = PatternFill(fill_type=None)
+                    ws.cell(row, target_col).font = Font(color=INPUT_BLUE)
+                    any_fill = True
+
         rev = payload.get("revenue")
         op = payload.get("op")
-        any_fill = False
         if rev:
             vals = list(rev[-3:])
             while len(vals) < 3:
@@ -330,7 +421,6 @@ def enrich_segment_analysis(wb, ticker, headers):
             doc = payload.get("source") or {}
             _set_source(ws.cell(row, 16), doc.get("kind", "Official/regulatory report"), doc.get("url"))
 
-    # Add transparent source block without removing the original parser's source note.
     source_section = _find_row(ws, "Source & Data Quality")
     if source_section:
         row = source_section + 4
