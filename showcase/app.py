@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-"""Resume-safe Streamlit showcase.
+"""Recruiter-facing investment research portfolio.
 
-Equity-research examples are illustrative. Portfolio analytics load a sanitized snapshot
-built from the real production portfolio when showcase/data/portfolio_snapshot.json exists.
-The snapshot excludes tickers, company names, shares, cost basis, market value, transactions,
-private workbooks and credentials.
+This app intentionally presents investment work, not source code. All recruiter-facing
+company theses and public values are controlled from data/recruiter_portfolio.json.
+Optional aggregate portfolio analytics can fall back to the sanitized production snapshot.
 """
 
 import json
@@ -16,265 +15,408 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+
 BASE = Path(__file__).resolve().parent
+PUBLIC_DATA_PATH = BASE / "data" / "recruiter_portfolio.json"
 SNAPSHOT_PATH = BASE / "data" / "portfolio_snapshot.json"
 
-st.set_page_config(page_title="Investment Research & Portfolio Analytics", layout="wide")
-st.title("Investment Research & Portfolio Analytics")
-st.caption(
-    "Interactive demonstration of an automated Python research framework. "
-    "Portfolio analytics can reflect the real production portfolio while holdings remain anonymized."
+st.set_page_config(
+    page_title="Anton Hiltunen | Investment Research Portfolio",
+    page_icon="📈",
+    layout="wide",
+    initial_sidebar_state="collapsed",
 )
+
+st.markdown(
+    """
+    <style>
+    .block-container {max-width: 1180px; padding-top: 2rem; padding-bottom: 3rem;}
+    div[data-testid="stMetric"] {
+        border: 1px solid rgba(128,128,128,.22);
+        border-radius: 12px;
+        padding: .8rem 1rem;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+def load_json(path: Path, default):
+    if not path.exists():
+        return default
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return default
+
+
+def pct(value, digits=1):
+    if value is None or pd.isna(value):
+        return "—"
+    try:
+        return f"{float(value):.{digits}%}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def num(value, digits=2):
+    if value is None or pd.isna(value):
+        return "—"
+    try:
+        return f"{float(value):.{digits}f}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def money(value, currency="USD"):
+    if value is None or pd.isna(value):
+        return "—"
+    symbols = {"USD": "$", "EUR": "€", "GBP": "£", "JPY": "¥"}
+    symbol = symbols.get(str(currency).upper(), f"{currency} ")
+    try:
+        return f"{symbol}{float(value):,.2f}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def calc_upside(company):
+    explicit = company.get("upside")
+    if explicit is not None:
+        return explicit
+    current = company.get("current_price")
+    fair = company.get("fair_value")
+    try:
+        if current and fair:
+            return float(fair) / float(current) - 1
+    except (TypeError, ValueError, ZeroDivisionError):
+        pass
+    return None
+
+
+def safe_list(value):
+    return value if isinstance(value, list) else []
+
+
+def render_bullets(items):
+    items = [str(x).strip() for x in safe_list(items) if str(x).strip()]
+    if not items:
+        st.write("—")
+        return
+    for item in items:
+        st.markdown(f"- {item}")
+
+
+def merge_metrics(public_metrics, snapshot):
+    metrics = {}
+    if snapshot:
+        metrics.update(snapshot.get("metrics", {}) or {})
+    metrics.update({k: v for k, v in (public_metrics or {}).items() if v is not None})
+    return metrics
+
+
+def published_companies(data):
+    return [c for c in data.get("companies", []) if c.get("published", False)]
+
+
+data = load_json(
+    PUBLIC_DATA_PATH,
+    {
+        "profile": {},
+        "portfolio": {},
+        "portfolio_metrics": {},
+        "performance": [],
+        "companies": [],
+    },
+)
+snapshot = load_json(SNAPSHOT_PATH, None)
+profile = data.get("profile", {})
+portfolio = data.get("portfolio", {})
+companies = published_companies(data)
+metrics = merge_metrics(data.get("portfolio_metrics", {}), snapshot)
+
+name = profile.get("name", "Anton Hiltunen")
+headline = profile.get("headline", "Investment Research Portfolio")
+summary = profile.get(
+    "summary",
+    "Fundamental equity research, valuation, portfolio construction and risk analytics.",
+)
+
+st.title(name)
+st.subheader(headline)
+st.write(summary)
+
+meta = []
+if profile.get("location"):
+    meta.append(profile["location"])
+if profile.get("email"):
+    meta.append(profile["email"])
+if profile.get("linkedin_url"):
+    meta.append(f"[LinkedIn]({profile['linkedin_url']})")
+if meta:
+    st.markdown(" · ".join(meta))
+
+st.divider()
 
 view = st.radio(
     "Explore",
-    ["Equity Research", "Portfolio Analytics", "Methodology"],
+    ["Portfolio", "Company Research", "Process & Methodology"],
     horizontal=True,
+    label_visibility="collapsed",
 )
 
 
-def pct(x, d=1):
-    return "—" if x is None or pd.isna(x) else f"{x:.{d}%}"
+if view == "Portfolio":
+    st.header(portfolio.get("name", "Model Portfolio"))
+    if portfolio.get("strategy"):
+        st.write(portfolio["strategy"])
 
+    detail_bits = []
+    if portfolio.get("benchmark"):
+        detail_bits.append(f"Benchmark: {portfolio['benchmark']}")
+    if portfolio.get("inception_date"):
+        detail_bits.append(f"Inception: {portfolio['inception_date']}")
+    if portfolio.get("last_updated"):
+        detail_bits.append(f"Last updated: {portfolio['last_updated']}")
+    if detail_bits:
+        st.caption(" · ".join(detail_bits))
 
-def num(x, d=2):
-    return "—" if x is None or pd.isna(x) else f"{x:.{d}f}"
+    metric_cols = st.columns(6)
+    metric_cols[0].metric("Ann. return", pct(metrics.get("annualized_return")))
+    metric_cols[1].metric("Benchmark return", pct(metrics.get("benchmark_annualized_return")))
+    alpha_value = metrics.get("active_annualized_return")
+    if alpha_value is None:
+        alpha_value = metrics.get("annualized_alpha")
+    metric_cols[2].metric("Active return / alpha", pct(alpha_value))
+    metric_cols[3].metric("Volatility", pct(metrics.get("annualized_volatility")))
+    metric_cols[4].metric("Sharpe", num(metrics.get("sharpe")))
+    metric_cols[5].metric("Max drawdown", pct(metrics.get("max_drawdown")))
 
+    performance = pd.DataFrame(data.get("performance", []))
+    if performance.empty and snapshot:
+        performance = pd.DataFrame(snapshot.get("timeseries", []))
 
-def load_snapshot():
-    if not SNAPSHOT_PATH.exists():
-        return None
-    try:
-        return json.loads(SNAPSHOT_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-
-
-snapshot = load_snapshot()
-
-
-if view == "Equity Research":
-    st.subheader("Equity Research Dashboard")
-    st.caption("Demonstration company. Figures are illustrative and are not an investment recommendation.")
-
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Current price", "$182.40")
-    c2.metric("Base fair value", "$211.00")
-    c3.metric("Modeled upside", "+15.7%")
-    c4.metric("Quant score", "71 / 100")
-    c5.metric("Model view", "Potentially attractive")
-
-    hist = pd.DataFrame(
-        {
-            "Year": [2020, 2021, 2022, 2023, 2024, 2025],
-            "Revenue": [82.0, 97.5, 111.4, 126.7, 145.2, 164.8],
-            "Operating Income": [17.0, 22.8, 23.9, 29.4, 35.8, 41.2],
-            "Free Cash Flow": [14.6, 19.1, 18.4, 23.5, 28.9, 33.7],
+    if not performance.empty and "date" in performance.columns:
+        performance["date"] = pd.to_datetime(performance["date"], errors="coerce")
+        rename_map = {
+            "portfolio_growth": "Portfolio",
+            "benchmark_growth": "Benchmark",
+            "portfolio": "Portfolio",
+            "benchmark": "Benchmark",
         }
-    )
-    fig = px.line(
-        hist.melt("Year", var_name="Metric", value_name="$bn"),
-        x="Year",
-        y="$bn",
-        color="Metric",
-        markers=True,
-        title="Historical financial progression",
-    )
-    st.plotly_chart(fig, use_container_width=True)
+        performance = performance.rename(columns=rename_map)
+        series_cols = [c for c in ["Portfolio", "Benchmark"] if c in performance.columns]
+        if series_cols:
+            growth = performance[["date"] + series_cols].melt("date", var_name="Series", value_name="Growth")
+            fig = px.line(growth, x="date", y="Growth", color="Series", title="Portfolio vs benchmark growth")
+            st.plotly_chart(fig, use_container_width=True)
 
-    left, right = st.columns(2)
-    with left:
-        segments = pd.DataFrame(
-            {
-                "Segment": ["Core Platform", "Cloud & Data", "Subscriptions", "Other"],
-                "Revenue": [76.0, 46.0, 31.0, 11.8],
-                "Segment Margin": [0.31, 0.26, 0.22, 0.08],
-            }
+    st.subheader("Portfolio holdings")
+    if not companies:
+        st.info(
+            "No companies are published yet. Add companies in "
+            "`showcase/data/recruiter_portfolio.json` and set `published` to true."
         )
-        fig = px.bar(segments, x="Segment", y="Revenue", title="Latest segment revenue ($bn)")
-        st.plotly_chart(fig, use_container_width=True)
-        st.dataframe(segments, use_container_width=True, hide_index=True)
-
-    with right:
-        scenarios = pd.DataFrame(
-            {
-                "Scenario": ["Severe Bear", "Bear", "Base", "Bull"],
-                "Value / Share": [118.0, 157.0, 211.0, 268.0],
-                "Probability": [0.10, 0.20, 0.50, 0.20],
-            }
-        )
-        fig = px.bar(scenarios, x="Scenario", y="Value / Share", title="Scenario valuation")
-        st.plotly_chart(fig, use_container_width=True)
-        st.dataframe(scenarios, use_container_width=True, hide_index=True)
-
-    st.markdown("#### Research workflow demonstrated")
-    st.write(
-        "Historical statements → issuer/regulatory source checks → segment analysis → dynamic peers → "
-        "DCF/scenario valuation → stress testing → model-quality controls → investment-summary synthesis."
-    )
-    st.info(
-        "The production project additionally supports company Investor Relations pages, annual/results reports, "
-        "SEC 10-K/20-F/40-F/6-K filings, dynamic peer selection, ownership analysis, news-impact analysis and downloadable Excel models."
-    )
-
-elif view == "Portfolio Analytics":
-    st.subheader("Portfolio Analytics Dashboard")
-
-    if snapshot:
-        st.caption(
-            "Real aggregate analytics from the production portfolio. Holdings are anonymized and sensitive position economics are excluded."
-        )
-        generated = snapshot.get("generated_utc")
-        if generated:
-            st.caption(f"Sanitized snapshot generated: {generated}")
-        metrics = snapshot.get("metrics", {})
-        holdings = pd.DataFrame(snapshot.get("holdings", []))
-        alpha = pd.DataFrame(snapshot.get("alpha", []))
-        factors = pd.DataFrame(snapshot.get("factors", []))
-        stress = pd.DataFrame(snapshot.get("stress", []))
-        timeseries = pd.DataFrame(snapshot.get("timeseries", []))
     else:
-        st.warning(
-            "No sanitized real snapshot is bundled yet. Run the portfolio analysis and then automation/build_showcase_snapshot.py. "
-            "The fallback values below are illustrative."
+        rows = []
+        for c in companies:
+            rows.append(
+                {
+                    "Company": c.get("company", "—"),
+                    "Ticker": c.get("ticker", "—"),
+                    "Sector": c.get("sector", "—"),
+                    "Weight": c.get("weight"),
+                    "View": c.get("rating", "—"),
+                    "Fair value": money(c.get("fair_value"), c.get("currency", "USD")),
+                    "Upside": calc_upside(c),
+                    "Conviction": c.get("conviction", "—"),
+                }
+            )
+        holdings = pd.DataFrame(rows)
+        st.dataframe(
+            holdings,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Weight": st.column_config.NumberColumn(format="%.1%%"),
+                "Upside": st.column_config.NumberColumn(format="%.1%%"),
+            },
         )
-        metrics = {
-            "annualized_return": 0.161,
-            "annualized_volatility": 0.214,
-            "sharpe": 0.66,
-            "tracking_error": 0.132,
-            "information_ratio": 0.43,
-            "max_drawdown": -0.286,
-        }
-        holdings = pd.DataFrame(
-            {
-                "holding": [f"Holding {c}" for c in "ABCDEFGH"],
-                "weight": [0.19, 0.16, 0.15, 0.13, 0.12, 0.10, 0.08, 0.07],
-                "risk_contribution": [0.22, 0.17, 0.16, 0.12, 0.12, 0.09, 0.07, 0.05],
-            }
-        )
-        alpha = pd.DataFrame(
-            {
-                "model": ["CAPM / Jensen", "Fama-French 3", "Carhart 4", "Fama-French 5", "Style Proxy"],
-                "annualized_alpha": [0.041, 0.033, 0.026, 0.030, 0.023],
-                "t_stat": [1.82, 1.55, 1.27, 1.44, 1.10],
-                "r2": [0.74, 0.80, 0.84, 0.83, 0.87],
-            }
-        )
-        factors = pd.DataFrame(
-            {
-                "factor": ["Market", "Size", "Value", "Momentum", "Quality", "Low Volatility"],
-                "exposure": [1.08, -0.12, -0.28, 0.34, 0.29, -0.08],
-            }
-        )
-        stress = pd.DataFrame(
-            {
-                "scenario": ["Broad market -20%", "Rates +150 bps", "Growth selloff", "Credit shock"],
-                "estimated_return": [-0.176, -0.082, -0.142, -0.094],
-            }
-        )
-        timeseries = pd.DataFrame()
 
-    cols = st.columns(6)
-    cols[0].metric("Ann. return", pct(metrics.get("annualized_return")))
-    cols[1].metric("Ann. volatility", pct(metrics.get("annualized_volatility")))
-    cols[2].metric("Sharpe", num(metrics.get("sharpe")))
-    cols[3].metric("Tracking error", pct(metrics.get("tracking_error")))
-    cols[4].metric("Info ratio", num(metrics.get("information_ratio")))
-    cols[5].metric("Max drawdown", pct(metrics.get("max_drawdown")))
+        weighted = pd.DataFrame(
+            [
+                {"Company": c.get("company", c.get("ticker", "Holding")), "Weight": c.get("weight")}
+                for c in companies
+                if c.get("weight") is not None
+            ]
+        )
+        if not weighted.empty:
+            fig = px.pie(weighted, names="Company", values="Weight", title="Model portfolio allocation", hole=0.45)
+            st.plotly_chart(fig, use_container_width=True)
 
-    extra1, extra2, extra3, extra4 = st.columns(4)
-    extra1.metric("Beta", num(metrics.get("beta")))
-    extra2.metric("Sortino", num(metrics.get("sortino")))
-    extra3.metric("Active return", pct(metrics.get("active_annualized_return")))
-    extra4.metric("Daily ES 95%", pct(metrics.get("daily_expected_shortfall_95"), 2))
+        st.subheader("Research highlights")
+        for c in companies:
+            with st.container(border=True):
+                left, right = st.columns([3, 1])
+                with left:
+                    st.markdown(f"### {c.get('company', 'Company')} ({c.get('ticker', '—')})")
+                    one_liner = c.get("one_line_thesis")
+                    if one_liner:
+                        st.write(one_liner)
+                    thesis = safe_list(c.get("thesis"))
+                    if thesis:
+                        for point in thesis[:3]:
+                            st.markdown(f"- {point}")
+                with right:
+                    st.metric("View", c.get("rating", "—"))
+                    st.metric("Upside", pct(calc_upside(c)))
+                    st.caption(f"Conviction: {c.get('conviction', '—')}")
 
-    if not timeseries.empty and {"date", "portfolio_growth"}.issubset(timeseries.columns):
-        timeseries["date"] = pd.to_datetime(timeseries["date"], errors="coerce")
-        cols_to_show = ["date", "portfolio_growth"]
-        if "benchmark_growth" in timeseries.columns:
-            cols_to_show.append("benchmark_growth")
-        growth = timeseries[cols_to_show].melt("date", var_name="Series", value_name="Growth")
-        fig = px.line(growth, x="date", y="Growth", color="Series", title="Real portfolio vs benchmark growth path")
-        st.plotly_chart(fig, use_container_width=True)
+    disclosure = portfolio.get("disclosure")
+    if disclosure:
+        st.caption(disclosure)
 
-    if not holdings.empty:
+
+elif view == "Company Research":
+    st.header("Company Research")
+    st.caption(
+        "Condensed investment cases designed for fast review. "
+        "Select a company to see the thesis, valuation, risks and falsification conditions."
+    )
+
+    if not companies:
+        st.info(
+            "No public company research has been added yet. "
+            "Use `showcase/data/recruiter_portfolio.json` to publish a research card."
+        )
+    else:
+        labels = {f"{c.get('company', 'Company')} ({c.get('ticker', '—')})": c for c in companies}
+        selected_label = st.selectbox("Company", list(labels.keys()))
+        c = labels[selected_label]
+        currency = c.get("currency", "USD")
+
+        st.subheader(selected_label)
+        if c.get("one_line_thesis"):
+            st.write(c["one_line_thesis"])
+
+        cols = st.columns(6)
+        cols[0].metric("View", c.get("rating", "—"))
+        cols[1].metric("Current price", money(c.get("current_price"), currency))
+        cols[2].metric("Fair value", money(c.get("fair_value"), currency))
+        cols[3].metric("Upside", pct(calc_upside(c)))
+        cols[4].metric("Conviction", c.get("conviction", "—"))
+        cols[5].metric("Horizon", c.get("investment_horizon", "—"))
+
+        if c.get("last_reviewed"):
+            st.caption(f"Last reviewed: {c['last_reviewed']}")
+
         left, right = st.columns(2)
         with left:
-            fig = px.pie(holdings, names="holding", values="weight", title="Anonymous real portfolio weights")
-            st.plotly_chart(fig, use_container_width=True)
+            st.markdown("### Investment thesis")
+            render_bullets(c.get("thesis"))
         with right:
-            value_vars = [c for c in ["weight", "risk_contribution"] if c in holdings.columns]
-            risk_long = holdings.melt("holding", value_vars=value_vars, var_name="Series", value_name="Value")
-            fig = px.bar(
-                risk_long,
-                x="holding",
-                y="Value",
-                color="Series",
-                barmode="group",
-                title="Capital weight vs risk contribution",
-            )
-            fig.update_yaxes(tickformat=".0%")
-            st.plotly_chart(fig, use_container_width=True)
+            st.markdown("### Key catalysts")
+            render_bullets(c.get("catalysts"))
 
-    st.markdown("#### Alpha & factor-adjusted performance")
-    if not alpha.empty:
-        fig = px.bar(alpha, x="model", y="annualized_alpha", title="Residual alpha across risk models")
-        fig.update_yaxes(tickformat=".1%")
-        st.plotly_chart(fig, use_container_width=True)
-        display_cols = [c for c in ["model", "annualized_alpha", "t_stat", "p_value", "r2", "significant_5pct", "interpretation"] if c in alpha.columns]
-        st.dataframe(alpha[display_cols], use_container_width=True, hide_index=True)
-    else:
-        st.info("No alpha regression results were available in the sanitized snapshot.")
+        scorecard = c.get("scorecard", {})
+        if scorecard:
+            st.markdown("### Research scorecard")
+            score_rows = [
+                {"Dimension": k.replace("_", " ").title(), "Score": v}
+                for k, v in scorecard.items()
+                if v is not None
+            ]
+            if score_rows:
+                score_df = pd.DataFrame(score_rows)
+                fig = px.bar(score_df, x="Dimension", y="Score", range_y=[0, 10], title="Research scorecard (0-10)")
+                st.plotly_chart(fig, use_container_width=True)
 
-    left, right = st.columns(2)
-    with left:
-        if not factors.empty:
-            fig = px.bar(factors, x="factor", y="exposure", title="Factor/style exposures")
-            st.plotly_chart(fig, use_container_width=True)
-    with right:
-        if not stress.empty:
-            fig = px.bar(stress, x="scenario", y="estimated_return", title="Portfolio stress scenarios")
-            fig.update_yaxes(tickformat=".0%")
-            st.plotly_chart(fig, use_container_width=True)
+        valuation = pd.DataFrame(c.get("valuation_scenarios", []))
+        if not valuation.empty:
+            st.markdown("### Valuation")
+            display_valuation = valuation.copy()
+            if "value" in display_valuation.columns:
+                display_valuation["Value"] = display_valuation["value"].apply(lambda x: money(x, currency))
+                display_valuation = display_valuation.drop(columns=["value"])
+            st.dataframe(display_valuation, use_container_width=True, hide_index=True)
 
-    st.markdown("#### Privacy boundary")
-    st.write(
-        "The displayed portfolio analytics can be real, but the public snapshot contains no ticker symbols, company names, "
-        "share counts, average costs, portfolio value, unrealized P&L, transaction history, private Excel models or credentials."
-    )
+        left, right = st.columns(2)
+        with left:
+            st.markdown("### Key risks")
+            render_bullets(c.get("risks"))
+        with right:
+            st.markdown("### What would prove the thesis wrong?")
+            render_bullets(c.get("falsification_conditions"))
+
+        kpis = pd.DataFrame(c.get("key_kpis", []))
+        if not kpis.empty:
+            st.markdown("### KPIs I monitor")
+            st.dataframe(kpis, use_container_width=True, hide_index=True)
+
+        institutional = safe_list(c.get("institutional_comparison"))
+        if institutional:
+            st.markdown("### Institutional / market comparison")
+            render_bullets(institutional)
+
+        notes = c.get("notes")
+        if notes:
+            st.markdown("### Research notes")
+            st.write(notes)
+
+        sources = safe_list(c.get("sources"))
+        if sources:
+            st.markdown("### Selected sources")
+            for source in sources:
+                if isinstance(source, dict):
+                    label = source.get("label", source.get("url", "Source"))
+                    url = source.get("url")
+                    if url:
+                        st.markdown(f"- [{label}]({url})")
+                    else:
+                        st.markdown(f"- {label}")
+                else:
+                    st.markdown(f"- {source}")
+
+        report_url = c.get("full_report_url")
+        if report_url:
+            st.link_button("Open full research report", report_url)
+
 
 else:
-    st.subheader("Methodology & Architecture")
+    st.header("Process & Methodology")
     st.write(
-        "The production system is an automated equity-research and portfolio-analytics framework built in Python. "
-        "A scheduled workflow refreshes market and issuer data, rebuilds research outputs, and serves dashboards through Streamlit."
+        "I use a repeatable research process designed to separate evidence, assumptions "
+        "and judgement. The public portfolio is a recruiter-facing summary of that work."
     )
 
-    architecture = pd.DataFrame(
-        {
-            "Layer": ["Sources", "Research engine", "Portfolio engine", "Automation", "Presentation"],
-            "Examples": [
-                "Issuer IR, annual/results reports, SEC filings, public market data",
-                "Historical financials, segment analysis, peers, DCF, scenarios, news, quality controls",
-                "Risk, alpha, factors, attribution, liquidity, stress, Monte Carlo, optimization",
-                "Scheduled GitHub Actions refresh and encrypted private research bundle",
-                "Private research portal + sanitized public Streamlit showcase",
-            ],
-        }
-    )
-    st.dataframe(architecture, use_container_width=True, hide_index=True)
+    process = [
+        ("1. Screen", "Identify companies worth deeper work."),
+        ("2. Fundamentals", "Normalize financials, segments, KPIs and balance-sheet quality."),
+        ("3. Forecast", "Build explicit operating assumptions and scenario ranges."),
+        ("4. Value", "DCF, reverse DCF, peer checks and scenario / Monte Carlo analysis."),
+        ("5. Challenge", "Compare with market expectations and define what could prove the thesis wrong."),
+        ("6. Construct", "Size positions with portfolio risk, concentration and factor exposure in mind."),
+        ("7. Monitor", "Track earnings, KPIs, thesis changes and decision quality over time."),
+    ]
+    for title, body in process:
+        with st.container(border=True):
+            st.markdown(f"**{title}**")
+            st.write(body)
 
-    st.markdown("#### Public showcase data policy")
+    st.subheader("Public presentation policy")
     st.write(
-        "The public portfolio dashboard may use genuine aggregate model outputs, while all position identifiers and sensitive "
-        "economics are removed before publication. Equity-research demonstration data remains illustrative unless explicitly published as a public case study."
+        "The recruiter view contains only information intentionally marked for publication. "
+        "Private holdings, transaction history, cost basis, portfolio value, credentials, "
+        "private Excel models and research-engine internals are not required for this showcase."
     )
 
-    st.markdown("#### Technologies")
-    st.write("Python · pandas · NumPy · SciPy · Streamlit · Plotly · openpyxl · GitHub Actions · public issuer/regulatory data")
+    st.subheader("Tools used")
+    st.write(
+        "Excel · Python · pandas · NumPy · Streamlit · Plotly · Git/GitHub · "
+        "issuer filings and public market data"
+    )
+
 
 st.divider()
-st.caption(
-    f"Showcase build · {date.today().isoformat()} · For portfolio/project demonstration only; not investment advice."
-)
+footer = profile.get("footer", "For project demonstration only; not investment advice.")
+st.caption(f"{footer} · {date.today().isoformat()}")

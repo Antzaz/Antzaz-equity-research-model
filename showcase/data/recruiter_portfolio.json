@@ -1,0 +1,29 @@
+{
+  "profile": {
+    "name": "Anton Hiltunen",
+    "headline": "Investment Research & Model Portfolio",
+    "location": "Helsinki, Finland",
+    "email": "Antonhiltunen14@gmail.com",
+    "linkedin_url": "https://www.linkedin.com/in/anton-hiltunen-b178a3146",
+    "summary": "Fundamental equity research, valuation, portfolio construction and risk analytics presented in a concise recruiter-facing format.",
+    "footer": "Personal research portfolio for recruitment and project demonstration; not investment advice."
+  },
+  "portfolio": {
+    "name": "Anton Hiltunen Model Portfolio",
+    "strategy": "Add a 1-2 sentence description of your investment philosophy and portfolio construction approach here.",
+    "benchmark": "S&P 500",
+    "inception_date": null,
+    "last_updated": null,
+    "disclosure": "Model portfolio. Published weights and research views are for demonstration and do not need to match personal brokerage holdings."
+  },
+  "portfolio_metrics": {
+    "annualized_return": null,
+    "benchmark_annualized_return": null,
+    "active_annualized_return": null,
+    "annualized_volatility": null,
+    "sharpe": null,
+    "max_drawdown": null
+  },
+  "performance": [],
+  "companies": []
+}

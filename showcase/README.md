@@ -1,52 +1,49 @@
-# Investment Research & Portfolio Analytics Showcase
+# Anton Hiltunen — Investment Research Portfolio
 
-This folder is the resume-safe public demonstration layer for the larger private research project.
+This folder contains a recruiter-facing Streamlit presentation layer for the broader equity-research and portfolio project.
 
-## What it shows
+## Recruiter experience
 
-- Equity Research dashboard
-- Historical financial progression
-- Segment analysis
-- Scenario valuation
-- Portfolio risk and concentration
-- Jensen/CAPM alpha
-- Fama-French / Carhart style alpha comparisons
-- Factor exposures
-- Stress testing
-- Methodology and architecture
+The app is designed so a recruiter can understand the work without reading code. It shows:
 
-## What it deliberately does not contain
+- model-portfolio overview and performance;
+- published portfolio companies and weights;
+- rating, fair value, modeled upside and conviction;
+- concise company investment theses;
+- catalysts, risks and thesis-falsification conditions;
+- valuation scenarios and monitored KPIs;
+- a high-level research process and methodology.
 
-- real portfolio holdings
-- shares or market value
-- average cost / cost basis
-- transaction history
-- private Excel models
-- GitHub Actions artifacts
-- API credentials or secrets
-- private portfolio bundle access
+## Editing research without touching the app
 
-All figures are synthetic/sanitized demonstration data.
+All recruiter-facing thesis text and manually entered values live in:
+
+`data/recruiter_portfolio.json`
+
+See `EDIT_PORTFOLIO.md` and `data/recruiter_portfolio.example.json`.
+
+Only companies with `"published": true` appear in the recruiter view.
+
+## Privacy architecture
+
+Recommended setup:
+
+1. Keep the full research repository private.
+2. Deploy `showcase/app.py` to Streamlit Community Cloud from that private repository.
+3. Make the Streamlit app itself public and share the `*.streamlit.app` URL on the CV.
+4. Do **not** put the GitHub repository URL on the recruiter-facing CV unless you intentionally want reviewers to inspect code.
+
+The app does not need to show transaction history, personal portfolio value, cost basis, credentials, private Excel models or research-engine internals.
+
+## Optional sanitized analytics
+
+If `data/portfolio_snapshot.json` exists, the app can use sanitized aggregate portfolio metrics as a fallback. Values entered in `recruiter_portfolio.json` take precedence.
 
 ## Run locally
-
-From the main project root:
 
 ```powershell
 python -m pip install -r .\showcase\requirements.txt
 python -m streamlit run .\showcase\app.py
 ```
 
-## Separate public repository
-
-The recommended production architecture is:
-
-- private main repository: full research engine and private portal
-- private Streamlit portal: you + invited viewers
-- separate public showcase repository: only the contents of this folder
-
-Use `automation/export_showcase.ps1` to create a clean local folder containing only the public showcase files.
-
-## Streamlit Community Cloud
-
-Deploy `app.py` from the separate showcase repository and set the app to public. No Streamlit secrets are required for the showcase.
+This showcase is for project demonstration and recruitment, not investment advice.

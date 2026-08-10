@@ -12,32 +12,31 @@ if (-not (Test-Path $Source)) {
     throw "Showcase source folder not found: $Source"
 }
 
-# If real portfolio outputs exist, refresh the sanitized public snapshot before export.
+# Refresh the sanitized aggregate analytics when local production outputs exist.
 if (Test-Path $PortfolioSummary) {
-    Write-Host "Building sanitized snapshot from real portfolio analytics..."
+    Write-Host "Building sanitized snapshot from portfolio analytics..."
     python $SnapshotBuilder
     if ($LASTEXITCODE -ne 0) {
         throw "Sanitized portfolio snapshot build failed."
     }
-}
-else {
-    Write-Warning "No local portfolio outputs found. Showcase will use its fallback demo portfolio until run_research.py is executed."
 }
 
 if (Test-Path $Destination) {
     Remove-Item $Destination -Recurse -Force
 }
 New-Item -ItemType Directory -Path $Destination | Out-Null
+New-Item -ItemType Directory -Path (Join-Path $Destination "data") | Out-Null
 
 Copy-Item (Join-Path $Source "app.py") $Destination
 Copy-Item (Join-Path $Source "requirements.txt") $Destination
 Copy-Item (Join-Path $Source "README.md") $Destination
+Copy-Item (Join-Path $Source "EDIT_PORTFOLIO.md") $Destination
+Copy-Item (Join-Path $Source "data\recruiter_portfolio.json") (Join-Path $Destination "data\recruiter_portfolio.json")
+Copy-Item (Join-Path $Source "data\recruiter_portfolio.example.json") (Join-Path $Destination "data\recruiter_portfolio.example.json")
 
 $Snapshot = Join-Path $Source "data\portfolio_snapshot.json"
 if (Test-Path $Snapshot) {
-    $DataDest = Join-Path $Destination "data"
-    New-Item -ItemType Directory -Path $DataDest | Out-Null
-    Copy-Item $Snapshot (Join-Path $DataDest "portfolio_snapshot.json")
+    Copy-Item $Snapshot (Join-Path $Destination "data\portfolio_snapshot.json")
 }
 
 @"
@@ -45,7 +44,6 @@ __pycache__/
 .streamlit/secrets.toml
 .env
 *.xlsx
-*.csv
 *.zip
 "@ | Set-Content -Encoding UTF8 (Join-Path $Destination ".gitignore")
 
@@ -55,23 +53,17 @@ try {
         git init | Out-Null
         git branch -M main
     }
-    git add app.py requirements.txt README.md .gitignore
-    if (Test-Path ".\data\portfolio_snapshot.json") {
-        git add .\data\portfolio_snapshot.json
-    }
+    git add app.py requirements.txt README.md EDIT_PORTFOLIO.md .gitignore data
     $changes = git status --porcelain
     if ($changes) {
-        git commit -m "Refresh investment research showcase" | Out-Null
+        git commit -m "Refresh recruiter investment showcase" | Out-Null
     }
 }
 finally {
     Pop-Location
 }
 
-Write-Host "Public showcase prepared at: $Destination"
-Write-Host "Portfolio data policy: real aggregate analytics; holdings anonymized; no tickers/cost basis/portfolio value exported."
+Write-Host "Recruiter showcase prepared at: $Destination"
+Write-Host "Edit public theses and values in data\recruiter_portfolio.json."
 Write-Host "Run locally:"
 Write-Host "  cd `"$Destination`"; python -m pip install -r .\requirements.txt; python -m streamlit run .\app.py"
-Write-Host ""
-Write-Host "If GitHub CLI is installed and authenticated, publish with:"
-Write-Host "  cd `"$Destination`"; gh repo create Antzaz-investment-research-showcase --public --source . --remote origin --push"

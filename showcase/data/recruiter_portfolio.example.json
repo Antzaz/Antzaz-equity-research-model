@@ -1,0 +1,83 @@
+{
+  "profile": {
+    "name": "Anton Hiltunen",
+    "headline": "Investment Research & Model Portfolio",
+    "location": "Helsinki, Finland",
+    "email": "Antonhiltunen14@gmail.com",
+    "linkedin_url": "https://www.linkedin.com/in/anton-hiltunen-b178a3146",
+    "summary": "Fundamental equity research, valuation, portfolio construction and risk analytics presented in a concise recruiter-facing format.",
+    "footer": "Personal research portfolio for recruitment and project demonstration; not investment advice."
+  },
+  "portfolio": {
+    "name": "Anton Hiltunen Model Portfolio",
+    "strategy": "Concentrated long-term equity portfolio focused on durable competitive advantages, strong balance sheets, attractive reinvestment opportunities and valuation discipline.",
+    "benchmark": "S&P 500",
+    "inception_date": "2026-01-01",
+    "last_updated": "2026-08-10",
+    "disclosure": "Model portfolio. Published weights and research views are for demonstration and do not need to match personal brokerage holdings."
+  },
+  "portfolio_metrics": {
+    "annualized_return": 0.12,
+    "benchmark_annualized_return": 0.09,
+    "active_annualized_return": 0.03,
+    "annualized_volatility": 0.18,
+    "sharpe": 0.65,
+    "max_drawdown": -0.14
+  },
+  "performance": [
+    {"date": "2026-01-01", "portfolio": 1.0, "benchmark": 1.0},
+    {"date": "2026-04-01", "portfolio": 1.05, "benchmark": 1.03},
+    {"date": "2026-08-01", "portfolio": 1.12, "benchmark": 1.09}
+  ],
+  "companies": [
+    {
+      "published": true,
+      "company": "Example Company",
+      "ticker": "EXMPL",
+      "sector": "Technology",
+      "weight": 0.15,
+      "rating": "BUY",
+      "currency": "USD",
+      "current_price": 100.0,
+      "fair_value": 125.0,
+      "upside": null,
+      "conviction": "High",
+      "investment_horizon": "3-5 years",
+      "last_reviewed": "2026-08-10",
+      "one_line_thesis": "One sentence explaining why the market may be underestimating the company's long-term earnings power.",
+      "thesis": [
+        "First evidence-backed thesis point.",
+        "Second evidence-backed thesis point.",
+        "Third evidence-backed thesis point."
+      ],
+      "catalysts": ["Potential catalyst 1", "Potential catalyst 2"],
+      "risks": ["Key risk 1", "Key risk 2"],
+      "falsification_conditions": [
+        "Specific observable condition that would invalidate the original thesis."
+      ],
+      "scorecard": {
+        "business_quality": 8,
+        "competitive_moat": 8,
+        "management_capital_allocation": 7,
+        "balance_sheet": 9,
+        "growth": 7,
+        "valuation": 7
+      },
+      "valuation_scenarios": [
+        {"scenario": "Bear", "value": 80, "probability": "20%", "notes": "What must happen"},
+        {"scenario": "Base", "value": 125, "probability": "60%", "notes": "Core assumptions"},
+        {"scenario": "Bull", "value": 160, "probability": "20%", "notes": "Upside case"}
+      ],
+      "key_kpis": [
+        {"KPI": "Revenue growth", "Current": "10%", "Thesis threshold": ">8%"},
+        {"KPI": "FCF margin", "Current": "22%", "Thesis threshold": ">20%"}
+      ],
+      "institutional_comparison": [
+        "Summarize where your assumptions agree or disagree with disclosed professional-investor or market views."
+      ],
+      "notes": "Optional short research note.",
+      "sources": [{"label": "Investor relations", "url": "https://example.com"}],
+      "full_report_url": null
+    }
+  ]
+}
