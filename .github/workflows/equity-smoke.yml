@@ -11,6 +11,7 @@ on:
       - 'research.py'
       - 'agent_research/**'
       - 'source_registry.py'
+      - 'institutional_lenses.py'
       - 'currency_normalization.py'
       - 'consensus_quality.py'
       - 'dynamic_peer_engine.py'
@@ -45,7 +46,7 @@ jobs:
         run: python update_model.py ${{ matrix.ticker }}
       - name: Run no-token research agents
         run: python research.py ${{ matrix.ticker }} --skip-model
-      - name: Validate consolidated workbook, source coverage and data scales
+      - name: Validate consolidated workbook, expanded peers and institutional lenses
         env:
           TICKER: ${{ matrix.ticker }}
         run: |
@@ -61,10 +62,16 @@ jobs:
           path=files[-1]
           wb=load_workbook(path,data_only=False,read_only=False)
 
-          removed={'Visual Dashboard','Comparative Analysis','Valuation Cross-Checks','AI Analysis','AI Valuation'}
+          removed={
+              'Visual Dashboard','Comparative Analysis','Valuation Cross-Checks','AI Analysis','AI Valuation',
+              'Research Notes','Research Checklist','Research Journal','Data Dictionary'
+          }
           survivors=removed.intersection(wb.sheetnames)
-          assert not survivors, f'Duplicate presentation sheets still present: {sorted(survivors)}'
-          for required in ('Leadership & Culture','Peer Comps','Expectations & Consensus','Dashboard','Data Quality'):
+          assert not survivors, f'Duplicate/consolidated sheets still present: {sorted(survivors)}'
+          for required in (
+              'Leadership & Culture','Peer Comps','Expectations & Consensus','Dashboard','Data Quality',
+              'Institutional Comparison','Research Workbench'
+          ):
               assert required in wb.sheetnames, f'{required} sheet missing'
 
           # The consolidated people/leadership block must be idempotent, not appended repeatedly.
@@ -85,23 +92,48 @@ jobs:
           assert conclusion, 'Alternative-company research conclusion missing'
 
           peer=wb['Peer Comps']
-          assert peer['M3'].value=='Industry Market Share %', 'Industry market-share column missing'
-          assert peer['N3'].value=='Peer-Set Market Cap %', 'Peer-set market-cap percentage column missing'
-          peer_weights=[]
-          for r in range(4,10):
+          expected_headers={13:'Industry Market Share %',14:'Peer-Set Market Cap %',16:'Peer Type',17:'Data Coverage %',18:'Metric Source / Fallback Notes'}
+          for col,header in expected_headers.items():
+              assert peer.cell(3,col).value==header, f'Peer header {header!r} missing at column {col}'
+
+          peer_rows=[]
+          for r in range(4,min(peer.max_row,30)+1):
+              symbol=str(peer.cell(r,2).value or '').strip()
+              if symbol and not symbol.startswith('REVIEW'):
+                  peer_rows.append(r)
+          assert len(peer_rows)>=7, f'Expanded peer set too small: {len(peer_rows)} companies'
+          assert len(peer_rows)<=10, f'Peer set unexpectedly large: {len(peer_rows)} companies'
+
+          peer_weights=[]; coverage=[]
+          for r in peer_rows:
               v=peer.cell(r,14).value
               if isinstance(v,(int,float)): peer_weights.append(v)
-          assert len(peer_weights)>=2, 'Peer-set market-cap percentages not populated'
+              cv=peer.cell(r,17).value
+              if isinstance(cv,(int,float)): coverage.append(cv)
+          assert len(peer_weights)>=5, 'Peer-set market-cap percentages not sufficiently populated'
           assert 0.98 <= sum(peer_weights) <= 1.02, f'Peer-set market-cap weights do not sum to ~100%: {sum(peer_weights)}'
+          assert coverage and sum(coverage)/len(coverage)>=0.50, f'Peer metric coverage too low: {sum(coverage)/len(coverage) if coverage else None}'
 
           sources=issuer_sources(ticker)
           assert sources, f'Explicit issuer source registry missing for {ticker}'
+
+          # Institutional comparison must contain exactly ten public-style investment lenses.
+          inst=wb['Institutional Comparison']
+          institutions=[str(inst.cell(r,1).value or '').strip() for r in range(11,21)]
+          institutions=[x for x in institutions if x]
+          assert len(institutions)==10, f'Expected 10 institutional lenses, got {len(institutions)}: {institutions}'
+          expected_names=['Berkshire','Fundsmith','Dodge & Cox','Davis','Pershing','Baillie','Akre','Polen','Capital Group','T. Rowe']
+          for name in expected_names:
+              assert any(name.lower() in x.lower() for x in institutions), f'Missing institutional lens: {name}'
+          assert all(inst.cell(r,8).value for r in range(11,21)), 'Institutional public-source links missing'
 
           if ticker=='TSM':
               hist=wb['Historical Financials']; latest_rev=hist['G4'].value
               assert isinstance(latest_rev,(int,float)) and 50 < latest_rev < 500, f'TSM latest revenue scale looks wrong: {latest_rev}'
               market_share=peer['M4'].value
               assert isinstance(market_share,(int,float)) and 0.60 < market_share < 0.80, f'TSM market share missing/wrong: {market_share}'
+              share_rows=[r for r in peer_rows if isinstance(peer.cell(r,13).value,(int,float))]
+              assert len(share_rows)>=4, f'TSM should have multiple comparable foundry market-share observations; got {len(share_rows)}'
               assert isinstance(people['B7'].value,(int,float)), 'TSM scope-limited employee signal not populated'
           else:
               # Alphabet has source-scoped business market positions, while broad employee happiness
@@ -123,6 +155,11 @@ jobs:
                               if name in value: broken.append(f'{ws.title}!{cell.coordinate}->{name}')
           assert not broken, f'Formula references to removed sheets remain: {broken[:10]}'
 
+          # Data Dictionary content should survive inside Data Quality after consolidation.
+          dq=wb['Data Quality']
+          dq_text=' '.join(str(dq.cell(r,c).value or '') for r in range(1,dq.max_row+1) for c in range(1,min(dq.max_column,4)+1))
+          assert 'Historical Financials' in dq_text or 'Data Dictionary' in dq_text or 'Field' in dq_text, 'Data Dictionary content was not preserved in Data Quality'
+
           reports=list(Path('research_runs').glob(f'{ticker}/*/agent_report.md'))
           manifests=list(Path('research_runs').glob(f'{ticker}/*/source_health.json'))
           assert reports, 'No-token agent report was not generated'
@@ -130,7 +167,10 @@ jobs:
 
           print(f'{ticker} smoke test PASS')
           print('Workbook:',path)
+          print('Sheet count:',len(wb.sheetnames))
+          print('Peer companies:',len(peer_rows))
+          print('Average peer metric coverage:',sum(coverage)/len(coverage))
           print('Issuer sources:',len(sources))
           print('Leadership proxy:',leadership)
-          print('Peer-set weight sum:',sum(peer_weights))
+          print('Institutional lenses:',len(institutions))
           PY
