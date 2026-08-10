@@ -4,6 +4,11 @@
 *.env
 __pycache__/
 *.pyc
+.pytest_cache/
+.coverage
+htmlcov/
+updated_models/
+*.tmp
 institutional_research/portfolio.csv
 institutional_research/outputs/
 .live_cache/
