@@ -96,10 +96,15 @@ jobs:
           for col,header in expected_headers.items():
               assert peer.cell(3,col).value==header, f'Peer header {header!r} missing at column {col}'
 
+          valid_peer_types={
+              'Target classification','Direct business-model peer','Exact industry',
+              'Strategic sector comp','Same-sector fallback'
+          }
           peer_rows=[]
           for r in range(4,min(peer.max_row,30)+1):
               symbol=str(peer.cell(r,2).value or '').strip()
-              if symbol and not symbol.startswith('REVIEW'):
+              peer_type=str(peer.cell(r,16).value or '').strip()
+              if symbol and peer_type in valid_peer_types:
                   peer_rows.append(r)
           assert len(peer_rows)>=7, f'Expanded peer set too small: {len(peer_rows)} companies'
           assert len(peer_rows)<=10, f'Peer set unexpectedly large: {len(peer_rows)} companies'
