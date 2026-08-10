@@ -13,11 +13,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - name: Compile equity research, automation and portfolio modules
+      - name: Compile equity research, automation, showcase and portfolio modules
         run: |
           python -m py_compile \
             update_model.py \
             equity_live_dashboard.py \
+            showcase/app.py \
             issuer_source_engine.py \
             model_reliability.py \
             dynamic_peer_engine.py \
