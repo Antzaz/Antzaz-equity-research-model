@@ -47,6 +47,8 @@ from segment_chart_fix import repair_segment_charts
 from cross_company_cleanup import refresh_cross_company_tabs
 from dynamic_peer_engine import ensure_dynamic_peer_comps
 from model_reliability import prepare_model_reliability
+from investment_summary import ensure_investment_summary
+from ownership_analysis import ensure_ownership_analysis
 
 # institutional_layers historically created a 33-character temporary sheet name.
 # Patch its sheet factory once so both institutional refreshes are warning-free.
@@ -330,6 +332,10 @@ def main():
     except Exception as exc: print(f"Warning: Cross-company cleanup failed: {exc}")
     try: repair_segment_charts(wb,ticker)
     except Exception as exc: print(f"Warning: Segment chart / final reliability repair failed: {exc}")
+    try: ensure_investment_summary(wb,ticker)
+    except Exception as exc: print(f"Warning: Investment Summary failed: {exc}")
+    try: ensure_ownership_analysis(wb,ticker)
+    except Exception as exc: print(f"Warning: Ownership & Holders failed: {exc}")
     _ensure_excel_sheet_names(wb); _fix_all_charts(wb)
     if "Dashboard" in wb.sheetnames:
         wb["Dashboard"]["A1"]=f"{ticker} Long-Term Value Investing Dashboard"
