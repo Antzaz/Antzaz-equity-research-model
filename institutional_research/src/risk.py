@@ -39,7 +39,12 @@ def portfolio_risk(
     es95 = float(tail.mean()) if not tail.empty else np.nan
 
     beta = np.cov(portfolio_returns, b, ddof=1)[0, 1] / np.var(b, ddof=1) if np.var(b, ddof=1) > 0 else np.nan
-    alpha_daily = portfolio_returns.mean() - beta * b.mean() if np.isfinite(beta) else np.nan
+    # Jensen/CAPM alpha: portfolio excess return minus beta times benchmark excess return.
+    rf_daily = (1 + float(risk_free_rate)) ** (1 / trading_days) - 1
+    alpha_daily = (
+        (portfolio_returns - rf_daily).mean() - beta * (b - rf_daily).mean()
+        if np.isfinite(beta) else np.nan
+    )
     alpha_ann = alpha_daily * trading_days if np.isfinite(alpha_daily) else np.nan
 
     covariance = r.cov() * trading_days
@@ -66,6 +71,7 @@ def portfolio_risk(
         "sortino": float(sortino) if np.isfinite(sortino) else None,
         "beta": float(beta) if np.isfinite(beta) else None,
         "annualized_alpha": float(alpha_ann) if np.isfinite(alpha_ann) else None,
+        "alpha_method": "Jensen/CAPM alpha vs configured benchmark",
         "max_drawdown": max_drawdown(portfolio_returns),
         "daily_var_95": var95,
         "daily_expected_shortfall_95": es95,
