@@ -13,10 +13,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - name: Compile equity research and portfolio modules
+      - name: Compile equity research, automation and portfolio modules
         run: |
           python -m py_compile \
             update_model.py \
+            equity_live_dashboard.py \
             issuer_source_engine.py \
             model_reliability.py \
             dynamic_peer_engine.py \
@@ -24,9 +25,13 @@ jobs:
             segment_source_engine.py \
             segment_source_enrichment.py \
             segment_chart_fix.py \
+            automation/portfolio_universe.py \
+            automation/build_private_bundle.py \
             institutional_research/run_research.py \
             institutional_research/dashboard.py \
+            institutional_research/live_dashboard.py \
             institutional_research/pages/1_Alpha_Analysis.py \
+            institutional_research/src/live_data.py \
             institutional_research/src/alpha_analysis.py \
             institutional_research/src/risk.py \
             institutional_research/src/professional_portfolio.py
