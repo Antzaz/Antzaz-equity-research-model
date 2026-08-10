@@ -52,8 +52,10 @@ BUSINESS_MARKET_SHARE_SNAPSHOTS["GOOG"] = BUSINESS_MARKET_SHARE_SNAPSHOTS["GOOGL
 
 # Business-model-specific discovery seeds. Every candidate is still checked by the dynamic
 # peer engine. The direct foundry set is prioritized ahead of broader semiconductor comps.
+# Prefer SMIC's Hong Kong listing for live financial data; retain SMICY above only as a
+# market-share alias for historical references.
 PREFERRED_PEERS = {
-    "TSM": ["UMC", "GFS", "SMICY", "005930.KS", "TSEM"],
+    "TSM": ["UMC", "GFS", "0981.HK", "005930.KS", "TSEM"],
 }
 
 
