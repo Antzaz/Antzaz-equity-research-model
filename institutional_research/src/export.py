@@ -31,6 +31,12 @@ def write_outputs(
     for name, df in tables.items():
         if df is None:
             continue
+        # A completely schema-less DataFrame writes a zero-byte/blank CSV that
+        # pandas cannot read back (EmptyDataError). Missing optional analyses
+        # are represented by an absent file instead; DataFrames with defined
+        # columns but zero rows still export their headers normally.
+        if isinstance(df, pd.DataFrame) and len(df.columns) == 0:
+            continue
         for target in [snapshot, latest]:
             df.to_csv(target / f"{name}.csv", index=False)
 
