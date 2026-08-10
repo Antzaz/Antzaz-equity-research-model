@@ -152,11 +152,44 @@ When institutional portfolio data is available, compare the user's portfolio wit
 
 Do not present portfolio metrics as comparable when methodologies, dates or data coverage differ materially.
 
+## Agent-assisted research layer
+
+`research.py` is the recommended orchestration entry point when agent monitoring is wanted around the normal company model.
+
+```powershell
+python .\research.py GOOGL
+```
+
+Phase 1 specialist agents:
+
+- Filings & Financials Agent
+- KPI / Earnings Agent
+- Thesis Monitor Agent
+- Research QA / Skeptic Agent
+
+The agent layer must remain evidence-bound. Python/Excel remains the deterministic calculation engine; agents research, classify, compare, challenge and identify missing evidence. AI narrative must never silently overwrite WACC, revenue growth, margins, capex, terminal assumptions, position sizes or other model inputs.
+
+Durable public KPI history is stored under `research_data/<TICKER>/kpi_history.json`. Generated per-run reports under `research_runs/` are runtime artifacts and are not committed.
+
+Optional OpenAI reasoning is explicitly enabled with `--ai` and requires a locally supplied API key. The LLM receives locally extracted evidence only and has no trading permissions. See `AI_AGENTS.md` for detailed governance and the roadmap.
+
+Planned specialist extensions should reuse existing project modules rather than duplicate calculations:
+
+- Institutional Investor Comparison Agent
+- Competitive Intelligence Agent
+- Valuation Challenge / Reverse-DCF Agent
+- Portfolio Manager Agent
+- Research Journal / Decision Review Agent
+
 ## Current repository areas
 
 ### Single-company model
 
 Repository root, including `update_model.py` and generated research workbooks.
+
+### Agent-assisted single-company research
+
+Repository root `research.py`, `agent_research/`, `research_data/` and `AI_AGENTS.md`.
 
 ### Institutional portfolio layer
 
@@ -200,3 +233,4 @@ When asked to analyze a company or portfolio in this project:
 6. Include a thesis-falsification section for material investment recommendations.
 7. Keep outputs compatible with the repository's existing templates and research workflow when possible.
 8. Do not invent private institutional valuation assumptions that are not publicly disclosed.
+9. When agent-assisted monitoring is relevant, prefer `research.py TICKER` and preserve the rule that AI reasoning proposes or challenges assumptions but the deterministic model calculates them.
