@@ -2,25 +2,28 @@ from __future__ import annotations
 
 """Resume-safe Streamlit showcase.
 
-This app intentionally contains only synthetic/sanitized demonstration data. It does not
-load the private portfolio bundle, GitHub Actions artifacts, portfolio.csv, cost basis,
-position values, or downloadable private workbooks.
+Equity-research examples are illustrative. Portfolio analytics load a sanitized snapshot
+built from the real production portfolio when showcase/data/portfolio_snapshot.json exists.
+The snapshot excludes tickers, company names, shares, cost basis, market value, transactions,
+private workbooks and credentials.
 """
 
-import math
+import json
 from datetime import date
+from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 import streamlit as st
 
-st.set_page_config(page_title="Investment Research & Portfolio Analytics", layout="wide")
+BASE = Path(__file__).resolve().parent
+SNAPSHOT_PATH = BASE / "data" / "portfolio_snapshot.json"
 
+st.set_page_config(page_title="Investment Research & Portfolio Analytics", layout="wide")
 st.title("Investment Research & Portfolio Analytics")
 st.caption(
     "Interactive demonstration of an automated Python research framework. "
-    "All portfolio holdings and position-level figures shown here are anonymized or synthetic."
+    "Portfolio analytics can reflect the real production portfolio while holdings remain anonymized."
 )
 
 view = st.radio(
@@ -36,6 +39,18 @@ def pct(x, d=1):
 
 def num(x, d=2):
     return "—" if x is None or pd.isna(x) else f"{x:.{d}f}"
+
+
+def load_snapshot():
+    if not SNAPSHOT_PATH.exists():
+        return None
+    try:
+        return json.loads(SNAPSHOT_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+snapshot = load_snapshot()
 
 
 if view == "Equity Research":
@@ -57,8 +72,14 @@ if view == "Equity Research":
             "Free Cash Flow": [14.6, 19.1, 18.4, 23.5, 28.9, 33.7],
         }
     )
-    hist_long = hist.melt("Year", var_name="Metric", value_name="$bn")
-    fig = px.line(hist_long, x="Year", y="$bn", color="Metric", markers=True, title="Historical financial progression")
+    fig = px.line(
+        hist.melt("Year", var_name="Metric", value_name="$bn"),
+        x="Year",
+        y="$bn",
+        color="Metric",
+        markers=True,
+        title="Historical financial progression",
+    )
     st.plotly_chart(fig, use_container_width=True)
 
     left, right = st.columns(2)
@@ -98,81 +119,129 @@ if view == "Equity Research":
 
 elif view == "Portfolio Analytics":
     st.subheader("Portfolio Analytics Dashboard")
-    st.caption("Anonymous demonstration portfolio. No real holdings, portfolio value or cost basis are exposed.")
 
-    metrics = {
-        "Ann. return": 0.161,
-        "Ann. volatility": 0.214,
-        "Sharpe": 0.66,
-        "Tracking error": 0.132,
-        "Information ratio": 0.43,
-        "Max drawdown": -0.286,
-    }
-    cols = st.columns(6)
-    cols[0].metric("Ann. return", pct(metrics["Ann. return"]))
-    cols[1].metric("Ann. volatility", pct(metrics["Ann. volatility"]))
-    cols[2].metric("Sharpe", num(metrics["Sharpe"]))
-    cols[3].metric("Tracking error", pct(metrics["Tracking error"]))
-    cols[4].metric("Info ratio", num(metrics["Information ratio"]))
-    cols[5].metric("Max drawdown", pct(metrics["Max drawdown"]))
-
-    weights = pd.DataFrame(
-        {
-            "Holding": [f"Holding {c}" for c in "ABCDEFGH"],
-            "Weight": [0.19, 0.16, 0.15, 0.13, 0.12, 0.10, 0.08, 0.07],
-            "Risk Contribution": [0.22, 0.17, 0.16, 0.12, 0.12, 0.09, 0.07, 0.05],
+    if snapshot:
+        st.caption(
+            "Real aggregate analytics from the production portfolio. Holdings are anonymized and sensitive position economics are excluded."
+        )
+        generated = snapshot.get("generated_utc")
+        if generated:
+            st.caption(f"Sanitized snapshot generated: {generated}")
+        metrics = snapshot.get("metrics", {})
+        holdings = pd.DataFrame(snapshot.get("holdings", []))
+        alpha = pd.DataFrame(snapshot.get("alpha", []))
+        factors = pd.DataFrame(snapshot.get("factors", []))
+        stress = pd.DataFrame(snapshot.get("stress", []))
+        timeseries = pd.DataFrame(snapshot.get("timeseries", []))
+    else:
+        st.warning(
+            "No sanitized real snapshot is bundled yet. Run the portfolio analysis and then automation/build_showcase_snapshot.py. "
+            "The fallback values below are illustrative."
+        )
+        metrics = {
+            "annualized_return": 0.161,
+            "annualized_volatility": 0.214,
+            "sharpe": 0.66,
+            "tracking_error": 0.132,
+            "information_ratio": 0.43,
+            "max_drawdown": -0.286,
         }
-    )
-    left, right = st.columns(2)
-    with left:
-        fig = px.pie(weights, names="Holding", values="Weight", title="Anonymous portfolio weights")
+        holdings = pd.DataFrame(
+            {
+                "holding": [f"Holding {c}" for c in "ABCDEFGH"],
+                "weight": [0.19, 0.16, 0.15, 0.13, 0.12, 0.10, 0.08, 0.07],
+                "risk_contribution": [0.22, 0.17, 0.16, 0.12, 0.12, 0.09, 0.07, 0.05],
+            }
+        )
+        alpha = pd.DataFrame(
+            {
+                "model": ["CAPM / Jensen", "Fama-French 3", "Carhart 4", "Fama-French 5", "Style Proxy"],
+                "annualized_alpha": [0.041, 0.033, 0.026, 0.030, 0.023],
+                "t_stat": [1.82, 1.55, 1.27, 1.44, 1.10],
+                "r2": [0.74, 0.80, 0.84, 0.83, 0.87],
+            }
+        )
+        factors = pd.DataFrame(
+            {
+                "factor": ["Market", "Size", "Value", "Momentum", "Quality", "Low Volatility"],
+                "exposure": [1.08, -0.12, -0.28, 0.34, 0.29, -0.08],
+            }
+        )
+        stress = pd.DataFrame(
+            {
+                "scenario": ["Broad market -20%", "Rates +150 bps", "Growth selloff", "Credit shock"],
+                "estimated_return": [-0.176, -0.082, -0.142, -0.094],
+            }
+        )
+        timeseries = pd.DataFrame()
+
+    cols = st.columns(6)
+    cols[0].metric("Ann. return", pct(metrics.get("annualized_return")))
+    cols[1].metric("Ann. volatility", pct(metrics.get("annualized_volatility")))
+    cols[2].metric("Sharpe", num(metrics.get("sharpe")))
+    cols[3].metric("Tracking error", pct(metrics.get("tracking_error")))
+    cols[4].metric("Info ratio", num(metrics.get("information_ratio")))
+    cols[5].metric("Max drawdown", pct(metrics.get("max_drawdown")))
+
+    extra1, extra2, extra3, extra4 = st.columns(4)
+    extra1.metric("Beta", num(metrics.get("beta")))
+    extra2.metric("Sortino", num(metrics.get("sortino")))
+    extra3.metric("Active return", pct(metrics.get("active_annualized_return")))
+    extra4.metric("Daily ES 95%", pct(metrics.get("daily_expected_shortfall_95"), 2))
+
+    if not timeseries.empty and {"date", "portfolio_growth"}.issubset(timeseries.columns):
+        timeseries["date"] = pd.to_datetime(timeseries["date"], errors="coerce")
+        cols_to_show = ["date", "portfolio_growth"]
+        if "benchmark_growth" in timeseries.columns:
+            cols_to_show.append("benchmark_growth")
+        growth = timeseries[cols_to_show].melt("date", var_name="Series", value_name="Growth")
+        fig = px.line(growth, x="date", y="Growth", color="Series", title="Real portfolio vs benchmark growth path")
         st.plotly_chart(fig, use_container_width=True)
-    with right:
-        risk_long = weights.melt("Holding", value_vars=["Weight", "Risk Contribution"], var_name="Series", value_name="Value")
-        fig = px.bar(risk_long, x="Holding", y="Value", color="Series", barmode="group", title="Capital weight vs risk contribution")
-        fig.update_yaxes(tickformat=".0%")
-        st.plotly_chart(fig, use_container_width=True)
+
+    if not holdings.empty:
+        left, right = st.columns(2)
+        with left:
+            fig = px.pie(holdings, names="holding", values="weight", title="Anonymous real portfolio weights")
+            st.plotly_chart(fig, use_container_width=True)
+        with right:
+            value_vars = [c for c in ["weight", "risk_contribution"] if c in holdings.columns]
+            risk_long = holdings.melt("holding", value_vars=value_vars, var_name="Series", value_name="Value")
+            fig = px.bar(
+                risk_long,
+                x="holding",
+                y="Value",
+                color="Series",
+                barmode="group",
+                title="Capital weight vs risk contribution",
+            )
+            fig.update_yaxes(tickformat=".0%")
+            st.plotly_chart(fig, use_container_width=True)
 
     st.markdown("#### Alpha & factor-adjusted performance")
-    alpha = pd.DataFrame(
-        {
-            "Model": ["CAPM / Jensen", "Fama-French 3", "Carhart 4", "Fama-French 5", "Style Proxy"],
-            "Annualized Alpha": [0.041, 0.033, 0.026, 0.030, 0.023],
-            "t-stat": [1.82, 1.55, 1.27, 1.44, 1.10],
-            "R²": [0.74, 0.80, 0.84, 0.83, 0.87],
-        }
-    )
-    fig = px.bar(alpha, x="Model", y="Annualized Alpha", title="Residual alpha across risk models")
-    fig.update_yaxes(tickformat=".1%")
-    st.plotly_chart(fig, use_container_width=True)
-    st.dataframe(alpha, use_container_width=True, hide_index=True)
+    if not alpha.empty:
+        fig = px.bar(alpha, x="model", y="annualized_alpha", title="Residual alpha across risk models")
+        fig.update_yaxes(tickformat=".1%")
+        st.plotly_chart(fig, use_container_width=True)
+        display_cols = [c for c in ["model", "annualized_alpha", "t_stat", "p_value", "r2", "significant_5pct", "interpretation"] if c in alpha.columns]
+        st.dataframe(alpha[display_cols], use_container_width=True, hide_index=True)
+    else:
+        st.info("No alpha regression results were available in the sanitized snapshot.")
 
-    factors = pd.DataFrame(
-        {
-            "Factor": ["Market", "Size", "Value", "Momentum", "Quality", "Low Volatility"],
-            "Exposure": [1.08, -0.12, -0.28, 0.34, 0.29, -0.08],
-        }
-    )
-    stress = pd.DataFrame(
-        {
-            "Scenario": ["Broad market -20%", "Rates +150 bps", "Growth selloff", "Credit shock"],
-            "Estimated Portfolio Return": [-0.176, -0.082, -0.142, -0.094],
-        }
-    )
     left, right = st.columns(2)
     with left:
-        fig = px.bar(factors, x="Factor", y="Exposure", title="Factor exposures")
-        st.plotly_chart(fig, use_container_width=True)
+        if not factors.empty:
+            fig = px.bar(factors, x="factor", y="exposure", title="Factor/style exposures")
+            st.plotly_chart(fig, use_container_width=True)
     with right:
-        fig = px.bar(stress, x="Scenario", y="Estimated Portfolio Return", title="Stress scenarios")
-        fig.update_yaxes(tickformat=".0%")
-        st.plotly_chart(fig, use_container_width=True)
+        if not stress.empty:
+            fig = px.bar(stress, x="scenario", y="estimated_return", title="Portfolio stress scenarios")
+            fig.update_yaxes(tickformat=".0%")
+            st.plotly_chart(fig, use_container_width=True)
 
-    st.markdown("#### Portfolio methods demonstrated")
+    st.markdown("#### Privacy boundary")
     st.write(
-        "Benchmark-relative performance, Sharpe/Sortino, tracking error, information ratio, Jensen alpha, "
-        "Fama-French/Carhart regressions, rolling alpha, factor exposures, risk budgeting, liquidity checks, "
-        "stress testing, Monte Carlo analysis and constrained portfolio alternatives."
+        "The displayed portfolio analytics can be real, but the public snapshot contains no ticker symbols, company names, "
+        "share counts, average costs, portfolio value, unrealized P&L, transaction history, private Excel models or credentials."
     )
 
 else:
@@ -196,10 +265,10 @@ else:
     )
     st.dataframe(architecture, use_container_width=True, hide_index=True)
 
-    st.markdown("#### Privacy design")
+    st.markdown("#### Public showcase data policy")
     st.write(
-        "The public showcase intentionally contains no real holdings, position values, average costs, transaction history, "
-        "private workbook downloads, API credentials or GitHub Actions secrets. The production portfolio portal is separate and access-controlled."
+        "The public portfolio dashboard may use genuine aggregate model outputs, while all position identifiers and sensitive "
+        "economics are removed before publication. Equity-research demonstration data remains illustrative unless explicitly published as a public case study."
     )
 
     st.markdown("#### Technologies")
@@ -207,5 +276,5 @@ else:
 
 st.divider()
 st.caption(
-    f"Demonstration build · {date.today().isoformat()} · For portfolio/project demonstration only; not investment advice."
+    f"Showcase build · {date.today().isoformat()} · For portfolio/project demonstration only; not investment advice."
 )
