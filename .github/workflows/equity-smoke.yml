@@ -5,6 +5,14 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/equity-smoke.yml'
+      - 'update_model.py'
+      - 'currency_normalization.py'
+      - 'consensus_quality.py'
+      - 'dynamic_peer_engine.py'
+      - 'market_context.py'
+      - 'research_extensions.py'
+      - 'segment_source_engine.py'
+      - 'ai_analysis.py'
   workflow_dispatch:
 
 jobs:
