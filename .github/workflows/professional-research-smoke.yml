@@ -1,0 +1,106 @@
+name: Professional research extensions
+
+on:
+  push:
+    branches:
+      - main
+      - 'agent/**'
+    paths:
+      - '.github/workflows/professional-research-smoke.yml'
+      - 'consensus_sources.py'
+      - 'consensus_quality.py'
+      - 'professional_analysis.py'
+      - 'source_registry.py'
+      - 'ai_analysis.py'
+      - 'ai_effect_analysis.py'
+      - 'institutional_lenses.py'
+      - 'research_extensions.py'
+      - 'institutional_layers.py'
+      - 'update_model.py'
+  workflow_dispatch:
+
+jobs:
+  professional-research-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+          cache-dependency-path: requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Build GOOGL research workbook
+        env:
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+        run: python update_model.py GOOGL
+      - name: Validate professional extensions
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from openpyxl import load_workbook
+          from source_registry import consensus_sources, professional_framework_sources, regulator_macro_sources
+
+          files=sorted(Path('updated_models').glob('GOOGL_Equity_Research_*.xlsx'))
+          assert files, 'GOOGL workbook was not generated'
+          wb=load_workbook(files[-1],data_only=False,read_only=False)
+
+          required=['Expectations & Consensus','Market Expectations','AI Impact Analysis','Institutional Comparison','Data Quality']
+          for name in required:
+              assert name in wb.sheetnames, f'{name} missing'
+
+          def find(ws,text):
+              for r in range(1,ws.max_row+1):
+                  if str(ws.cell(r,1).value or '').strip()==text:
+                      return r
+              return None
+
+          exp=wb['Expectations & Consensus']
+          assert exp['L6'].value=='Provider Count', f'Provider Count header missing: {exp["L6"].value}'
+          assert exp['M6'].value=='Providers / Provenance', f'Provider provenance header missing: {exp["M6"].value}'
+          assert find(exp,'Consensus Provider Status & API Coverage'), 'Consensus provider-status block missing'
+          assert find(exp,'Consensus Source Cross-Check — Provider-Level Observations'), 'Provider-level consensus cross-check missing'
+
+          market=wb['Market Expectations']
+          assert find(market,'External Consensus Cross-Check — Street Estimates vs Market-Implied Hurdles'), 'Market/consensus cross-check missing'
+
+          ai=wb['AI Impact Analysis']
+          ai_methods=find(ai,'Professional AI Impact Benchmarks — How Industry Research Sizes AI')
+          ai_bridge=find(ai,'AI Economics Bridge — From Adoption to Incremental FCF and ROIC')
+          assert ai_methods, 'Professional AI methodology block missing'
+          assert ai_bridge, 'AI economics / incremental-ROIC bridge missing'
+          labels={str(ai.cell(r,1).value or '').strip() for r in range(ai_bridge, min(ai.max_row,ai_bridge+30)+1)}
+          for label in ('Revenue exposed to AI','AI adoption / attach rate','Incremental AI revenue','Pre-tax AI ROIC proxy','Pre-tax AI FCF bridge'):
+              assert label in labels, f'AI economics driver/output missing: {label}'
+
+          inst=wb['Institutional Comparison']
+          for title in (
+              'Score Construction & Provenance — Where the Institutional Scores Come From',
+              'Company Dimension Provenance',
+              'Institution Lens Weight Map — Explicit Project Assumptions',
+              'Professional Analysis Toolkit — Additional Methods Worth Using',
+          ):
+              assert find(inst,title), f'Institutional methodology block missing: {title}'
+
+          cq=consensus_sources(); pf=professional_framework_sources(); rm=regulator_macro_sources()
+          for key in ('yahoo','fmp','alpha_vantage','finnhub'):
+              assert key in cq, f'Consensus source not registered: {key}'
+          assert len(pf)>=6, f'Professional framework catalog too small: {len(pf)}'
+          assert 'sec_edgar' in rm and 'fred' in rm, 'Regulator/macro source catalog incomplete'
+
+          dq=wb['Data Quality']
+          dq_labels={str(dq.cell(r,1).value or '').strip():str(dq.cell(r,2).value or '').strip() for r in range(1,dq.max_row+1)}
+          assert 'Consensus provider coverage' in dq_labels, 'Consensus provider quality control missing'
+          assert dq_labels['Consensus provider coverage'] in {'PASS','REVIEW'}, 'Invalid consensus provider quality status'
+
+          print('Professional research extension smoke test PASS')
+          print('Workbook:',files[-1])
+          print('Consensus providers registered:',len(cq))
+          print('Professional frameworks registered:',len(pf))
+          print('AI methodology row:',ai_methods)
+          print('AI economics bridge row:',ai_bridge)
+          PY
