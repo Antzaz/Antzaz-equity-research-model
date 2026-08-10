@@ -10,14 +10,27 @@ Run:
 python .\research.py GOOGL
 ```
 
-This builds the normal research workbook and then runs four specialist agents:
+This builds the normal research workbook and then runs five specialist agents:
 
-1. **Filings & Financials Agent** — inventories primary filing references already collected by the workbook and flags coverage gaps.
-2. **KPI / Earnings Agent** — extracts the `AI Impact Analysis` evidence table, writes an auditable run snapshot, and maintains `research_data/<TICKER>/kpi_history.json`.
-3. **Thesis Monitor Agent** — converts evidence signals into a transparent triage score and, when AI reasoning is enabled, assesses growth, margins, capital intensity, moat, disruption and falsification questions.
-4. **Research QA / Skeptic Agent** — checks source URLs, disclosure types, dates, duplicate/stale KPI evidence and separation between evidence and inference.
+1. **Source Health Agent** — checks the centralized issuer/specialist source registry and performs a small bounded reachability probe. It is deterministic and uses no AI tokens.
+2. **Filings & Financials Agent** — inventories primary filing references already collected by the workbook and flags coverage gaps.
+3. **KPI / Earnings Agent** — extracts the `AI Impact Analysis` evidence table, writes an auditable run snapshot, and maintains `research_data/<TICKER>/kpi_history.json`.
+4. **Thesis Monitor Agent** — converts evidence signals into a transparent triage score and, when AI reasoning is enabled, assesses growth, margins, capital intensity, moat, disruption and falsification questions.
+5. **Research QA / Skeptic Agent** — checks source URLs, disclosure types, dates, duplicate/stale KPI evidence and separation between evidence and inference.
 
 Generated run artifacts are stored under `research_runs/<TICKER>/<timestamp>/` and are ignored by Git. Public KPI history under `research_data/` is intentionally durable.
+
+## Source discipline
+
+`source_registry.py` is the shared catalog for issuer-owned research pages and specialist market-position sources. It exists to avoid maintaining the same URL lists in multiple research layers.
+
+- Prefer issuer filings, earnings, annual reports, governance and workforce disclosures for company facts.
+- Regulator/XBRL data remains the next financial-data layer where applicable.
+- Transparent market-data fallbacks may fill gaps but must remain labeled as fallbacks.
+- Specialist sources such as TrendForce, Synergy Research, StatCounter or IDC are used only for the market definitions they actually measure.
+- Industry market-share percentages may enter `Peer Comps` only when one comparable source/market definition covers the peer set.
+- `Peer-Set Market Cap %` is a separate calculated concentration measure and must never be labeled as industry market share.
+- Employee-review platforms may be used for manual corroboration, not silently treated as audited company-wide employee happiness.
 
 ## Optional AI reasoning
 
