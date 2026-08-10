@@ -37,7 +37,7 @@ jobs:
           path=files[-1]
           wb=load_workbook(path,data_only=False,read_only=False)
 
-          removed={'Visual Dashboard','Comparative Analysis','Valuation Cross-Checks'}
+          removed={'Visual Dashboard','Comparative Analysis','Valuation Cross-Checks','AI Analysis','AI Valuation'}
           survivors=removed.intersection(wb.sheetnames)
           assert not survivors, f'Duplicate presentation sheets still present: {sorted(survivors)}'
           assert 'Leadership & Culture' in wb.sheetnames, 'Leadership & Culture sheet missing'
