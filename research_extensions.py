@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""People, leadership, market-position and workbook de-duplication extensions.
+"""People, leadership, institutional comparison and workbook consolidation extensions.
 
 The module keeps facts, calculated proxies and analyst inference separate. It does not
 invent employee-happiness or market-share data when a comparable source is unavailable.
@@ -10,6 +10,7 @@ import math
 import yfinance as yf
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
+from institutional_lenses import consolidate_research_workbench, ensure_institutional_lens_comparison
 from market_context import business_market_share_records, market_share_record
 from source_registry import SPECIALIST_MARKET_SOURCES, issuer_sources
 
@@ -123,7 +124,7 @@ def _pct_rank(values,value,higher=True):
 def _peer_rows(wb):
     if "Peer Comps" not in wb.sheetnames: return []
     ws=wb["Peer Comps"]; rows=[]
-    for r in range(4,min(ws.max_row,20)+1):
+    for r in range(4,min(ws.max_row,30)+1):
         ticker=str(ws.cell(r,2).value or "").strip().upper()
         if not ticker or ticker.startswith("REVIEW"): continue
         rows.append({
@@ -133,6 +134,8 @@ def _peer_rows(wb):
             "roe":_num(ws.cell(r,8).value),
             "market_share":_num(ws.cell(r,13).value) if ws.max_column>=13 else None,
             "peer_set_weight":_num(ws.cell(r,14).value) if ws.max_column>=14 else None,
+            "peer_type":str(ws.cell(r,16).value or "") if ws.max_column>=16 else "",
+            "data_coverage":_num(ws.cell(r,17).value) if ws.max_column>=17 else None,
         })
     return rows
 
@@ -256,12 +259,20 @@ def _write_leadership(wb,ticker,info,employee,leadership_score,leadership_rows,a
     for col,w in {"A":38,"B":28,"C":58,"D":48,"E":24,"F":26,"G":60}.items(): ws.column_dimensions[col].width=w
     ws.freeze_panes="A6"
 
+def _last_peer_row(wb):
+    if "Peer Comps" not in wb.sheetnames: return 9
+    ws=wb["Peer Comps"]; last=4
+    for r in range(4,min(ws.max_row,30)+1):
+        ticker=str(ws.cell(r,2).value or "").strip()
+        if ticker and not ticker.startswith("REVIEW"): last=r
+    return max(5,last)
+
 def _dashboard_peer_direct(wb):
     if "Dashboard" not in wb.sheetnames or "Peer Comps" not in wb.sheetnames: return
-    ws=wb["Dashboard"]
+    ws=wb["Dashboard"]; last=_last_peer_row(wb)
     for r,col,higher in [(19,"C",False),(20,"D",False),(21,"E",False),(22,"F",True),(23,"G",True),(24,"H",True)]:
         ws.cell(r,2,f"='Peer Comps'!{col}4")
-        ws.cell(r,3,f"=IFERROR(MEDIAN('Peer Comps'!{col}5:{col}9),\"\")")
+        ws.cell(r,3,f"=IFERROR(MEDIAN('Peer Comps'!{col}5:{col}{last}),\"\")")
         comp=">" if higher else "<"; good="Better" if higher else "Attractive"; bad="Worse" if higher else "Premium"
         ws.cell(r,4,f'=IF(OR(B{r}="",C{r}=""),"",IF(B{r}{comp}C{r},"{good}","{bad}"))')
 
@@ -317,11 +328,13 @@ def _quality(wb,ticker,info,employee,alt):
     if "Data Quality" not in wb.sheetnames: return
     ws=wb["Data Quality"]; existing={str(ws.cell(r,1).value or "").strip():r for r in range(1,ws.max_row+1)}
     src=_sources(ticker,info); share=market_share_record(ticker); target=alt.get("target") or {}
+    peers=_peer_rows(wb); coverage=[x.get("data_coverage") for x in peers if x.get("data_coverage") is not None]
     checks=[
         ("Issuer source registry","PASS" if src else "REVIEW",f"{len(src)} issuer-owned source(s) mapped" if src else "No explicit issuer source mapped","Issuer pages improve auditability; regulator and transparent fallback sources remain separate."),
         ("Market-share comparability","PASS" if share else "REVIEW",share.get("basis") if share else "No comparable public industry-share source mapped","Peer market share is used only on a like-for-like market definition."),
         ("Employee sentiment scope","PASS" if employee.get("score") is not None else "REVIEW",employee.get("scope"),"Program satisfaction, engagement and company-wide happiness must not be conflated."),
         ("Alternative-company evidence coverage","PASS" if target.get("screen_metrics",0)>=4 else "REVIEW",f"{target.get('screen_metrics',0)} comparable metric(s) used for target","A candidate requires adequate peer evidence plus a material score gap."),
+        ("Expanded peer data coverage","PASS" if len(peers)>=7 and coverage and sum(coverage)/len(coverage)>=.65 else "REVIEW",f"{len(peers)} companies; average metric coverage {(sum(coverage)/len(coverage)):.0%}" if coverage else f"{len(peers)} companies; coverage unavailable","Peer engine uses statement-derived fallbacks when live summary fields are missing."),
     ]
     for name,status,observed,why in checks:
         r=existing.get(name) or ws.max_row+1; ws.cell(r,1,name); ws.cell(r,2,status); ws.cell(r,3,observed); ws.cell(r,4,why)
@@ -339,4 +352,6 @@ def ensure_research_extensions(wb,ticker,info=None):
     _write_leadership(wb,ticker,info,employee,leadership_score,leadership_rows,alt)
     _dashboard(wb,ticker,employee,leadership_score,alt); _summary(wb,ticker,employee,leadership_score,alt)
     _quality(wb,ticker,info,employee,alt); _dedupe(wb)
-    return {"employee":employee,"leadership_score":leadership_score,"alternative":alt,"business_market_position":business_market_share_records(ticker),"issuer_sources":_sources(ticker,info)}
+    institutional=ensure_institutional_lens_comparison(wb,ticker)
+    removed=consolidate_research_workbench(wb)
+    return {"employee":employee,"leadership_score":leadership_score,"alternative":alt,"business_market_position":business_market_share_records(ticker),"issuer_sources":_sources(ticker,info),"institutional_comparison":institutional,"consolidated_tabs":removed}
