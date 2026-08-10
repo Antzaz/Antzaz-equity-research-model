@@ -12,8 +12,17 @@ function Escape-Toml([string]$Value) {
 }
 
 function New-RandomPassword {
+    # Windows PowerShell 5.1 runs on .NET Framework, where the static
+    # RandomNumberGenerator.Fill() API is unavailable. Use the instance API so
+    # this works in both Windows PowerShell 5.1 and modern PowerShell/.NET.
     $bytes = New-Object byte[] 36
-    [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $rng.GetBytes($bytes)
+    }
+    finally {
+        $rng.Dispose()
+    }
     return [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+','-').Replace('/','_')
 }
 
