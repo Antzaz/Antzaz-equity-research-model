@@ -14,13 +14,17 @@ from source_registry import SPECIALIST_MARKET_SOURCES
 
 
 # 1Q26 global foundry revenue shares reported by TrendForce. These are comparable within
-# the foundry peer set and therefore may be used in Peer Comps.
+# the foundry peer set and therefore may be used in Peer Comps. Multiple traded symbols are
+# mapped where the operating company has more than one practical market-data identifier.
 FOUNDRY_SHARE_1Q_2026 = {
     "TSM": {"share": 0.720, "basis": "Global foundry revenue share", "method": "Reported", "period": "1Q26", "source_key": "foundry"},
     "2330.TW": {"share": 0.720, "basis": "Global foundry revenue share", "method": "Reported", "period": "1Q26", "source_key": "foundry"},
     "SSNLF": {"share": 0.065, "basis": "Global foundry revenue share", "method": "Reported", "period": "1Q26", "source_key": "foundry"},
+    "005930.KS": {"share": 0.065, "basis": "Global foundry revenue share", "method": "Reported", "period": "1Q26", "source_key": "foundry"},
     "SMICY": {"share": 0.051, "basis": "Global foundry revenue share", "method": "Reported", "period": "1Q26", "source_key": "foundry"},
+    "0981.HK": {"share": 0.051, "basis": "Global foundry revenue share", "method": "Reported", "period": "1Q26", "source_key": "foundry"},
     "UMC": {"share": 0.039, "basis": "Global foundry revenue share", "method": "Reported", "period": "1Q26", "source_key": "foundry"},
+    "2303.TW": {"share": 0.039, "basis": "Global foundry revenue share", "method": "Reported", "period": "1Q26", "source_key": "foundry"},
     "GFS": {"share": 0.033, "basis": "Global foundry revenue share", "method": "Reported", "period": "1Q26", "source_key": "foundry"},
     "TSEM": {"share": 0.008, "basis": "Global foundry revenue share", "method": "Reported", "period": "1Q26", "source_key": "foundry"},
 }
@@ -46,10 +50,10 @@ BUSINESS_MARKET_SHARE_SNAPSHOTS = {
 }
 BUSINESS_MARKET_SHARE_SNAPSHOTS["GOOG"] = BUSINESS_MARKET_SHARE_SNAPSHOTS["GOOGL"]
 
-# Business-model-specific discovery seeds. Every candidate is still revalidated by the
-# dynamic peer engine before it enters Peer Comps.
+# Business-model-specific discovery seeds. Every candidate is still checked by the dynamic
+# peer engine. The direct foundry set is prioritized ahead of broader semiconductor comps.
 PREFERRED_PEERS = {
-    "TSM": ["UMC", "GFS", "TSEM", "SMICY", "SSNLF"],
+    "TSM": ["UMC", "GFS", "SMICY", "005930.KS", "TSEM"],
 }
 
 
