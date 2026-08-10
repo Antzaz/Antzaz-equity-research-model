@@ -2,7 +2,9 @@ name: Python syntax check
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - 'agent/**'
   pull_request:
 
 jobs:
@@ -13,14 +15,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - name: Compile equity research, automation, showcase and portfolio modules
+      - name: Compile equity research, agents, automation, showcase and portfolio modules
         run: |
           python -m py_compile \
             update_model.py \
             research.py \
+            source_registry.py \
             agent_research/__init__.py \
             agent_research/core.py \
             agent_research/agents.py \
+            agent_research/source_health.py \
             currency_normalization.py \
             consensus_rebase.py \
             consensus_quality.py \
