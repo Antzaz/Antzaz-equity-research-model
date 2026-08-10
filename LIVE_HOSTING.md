@@ -64,15 +64,21 @@ After the secrets exist:
 
 The artifact contains only an encrypted ZIP. Ticker-to-file mapping is stored inside the encrypted manifest.
 
-## Hosted portfolio dashboard
+## Hosted private research portal
 
-Deploy this Streamlit entrypoint:
+Deploy **one private Streamlit app** using this entrypoint:
 
 ```text
 institutional_research/live_dashboard.py
 ```
 
-Do not deploy `dashboard.py` for the hosted version. `live_dashboard.py` first downloads/decrypts the newest successful daily bundle and then launches the existing dashboard.
+The portal explicitly exposes three views from the same encrypted daily bundle:
+
+- **Portfolio Dashboard** — risk, construction, factors, attribution, liquidity, Monte Carlo, reverse DCF, forecasts, etc.
+- **Alpha Analysis** — CAPM/Jensen alpha, FF3, Carhart 4, FF5, style-proxy alpha, rolling alpha, t-statistics and factor decomposition.
+- **Company Research** — only companies in the private portfolio universe, including historical financials, segment analysis, news and downloadable Excel models.
+
+Do not deploy `dashboard.py` directly for the hosted version. The live entrypoint first downloads/decrypts the newest successful daily bundle and then routes to the selected research view.
 
 Add these Streamlit secrets:
 
@@ -86,30 +92,19 @@ workflow_file = "daily-portfolio-refresh.yml"
 
 The GitHub token only needs permission to read this repository's Actions metadata/artifacts. Use the narrowest fine-grained token possible.
 
-## Hosted company research dashboard
+## Sharing with a friend
 
-Deploy this Streamlit entrypoint as the second app:
+Keep the hosted portal private. In Streamlit Community Cloud, open the app's **Share / Settings → Sharing** controls and add your friend's email as a **viewer**.
 
-```text
-equity_live_dashboard.py
-```
+A viewer should not need the GitHub token, bundle password, Actions secrets, or repository write access. They use the private Streamlit URL and authenticate through the access method offered by Streamlit.
 
-Use the same `[live_data]` Streamlit secrets. It shows only companies present in the encrypted portfolio universe and provides:
-
-- current company/model snapshot;
-- model verdict and quantitative score where available;
-- historical financials;
-- segment analysis;
-- recent positive/negative/mixed news;
-- download of the latest full Excel model.
-
-Keep both hosted apps private if you do not want the portfolio universe to be visible publicly.
+Do **not** give repository write/admin access merely to let someone view the app. Developer access can also grant app-management capabilities. If your friend wants to run their own portfolio rather than view yours, have them fork/copy the public code and configure their own private portfolio secrets instead of sharing yours.
 
 ## Privacy model
 
 Public GitHub contains only code and templates. Private holdings live in GitHub Actions secrets and inside AES-256-encrypted artifacts. The daily artifact uses generic workbook names (`company_01.xlsx`, etc.); the ticker mapping is inside the encrypted manifest.
 
-The generated daily artifact is retained for 14 days. The hosted dashboards always select the newest non-expired artifact from the latest successful workflow run.
+The generated daily artifact is retained for 14 days. The hosted portal always selects the newest non-expired artifact from the latest successful workflow run.
 
 ## Important limitation
 
