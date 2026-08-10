@@ -17,6 +17,7 @@ from openpyxl.utils import get_column_letter
 from ai_effect_analysis import ensure_ai_impact_analysis
 from news_analysis import ensure_news_analysis
 from segment_analysis_v2 import ensure_segment_analysis_v2
+from segment_source_enrichment import enrich_segment_analysis
 from amzn_model_repair import repair_amzn_model
 from cvs_model_repair import repair_cvs_model
 from gev_model_repair import repair_gev_model, apply_gev_guidance_assumptions, repair_gev_expectations
@@ -92,6 +93,8 @@ def _peer_quality_check(wb,ticker,peers):
 
 def _apply_final_controls(wb,ticker):
     prepare_model_reliability(wb,ticker); repair_amzn_model(wb,ticker); repair_cvs_model(wb,ticker); repair_gev_model(wb,ticker); prepare_model_reliability(wb,ticker)
+    try: enrich_segment_analysis(wb,ticker,SEGMENT_HEADERS)
+    except Exception as exc: print(f"Warning: official-source segment enrichment failed: {exc}")
     try: rebase_near_term_revenue(wb,ticker)
     except Exception as exc: print(f"Warning: consensus revenue rebase failed: {exc}")
     try: apply_gev_guidance_assumptions(wb,ticker)
@@ -149,7 +152,7 @@ def repair_segment_charts(wb,ticker):
     ws["AM2"]="Business Line / Revenue Group"; ws["AN2"]=f"{latest_year} Revenue ($bn)"
     for out_r,(src_r,name) in enumerate(business[:10],3): ws.cell(out_r,39,name); ws.cell(out_r,40,f"='Segment Analysis'!D{src_r}"); ws.cell(out_r,40).number_format=FMT_BN
     if business:
-        end=2+min(10,len(business)); ch=BarChart(); ch.type="bar"; ch.style=10; ch.title=f"{latest_year} Revenue Mix"; ch.height=8.5; ch.width=13.5; ch.legend=None; ch.add_data(Reference(ws,min_col=40,min_row=2,max_row=end),titles_from_data=True); ch.set_categories(Reference(ws,min_col=39,min_row=3,max_row=end)); ch.x_axis.numFmt="$0"; ch.x_axis.title=f"{latest_year} revenue ($bn)"; ch.visible_cells_only=False; ch.display_blanks="gap"; _labels(ch); ws.add_chart(ch,"A53"); ws["A70"]=f"Units: {latest_year} revenue ($bn)"; ws["D70"]="Issuer-disclosed segments / revenue groups"; ws["F70"]="Source: Segment Analysis / annual filing"; ws["A71"]="Business mix uses only disclosed categories; no standalone product revenue is invented."
+        end=2+min(10,len(business)); ch=BarChart(); ch.type="bar"; ch.style=10; ch.title=f"{latest_year} Revenue Mix"; ch.height=8.5; ch.width=13.5; ch.legend=None; ch.add_data(Reference(ws,min_col=40,min_row=2,max_row=end),titles_from_data=True); ch.set_categories(Reference(ws,min_col=39,min_row=3,max_row=end)); ch.x_axis.numFmt="$0"; ch.x_axis.title=f"{latest_year} revenue ($bn)"; ch.visible_cells_only=False; ch.display_blanks="gap"; _labels(ch); ws.add_chart(ch,"A53"); ws["A70"]=f"Units: {latest_year} revenue ($bn)"; ws["D70"]="Issuer-disclosed segments / revenue groups"; ws["F70"]="Source: Segment Analysis / official issuer or regulatory filing"; ws["A71"]="Business mix uses only disclosed categories; no standalone product revenue is invented."
     else: ws["A55"]="No reliable disclosed business-line revenue was extracted. Segment names may still be available on Segment Analysis; charts require financial values."; ws["A55"].font=Font(italic=True,color=GREY)
     seg_section=_find_any(seg,("Reported Operating / Reportable Segments","Reported Operating Segments","Reported Segments")); margins=[]; margin_col=None; profit_col=None; margin_header="Latest Margin"; profit_header="Segment profitability"
     if seg_section:
@@ -169,9 +172,9 @@ def repair_segment_charts(wb,ticker):
     ws["AP2"]="Segment"; ws["AQ2"]=margin_header
     for out_r,(src_r,name) in enumerate(margins[:10],3): ws.cell(out_r,42,name); ws.cell(out_r,43,f"='Segment Analysis'!{get_column_letter(margin_col)}{src_r}"); ws.cell(out_r,43).number_format=FMT_PCT
     if margins:
-        end=2+min(10,len(margins)); ch=BarChart(); ch.type="bar"; ch.style=10; ch.title=f"{margin_header} by Segment"; ch.height=8.5; ch.width=13.5; ch.legend=None; ch.add_data(Reference(ws,min_col=43,min_row=2,max_row=end),titles_from_data=True); ch.set_categories(Reference(ws,min_col=42,min_row=3,max_row=end)); ch.x_axis.numFmt="0%"; ch.x_axis.title=margin_header; ch.visible_cells_only=False; ch.display_blanks="gap"; _labels(ch); ws.add_chart(ch,"I53"); ws["I70"]=f"Margin = {profit_header} ÷ segment revenue"; ws["M70"]="Source: Segment Analysis / annual filing"; ws["I71"]="Profitability uses the issuer's disclosed segment performance measure; missing economics are not estimated."
+        end=2+min(10,len(margins)); ch=BarChart(); ch.type="bar"; ch.style=10; ch.title=f"{margin_header} by Segment"; ch.height=8.5; ch.width=13.5; ch.legend=None; ch.add_data(Reference(ws,min_col=43,min_row=2,max_row=end),titles_from_data=True); ch.set_categories(Reference(ws,min_col=42,min_row=3,max_row=end)); ch.x_axis.numFmt="0%"; ch.x_axis.title=margin_header; ch.visible_cells_only=False; ch.display_blanks="gap"; _labels(ch); ws.add_chart(ch,"I53"); ws["I70"]=f"Margin = {profit_header} ÷ segment revenue"; ws["M70"]="Source: Segment Analysis / official issuer or regulatory filing"; ws["I71"]="Profitability uses the issuer's disclosed segment performance measure; missing economics are not estimated."
     else: ws["I55"]="Segment profitability is not disclosed or not reliably extracted. Segment names remain visible, while the chart stays blank rather than estimating economics."; ws["I55"].font=Font(italic=True,color=GREY)
-    ws["A112"]=f"External segment source: {ticker} annual filing / Segment Analysis sheet. Monte Carlo, scenario, stress and DCF values are model outputs based on workbook assumptions."; ws["A112"].font=Font(italic=True,color=GREY,size=9)
+    ws["A112"]=f"External segment source: {ticker} issuer website / IR / annual or regulatory filing via Segment Analysis. Monte Carlo, scenario, stress and DCF values are model outputs based on workbook assumptions."; ws["A112"].font=Font(italic=True,color=GREY,size=9)
     ensure_ai_impact_analysis(wb,ticker)
     try: ensure_news_analysis(wb,ticker)
     except Exception as exc: print(f"Warning: Recent News & Impact failed: {exc}")
