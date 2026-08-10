@@ -7,6 +7,7 @@ on stale history, enforces dynamic same-sector peers, recreates segment/business
 and generates the current news-impact research sheet.
 """
 
+import os
 import re
 from openpyxl.chart import BarChart, Reference
 from openpyxl.chart.label import DataLabelList
@@ -15,6 +16,7 @@ from openpyxl.utils import get_column_letter
 
 from ai_effect_analysis import ensure_ai_impact_analysis
 from news_analysis import ensure_news_analysis
+from segment_analysis_v2 import ensure_segment_analysis_v2
 from amzn_model_repair import repair_amzn_model
 from cvs_model_repair import repair_cvs_model
 from gev_model_repair import repair_gev_model, apply_gev_guidance_assumptions, repair_gev_expectations
@@ -29,6 +31,7 @@ from sector_peer_bayes import ensure_bayesian_base_rates, repair_cross_sheet_con
 
 GREY="666666"; PALE_GREEN="E2F0D9"; GOLD="FFF2CC"
 FMT_BN='#,##0.0;[Red](#,##0.0);-'; FMT_PCT='0.0%;[Red](0.0%);-'
+SEGMENT_HEADERS={"User-Agent":os.getenv("SEC_USER_AGENT","Personal Equity Research Model contact@example.com")}
 
 def _fill(c): return PatternFill("solid",fgColor=c)
 def _find(ws,label):
@@ -43,36 +46,29 @@ def _find_any(ws,labels):
     return None
 
 def _segment_key(name):
-    text=str(name or "").strip()
-    m=re.search(r"\(([A-Z]{2,10})\)\s*$",text)
+    text=str(name or "").strip(); m=re.search(r"\(([A-Z]{2,10})\)\s*$",text)
     if m: return m.group(1).lower()
     if re.fullmatch(r"[A-Z]{2,10}",text): return text.lower()
     return re.sub(r"[^a-z0-9]","",text.lower())
 def _dedupe_segment_aliases(seg):
     section=_find_any(seg,("Reported Operating / Reportable Segments","Reported Operating Segments","Reported Segments"))
     if section is None: return
-    header=section+1; stop=_find_any(seg,("Revenue by Business Line / Product Group","Revenue by Business Line","Revenue by Business Line / Disclosed Revenue Group")) or min(seg.max_row+1,header+20)
-    seen={}
+    header=section+1; stop=_find_any(seg,("Revenue by Business Line / Product Group","Revenue by Business Line","Revenue by Business Line / Disclosed Revenue Group")) or min(seg.max_row+1,header+20); seen={}
     for r in range(header+1,stop):
         name=seg.cell(r,1).value
         if not name: continue
         key=_segment_key(name)
         if not key: continue
-        if key not in seen:
-            seen[key]=r; continue
+        if key not in seen: seen[key]=r; continue
         keep=seen[key]
-        # Prefer any missing economics from the duplicate row, but keep the earlier canonical label.
         for c in range(2,min(16,seg.max_column)+1):
-            if seg.cell(keep,c).value in (None,"") and seg.cell(r,c).value not in (None,""):
-                seg.cell(keep,c).value=seg.cell(r,c).value
+            if seg.cell(keep,c).value in (None,"") and seg.cell(r,c).value not in (None,""): seg.cell(keep,c).value=seg.cell(r,c).value
         for c in range(1,min(16,seg.max_column)+1): seg.cell(r,c).value=None
 
 def _chart_row(ch):
     try: return ch.anchor._from.row
     except Exception: return None
-
 def _remove_target_charts(ws): ws._charts=[ch for ch in ws._charts if _chart_row(ch)!=52]
-
 def _labels(ch):
     try: ch.dLbls=DataLabelList(); ch.dLbls.showVal=True
     except Exception: pass
@@ -95,9 +91,7 @@ def _peer_quality_check(wb,ticker,peers):
     for c in range(1,5): ws.cell(row,c).alignment=Alignment(wrap_text=True,vertical="top")
 
 def _apply_final_controls(wb,ticker):
-    prepare_model_reliability(wb,ticker)
-    repair_amzn_model(wb,ticker); repair_cvs_model(wb,ticker); repair_gev_model(wb,ticker)
-    prepare_model_reliability(wb,ticker)
+    prepare_model_reliability(wb,ticker); repair_amzn_model(wb,ticker); repair_cvs_model(wb,ticker); repair_gev_model(wb,ticker); prepare_model_reliability(wb,ticker)
     try: rebase_near_term_revenue(wb,ticker)
     except Exception as exc: print(f"Warning: consensus revenue rebase failed: {exc}")
     try: apply_gev_guidance_assumptions(wb,ticker)
@@ -128,6 +122,11 @@ def _apply_final_controls(wb,ticker):
     _peer_quality_check(wb,ticker,peers)
 
 def repair_segment_charts(wb,ticker):
+    # Alphabet used a legacy special-case parser earlier in the updater; replace it here with
+    # the same resilient narrative/table parser used for all other companies.
+    if ticker.upper() in {"GOOGL","GOOG"}:
+        try: ensure_segment_analysis_v2(wb,ticker,SEGMENT_HEADERS)
+        except Exception as exc: print(f"Warning: Alphabet resilient segment refresh failed: {exc}")
     _apply_final_controls(wb,ticker)
     if not {"Analysis Charts","Segment Analysis"}.issubset(wb.sheetnames):
         ensure_ai_impact_analysis(wb,ticker)
@@ -137,9 +136,7 @@ def repair_segment_charts(wb,ticker):
     ws=wb["Analysis Charts"]; seg=wb["Segment Analysis"]; _dedupe_segment_aliases(seg); _remove_target_charts(ws)
     for row in ws.iter_rows(min_row=2,max_row=20,min_col=39,max_col=45):
         for cell in row: cell.value=None
-
-    section=_find_any(seg,("Revenue by Business Line / Product Group","Revenue by Business Line","Revenue by Business Line / Disclosed Revenue Group"))
-    business=[]; latest_year="Latest"
+    section=_find_any(seg,("Revenue by Business Line / Product Group","Revenue by Business Line","Revenue by Business Line / Disclosed Revenue Group")); business=[]; latest_year="Latest"
     if section:
         header=section+1; latest_col=4; h=str(seg.cell(header,latest_col).value or ""); latest_year=h if h else "Latest"
         for r in range(header+1,min(seg.max_row,header+20)+1):
@@ -154,7 +151,6 @@ def repair_segment_charts(wb,ticker):
     if business:
         end=2+min(10,len(business)); ch=BarChart(); ch.type="bar"; ch.style=10; ch.title=f"{latest_year} Revenue Mix"; ch.height=8.5; ch.width=13.5; ch.legend=None; ch.add_data(Reference(ws,min_col=40,min_row=2,max_row=end),titles_from_data=True); ch.set_categories(Reference(ws,min_col=39,min_row=3,max_row=end)); ch.x_axis.numFmt="$0"; ch.x_axis.title=f"{latest_year} revenue ($bn)"; ch.visible_cells_only=False; ch.display_blanks="gap"; _labels(ch); ws.add_chart(ch,"A53"); ws["A70"]=f"Units: {latest_year} revenue ($bn)"; ws["D70"]="Issuer-disclosed segments / revenue groups"; ws["F70"]="Source: Segment Analysis / annual filing"; ws["A71"]="Business mix uses only disclosed categories; no standalone product revenue is invented."
     else: ws["A55"]="No reliable disclosed business-line revenue was extracted. Segment names may still be available on Segment Analysis; charts require financial values."; ws["A55"].font=Font(italic=True,color=GREY)
-
     seg_section=_find_any(seg,("Reported Operating / Reportable Segments","Reported Operating Segments","Reported Segments")); margins=[]; margin_col=None; profit_col=None; margin_header="Latest Margin"; profit_header="Segment profitability"
     if seg_section:
         header=seg_section+1
@@ -176,7 +172,6 @@ def repair_segment_charts(wb,ticker):
         end=2+min(10,len(margins)); ch=BarChart(); ch.type="bar"; ch.style=10; ch.title=f"{margin_header} by Segment"; ch.height=8.5; ch.width=13.5; ch.legend=None; ch.add_data(Reference(ws,min_col=43,min_row=2,max_row=end),titles_from_data=True); ch.set_categories(Reference(ws,min_col=42,min_row=3,max_row=end)); ch.x_axis.numFmt="0%"; ch.x_axis.title=margin_header; ch.visible_cells_only=False; ch.display_blanks="gap"; _labels(ch); ws.add_chart(ch,"I53"); ws["I70"]=f"Margin = {profit_header} ÷ segment revenue"; ws["M70"]="Source: Segment Analysis / annual filing"; ws["I71"]="Profitability uses the issuer's disclosed segment performance measure; missing economics are not estimated."
     else: ws["I55"]="Segment profitability is not disclosed or not reliably extracted. Segment names remain visible, while the chart stays blank rather than estimating economics."; ws["I55"].font=Font(italic=True,color=GREY)
     ws["A112"]=f"External segment source: {ticker} annual filing / Segment Analysis sheet. Monte Carlo, scenario, stress and DCF values are model outputs based on workbook assumptions."; ws["A112"].font=Font(italic=True,color=GREY,size=9)
-
     ensure_ai_impact_analysis(wb,ticker)
     try: ensure_news_analysis(wb,ticker)
     except Exception as exc: print(f"Warning: Recent News & Impact failed: {exc}")
