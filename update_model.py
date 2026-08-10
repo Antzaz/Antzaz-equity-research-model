@@ -3,7 +3,8 @@
 Usage: python update_model.py GOOGL
 
 Reliability rules:
-- SEC annual facts are selected from annual filing periods;
+- SEC annual facts are selected from annual filing periods when available;
+- SEC outages / throttling never prevent issuer-IR and Yahoo fallback recovery;
 - observed history is right-aligned so column G is always the latest actual;
 - target sector/industry is detected automatically from the target ticker;
 - peer companies must match the target sector, with exact industry preferred;
@@ -66,7 +67,8 @@ BASE=Path(__file__).resolve().parent
 TEMPLATE=BASE/"GOOGL_Equity_Research_CLEAN_v7.xlsx"
 OUTDIR=BASE/"updated_models"
 OUTDIR.mkdir(exist_ok=True)
-SEC_HEADERS={"User-Agent":os.getenv("SEC_USER_AGENT","Personal Equity Research Model contact@example.com")}
+SEC_USER_AGENT=(os.getenv("SEC_USER_AGENT") or "Antzaz Equity Research 31651836+Antzaz@users.noreply.github.com").strip()
+SEC_HEADERS={"User-Agent":SEC_USER_AGENT}
 
 
 def sec_json(url):
@@ -124,7 +126,11 @@ def annual_series(facts,tags,preferred_unit=None):
 
 
 def build_history(ticker,facts=None):
-    facts=facts or company_facts(ticker)
+    # SEC is attempted once in main(). If that attempt failed, return an empty first-pass
+    # history here and let model_reliability recover from issuer IR / foreign filings /
+    # Yahoo statements. Do not make the same failed SEC request a second fatal dependency.
+    if not facts:
+        return {}
     revenue=annual_series(facts,["RevenueFromContractWithCustomerExcludingAssessedTax","SalesRevenueNet","Revenues"])
     cost=annual_series(facts,["CostOfRevenue","CostOfGoodsAndServicesSold"])
     gross=annual_series(facts,["GrossProfit"])
@@ -176,7 +182,7 @@ def put_history(wb,hist):
         for c in range(2,8):
             ws.cell(r,c).value=None
     if not hist:
-        print("Warning: SEC annual history unavailable; historical raw-input rows left blank for review.")
+        print("Warning: SEC annual history unavailable; historical raw-input rows left blank for issuer/Yahoo recovery.")
         return
     for i,y in enumerate(sorted(hist)[-6:],2):
         d=hist[y]
@@ -235,10 +241,14 @@ def update_scenarios(wb,hist,info):
 
 
 def update_filings(wb,ticker):
-    cik=cik_for(ticker)
-    if not cik:
+    try:
+        cik=cik_for(ticker)
+        if not cik:
+            return
+        recent=sec_json(f"https://data.sec.gov/submissions/CIK{cik}.json").get("filings",{}).get("recent",{})
+    except Exception as exc:
+        print(f"Warning: SEC filings list unavailable; continuing without Filings refresh: {exc}")
         return
-    recent=sec_json(f"https://data.sec.gov/submissions/CIK{cik}.json").get("filings",{}).get("recent",{})
     ws=wb["Filings"]
     for r in range(4,20):
         for c in range(1,6): ws.cell(r,c).value=None
