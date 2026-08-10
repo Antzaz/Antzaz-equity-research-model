@@ -12,6 +12,28 @@ Replace `UBS` with any ticker:
 cd "C:\Users\Antza\Documents\Antzaz-equity-research-model"; git pull; python .\update_model.py UBS
 ```
 
+## Agent-assisted ticker research — recommended full workflow
+
+Builds the normal deterministic workbook, then runs the Filings, KPI/Earnings, Thesis Monitor and Research QA agents:
+
+```powershell
+cd "C:\Users\Antza\Documents\Antzaz-equity-research-model"; git pull; python .\research.py GOOGL
+```
+
+Enable evidence-bound OpenAI reasoning after setting your API key locally:
+
+```powershell
+$env:OPENAI_API_KEY="YOUR_KEY"; python .\research.py GOOGL --ai
+```
+
+Reuse the newest already-generated workbook without rebuilding it:
+
+```powershell
+python .\research.py GOOGL --skip-model
+```
+
+Guide: `AI_AGENTS.md`
+
 ## Portfolio research — refresh data and launch local dashboard
 
 ```powershell
