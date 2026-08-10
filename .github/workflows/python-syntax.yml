@@ -21,6 +21,9 @@ jobs:
             model_reliability.py \
             dynamic_peer_engine.py \
             segment_analysis_v2.py \
+            segment_source_engine.py \
+            segment_source_enrichment.py \
+            segment_chart_fix.py \
             institutional_research/run_research.py \
             institutional_research/dashboard.py \
             institutional_research/pages/1_Alpha_Analysis.py \
