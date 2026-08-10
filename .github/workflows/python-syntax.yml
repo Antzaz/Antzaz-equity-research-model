@@ -22,6 +22,7 @@ jobs:
             consensus_quality.py \
             market_context.py \
             research_extensions.py \
+            ai_analysis.py \
             equity_live_dashboard.py \
             showcase/app.py \
             issuer_source_engine.py \
