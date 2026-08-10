@@ -21,6 +21,7 @@ jobs:
             update_model.py \
             research.py \
             source_registry.py \
+            institutional_lenses.py \
             agent_research/__init__.py \
             agent_research/core.py \
             agent_research/agents.py \
