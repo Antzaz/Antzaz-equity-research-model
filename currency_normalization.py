@@ -175,6 +175,31 @@ def _yahoo_operating_income(ticker: str) -> dict[int, float]:
     return out
 
 
+def _already_quote_currency(ws, info: dict, financial: str, quote: str) -> bool:
+    """Use provider total revenue as a magnitude check to avoid double FX conversion."""
+    provider_total = _num((info or {}).get("totalRevenue"))
+    if not provider_total or provider_total <= 0:
+        return False
+    points = []
+    for c in range(7, 1, -1):
+        y = ws.cell(3, c).value
+        rev_bn = _num(ws.cell(4, c).value)
+        if isinstance(y, (int, float)) and rev_bn and rev_bn > 0:
+            points.append((int(y), rev_bn * 1e9))
+            break
+    if not points:
+        return False
+    year, sheet_amount = points[0]
+    rate, _ = fx_rate(financial, quote, year)
+    if not rate or rate <= 0:
+        return False
+    # totalRevenue is usually TTM while the sheet is FY, so compare logarithmic distance
+    # rather than requiring exact equality. The two candidate scales differ materially.
+    local_distance = abs(math.log(max(sheet_amount / provider_total, 1e-12)))
+    quote_distance = abs(math.log(max(sheet_amount / (provider_total * rate), 1e-12)))
+    return quote_distance + 0.35 < local_distance
+
+
 def _normalize_historical(wb, ticker: str, info: dict, financial: str, quote: str, source: str):
     if "Historical Financials" not in wb.sheetnames:
         return
@@ -183,6 +208,7 @@ def _normalize_historical(wb, ticker: str, info: dict, financial: str, quote: st
     if str(ws["D2"].value or "").strip() == marker:
         return
 
+    already_quote = _already_quote_currency(ws, info, financial, quote)
     op_income = _yahoo_operating_income(ticker)
     monetary_rows = (4, 6, 9, 11, 14, 15, 18, 19, 21)
     for c in range(2, 8):
@@ -193,13 +219,14 @@ def _normalize_historical(wb, ticker: str, info: dict, financial: str, quote: st
         rate, _ = fx_rate(financial, quote, year)
         if not rate:
             continue
-        for r in monetary_rows:
-            v = _num(ws.cell(r, c).value)
-            if v is not None:
-                ws.cell(r, c).value = v * rate
-        eps = _num(ws.cell(12, c).value)
-        if eps is not None:
-            ws.cell(12, c).value = eps * rate
+        if not already_quote:
+            for r in monetary_rows:
+                v = _num(ws.cell(r, c).value)
+                if v is not None:
+                    ws.cell(r, c).value = v * rate
+            eps = _num(ws.cell(12, c).value)
+            if eps is not None:
+                ws.cell(12, c).value = eps * rate
         # Yahoo's cross-border fallback can expose Pretax Income before Operating Income.
         # Replace that row with actual operating income where the provider supplies it.
         if year in op_income:
@@ -207,7 +234,8 @@ def _normalize_historical(wb, ticker: str, info: dict, financial: str, quote: st
 
     ws["A2"] = f"{quote} in billions except per-share data"
     ws["D2"] = marker
-    ws["E2"] = f"FX: annual average public market FX series ({source})"
+    mode = "already in quote currency; operating-income cross-check applied" if already_quote else "converted from reporting currency"
+    ws["E2"] = f"FX: {mode}; annual-average public market FX series ({source})"
     ws["D2"].font = Font(italic=True, color=GREY)
     ws["E2"].font = Font(italic=True, color=GREY)
 
@@ -218,8 +246,6 @@ def _normalize_financial_statements(wb, financial: str, quote: str, source: str)
     ws = wb["Financial Statements"]
     hist = wb["Historical Financials"]
 
-    # Determine whether the statement sheet is still in local currency by comparing a
-    # matching revenue period against the already-normalized Historical Financials sheet.
     hist_rev = {}
     for c in range(2, 8):
         y = hist.cell(3, c).value
@@ -241,7 +267,12 @@ def _normalize_financial_statements(wb, financial: str, quote: str, source: str)
             continue
         ratio = abs(v / hist_rev[int(y)])
         rate, _ = fx_rate(financial, quote, int(y))
-        if rate and ratio > max(3.0, 0.4 / rate):
+        if not rate or rate <= 0:
+            continue
+        expected_local_ratio = 1.0 / rate
+        distance_to_one = abs(math.log(max(ratio, 1e-12)))
+        distance_to_local = abs(math.log(max(ratio / expected_local_ratio, 1e-12)))
+        if distance_to_local + 0.35 < distance_to_one:
             needs_conversion = True
             break
     if not needs_conversion:
@@ -249,7 +280,7 @@ def _normalize_financial_statements(wb, financial: str, quote: str, source: str)
         return
 
     eps_labels = {"diluted eps", "diluted earnings per share"}
-    ratio_keywords = ("margin", "%", "ratio", "growth", "per share")
+    non_monetary_keywords = ("margin", "%", "ratio", "growth", "per share", "shares", "eps")
     for c in range(2, min(8, ws.max_column + 1)):
         y = ws.cell(header_row, c).value
         if not isinstance(y, (int, float)):
@@ -259,7 +290,7 @@ def _normalize_financial_statements(wb, financial: str, quote: str, source: str)
             continue
         for r in range(7, ws.max_row + 1):
             label = str(ws.cell(r, 1).value or "").strip().lower()
-            if not label or any(k in label for k in ratio_keywords):
+            if not label or any(k in label for k in non_monetary_keywords):
                 continue
             v = _num(ws.cell(r, c).value)
             if v is None:
