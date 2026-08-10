@@ -5,9 +5,9 @@ Examples:
     python research.py GOOGL --ai
     python research.py GOOGL --skip-model --ai
 
-The existing update_model.py remains the deterministic source of workbook
-calculations. Specialist agents inspect the generated workbook, maintain KPI
-history, monitor thesis evidence, and run research QA. LLM reasoning is opt-in.
+The existing update_model.py remains the deterministic source of workbook calculations.
+Specialist agents inspect the generated workbook, maintain KPI history, monitor thesis
+evidence, check registered data sources, and run research QA. LLM reasoning is opt-in.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ from agent_research import (
     KPIEarningsAgent,
     OpenAIResearchClient,
     ResearchQAAgent,
+    SourceHealthAgent,
     ThesisMonitorAgent,
 )
 
@@ -91,6 +92,7 @@ def render_report(ticker: str, workbook: Path, results: list, ai_model: str | No
         "- The agents do not execute trades.",
         "- AI narrative does not overwrite financial inputs or DCF assumptions.",
         "- Reported facts, calculations, and inference remain separate.",
+        "- Market-share records preserve their market definition and source.",
         "- Valuation changes remain analyst-reviewed and are calculated by the existing deterministic model.",
         "",
     ])
@@ -118,6 +120,7 @@ def main() -> int:
         ai_model=ai_client.model if ai_client else None,
     )
     agents = [
+        SourceHealthAgent(),
         FilingsAgent(ai_client),
         KPIEarningsAgent(ai_client),
         ThesisMonitorAgent(ai_client),
