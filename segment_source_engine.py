@@ -6,11 +6,12 @@ The engine deliberately separates two jobs:
 - discover the issuer's current business/reportable-segment names from official narrative sources;
 - expose filing/report documents to segment_analysis_v2 for conservative numeric extraction.
 
-Source priority is issuer/regulator data only. It does not scrape blogs or crowd-sourced profiles.
+Source priority is issuer/regulator data only. Network work is intentionally bounded so
+one slow issuer page cannot stall the whole equity-research build.
 """
 
 from io import BytesIO
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 import re
 
 import requests
@@ -35,9 +36,6 @@ except Exception:
 ANNUAL_FORMS = {"10-K", "10-K/A", "20-F", "20-F/A", "40-F", "40-F/A"}
 CURRENT_FORMS = {"6-K"}
 
-# High-confidence issuer pages are useful when a company website describes the current
-# operating structure more clearly than the accounting filing. These are narrative sources;
-# numeric segment economics still come from annual/quarterly reports when possible.
 OFFICIAL_SEGMENT_PAGES = {
     "UBS": [
         "https://www.ubs.com/global/en/our-firm/governance/ubs-group-ag/organization-structure.html",
@@ -52,9 +50,6 @@ OFFICIAL_SEGMENT_PAGES = {
     ],
 }
 
-# Verified fallbacks are only used if live official/regulatory discovery cannot recover a
-# sufficiently complete segment list. Keep the source next to the names so stale fallbacks
-# are visible and auditable.
 VERIFIED_SEGMENT_FALLBACKS = {
     "UBS": {
         "segments": [
@@ -92,7 +87,7 @@ def _html_text(raw_html: str | None) -> str:
     return _clean(re.sub(r"<[^>]+>", " ", raw_html))
 
 
-def _fetch_html(url: str, headers: dict | None = None, timeout: int = 30):
+def _fetch_html(url: str, headers: dict | None = None, timeout: int = 10):
     try:
         r = requests.get(url, headers=headers or {"User-Agent": "Mozilla/5.0 EquityResearch/1.0"}, timeout=timeout)
         r.raise_for_status()
@@ -109,10 +104,8 @@ def _pdf_text(content: bytes) -> str:
         return ""
     try:
         reader = PdfReader(BytesIO(content))
-        # Business/segment notes usually appear well before the appendices. Keep PDF reads
-        # bounded so official-source enrichment cannot silently stall a model for minutes.
         texts = []
-        for page in reader.pages[:120]:
+        for page in reader.pages[:60]:
             try:
                 texts.append(page.extract_text() or "")
             except Exception:
@@ -124,7 +117,9 @@ def _pdf_text(content: bytes) -> str:
 
 def _cik_for(ticker: str, headers: dict):
     try:
-        data = requests.get("https://www.sec.gov/files/company_tickers.json", headers=headers, timeout=30).json()
+        r=requests.get("https://www.sec.gov/files/company_tickers.json", headers=headers, timeout=10)
+        r.raise_for_status()
+        data=r.json()
         for item in data.values():
             if str(item.get("ticker", "")).upper() == ticker.upper():
                 return str(item["cik_str"]).zfill(10)
@@ -134,15 +129,15 @@ def _cik_for(ticker: str, headers: dict):
 
 
 def sec_segment_documents(ticker: str, headers: dict) -> list[dict]:
-    """Return latest annual filing plus a few current foreign-private-issuer reports."""
     cik = _cik_for(ticker, headers)
     if not cik:
         return []
     try:
-        subs = requests.get(f"https://data.sec.gov/submissions/CIK{cik}.json", headers=headers, timeout=30).json()
+        r=requests.get(f"https://data.sec.gov/submissions/CIK{cik}.json", headers=headers, timeout=10)
+        r.raise_for_status()
+        recent=r.json().get("filings", {}).get("recent", {})
     except Exception:
         return []
-    recent = subs.get("filings", {}).get("recent", {})
     docs = []
     annual_added = False
     current_added = 0
@@ -152,18 +147,18 @@ def sec_segment_documents(ticker: str, headers: dict) -> list[dict]:
     ):
         if form in ANNUAL_FORMS and not annual_added:
             url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc.replace('-', '')}/{doc}"
-            raw, text, resolved = _fetch_html(url, headers, 45)
+            raw, text, resolved = _fetch_html(url, headers, 12)
             if raw or text:
                 docs.append({"kind": f"SEC {form}", "url": resolved, "html": raw, "text": text, "filed": filed, "priority": 10})
                 annual_added = True
-        elif form in CURRENT_FORMS and current_added < 3:
+        elif form in CURRENT_FORMS and current_added < 2:
             url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc.replace('-', '')}/{doc}"
-            raw, text, resolved = _fetch_html(url, headers, 45)
+            raw, text, resolved = _fetch_html(url, headers, 10)
             low = text.lower()
             if text and any(k in low for k in ("segment", "business division", "business divisions", "group items", "wafer revenue", "platform")):
                 docs.append({"kind": f"SEC {form}", "url": resolved, "html": raw, "text": text, "filed": filed, "priority": 20})
                 current_added += 1
-        if annual_added and current_added >= 3:
+        if annual_added and current_added >= 2:
             break
     return docs
 
@@ -178,8 +173,7 @@ def _website_candidates(ticker: str) -> list[str]:
     if website:
         base = str(website).rstrip("/")
         pages.extend([
-            base + "/about", base + "/company", base + "/our-company",
-            base + "/our-businesses", base + "/businesses", base + "/what-we-do",
+            base + "/about", base + "/our-businesses", base + "/what-we-do",
             base + "/investors", base + "/investor-relations",
         ])
     if _discover_ir_pages is not None:
@@ -191,12 +185,12 @@ def _website_candidates(ticker: str) -> list[str]:
 
 
 def issuer_segment_documents(ticker: str) -> list[dict]:
-    """Fetch a small, bounded set of issuer-owned structure/IR pages and reports."""
     docs = []
     seen = set()
     pages = _website_candidates(ticker)
-    for page in pages[:12]:
-        raw, text, resolved = _fetch_html(page, None, 20)
+    report_count=0
+    for page in pages[:6]:
+        raw, text, resolved = _fetch_html(page, None, 8)
         if not text:
             continue
         key = resolved.split("#")[0]
@@ -204,17 +198,20 @@ def issuer_segment_documents(ticker: str) -> list[dict]:
             docs.append({"kind": "Issuer website", "url": resolved, "html": raw, "text": text, "priority": 30})
             seen.add(key)
 
-        if _download_links is None or not any(k in page.lower() for k in ("investor", "financial", "report")):
+        if report_count>=2 or _download_links is None or not any(k in page.lower() for k in ("investor", "financial", "report")):
             continue
         try:
-            links = _download_links(page)
+            links = _download_links(page, timeout=8)
+        except TypeError:
+            try: links = _download_links(page)
+            except Exception: links=[]
         except Exception:
             links = []
-        for link in links[:10]:
+        for link in links[:5]:
             path = urlparse(link).path.lower()
             if not any(k in (link + " " + path).lower() for k in ("annual", "financial", "result", "report", "presentation", "management")):
                 continue
-            raw2, text2, resolved2 = _fetch_html(link, None, 35)
+            raw2, text2, resolved2 = _fetch_html(link, None, 10)
             if not text2:
                 continue
             key2 = resolved2.split("#")[0]
@@ -222,7 +219,8 @@ def issuer_segment_documents(ticker: str) -> list[dict]:
                 continue
             docs.append({"kind": "Issuer annual/results report", "url": resolved2, "html": raw2, "text": text2, "priority": 15})
             seen.add(key2)
-            if sum(d["kind"] == "Issuer annual/results report" for d in docs) >= 3:
+            report_count+=1
+            if report_count>=2:
                 break
     return docs
 
