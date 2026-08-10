@@ -1,9 +1,10 @@
-"""Final cross-company reliability, peer, segment-chart and AI refresh stage.
+"""Final cross-company reliability, peer, segment-chart, AI and news refresh stage.
 
 This stage deliberately runs after the first-pass workbook build. It repairs shorter
 historical records, applies verified issuer fallbacks, anchors near-term revenue to current
 consensus when available, recalibrates cash conversion, rebuilds analytics that depended
-on stale history, enforces dynamic same-sector peers, and recreates segment/business charts.
+on stale history, enforces dynamic same-sector peers, recreates segment/business charts,
+and generates the current news-impact research sheet.
 """
 
 from openpyxl.chart import BarChart, Reference
@@ -12,6 +13,7 @@ from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 
 from ai_effect_analysis import ensure_ai_impact_analysis
+from news_analysis import ensure_news_analysis
 from amzn_model_repair import repair_amzn_model
 from cvs_model_repair import repair_cvs_model
 from gev_model_repair import repair_gev_model, apply_gev_guidance_assumptions, repair_gev_expectations
@@ -32,6 +34,11 @@ def _find(ws,label):
     target=label.strip().lower()
     for r in range(1,ws.max_row+1):
         if str(ws.cell(r,1).value or "").strip().lower()==target: return r
+    return None
+def _find_any(ws,labels):
+    for label in labels:
+        r=_find(ws,label)
+        if r is not None: return r
     return None
 
 def _chart_row(ch):
@@ -62,27 +69,18 @@ def _peer_quality_check(wb,ticker,peers):
     for c in range(1,5): ws.cell(row,c).alignment=Alignment(wrap_text=True,vertical="top")
 
 def _apply_final_controls(wb,ticker):
-    # Establish latest-actual alignment before rebuilding downstream layers.
     prepare_model_reliability(wb,ticker)
-
-    # Verified issuer disclosures fill extraction gaps only where directly supported.
     repair_amzn_model(wb,ticker); repair_cvs_model(wb,ticker); repair_gev_model(wb,ticker)
     prepare_model_reliability(wb,ticker)
-
-    # Near-term Base revenue uses current public analyst consensus when available; issuer-specific
-    # guidance can then refine disclosed margin/outlook assumptions without overriding the generic path.
     try: rebase_near_term_revenue(wb,ticker)
     except Exception as exc: print(f"Warning: consensus revenue rebase failed: {exc}")
     try: apply_gev_guidance_assumptions(wb,ticker)
     except Exception as exc: print(f"Warning: GEV guidance anchor failed: {exc}")
-
     try: calibrate_scenario_cash_flow(wb)
     except Exception as exc: print(f"Warning: final cash-flow calibration failed: {exc}")
-
     peers=[]
     try: peers=ensure_dynamic_peer_comps(wb,ticker)
     except Exception as exc: print(f"Warning: dynamic peer selection failed: {exc}")
-
     try: ensure_advanced_analytics(wb,ticker)
     except Exception as exc: print(f"Warning: final Advanced Analytics refresh failed: {exc}")
     try: ensure_model_quality(wb,ticker)
@@ -91,14 +89,10 @@ def _apply_final_controls(wb,ticker):
     except Exception as exc: print(f"Warning: final Institutional Layers refresh failed: {exc}")
     try: repair_gev_expectations(wb,ticker)
     except Exception as exc: print(f"Warning: GEV expectations guidance control failed: {exc}")
-
     try: refresh_cross_company_tabs(wb,ticker)
     except Exception as exc: print(f"Warning: final cross-company refresh failed: {exc}")
-
-    # Never allow an earlier template peer list to survive a later module refresh.
     try: peers=ensure_dynamic_peer_comps(wb,ticker)
     except Exception as exc: print(f"Warning: final dynamic peer refresh failed: {exc}")
-
     try: ensure_bayesian_base_rates(wb,ticker)
     except Exception as exc: print(f"Warning: Bayesian base-rate refresh failed: {exc}")
     try: repair_cross_sheet_context(wb)
@@ -109,13 +103,16 @@ def _apply_final_controls(wb,ticker):
 
 def repair_segment_charts(wb,ticker):
     _apply_final_controls(wb,ticker)
-    if not {"Analysis Charts","Segment Analysis"}.issubset(wb.sheetnames): ensure_ai_impact_analysis(wb,ticker); _shorten_final_titles(wb); return
+    if not {"Analysis Charts","Segment Analysis"}.issubset(wb.sheetnames):
+        ensure_ai_impact_analysis(wb,ticker)
+        try: ensure_news_analysis(wb,ticker)
+        except Exception as exc: print(f"Warning: Recent News & Impact failed: {exc}")
+        _shorten_final_titles(wb); return
     ws=wb["Analysis Charts"]; seg=wb["Segment Analysis"]; _remove_target_charts(ws)
     for row in ws.iter_rows(min_row=2,max_row=20,min_col=39,max_col=45):
         for cell in row: cell.value=None
 
-    section=_find(seg,"Revenue by Business Line")
-    if section is None: section=_find(seg,"Revenue by Business Line / Disclosed Revenue Group")
+    section=_find_any(seg,("Revenue by Business Line / Product Group","Revenue by Business Line","Revenue by Business Line / Disclosed Revenue Group"))
     business=[]; latest_year="Latest"
     if section:
         header=section+1; latest_col=4; h=str(seg.cell(header,latest_col).value or ""); latest_year=h if h else "Latest"
@@ -130,15 +127,15 @@ def repair_segment_charts(wb,ticker):
     for out_r,(src_r,name) in enumerate(business[:10],3): ws.cell(out_r,39,name); ws.cell(out_r,40,f"='Segment Analysis'!D{src_r}"); ws.cell(out_r,40).number_format=FMT_BN
     if business:
         end=2+min(10,len(business)); ch=BarChart(); ch.type="bar"; ch.style=10; ch.title=f"{latest_year} Revenue Mix"; ch.height=8.5; ch.width=13.5; ch.legend=None; ch.add_data(Reference(ws,min_col=40,min_row=2,max_row=end),titles_from_data=True); ch.set_categories(Reference(ws,min_col=39,min_row=3,max_row=end)); ch.x_axis.numFmt="$0"; ch.x_axis.title=f"{latest_year} revenue ($bn)"; ch.visible_cells_only=False; ch.display_blanks="gap"; _labels(ch); ws.add_chart(ch,"A53"); ws["A70"]=f"Units: {latest_year} revenue ($bn)"; ws["D70"]="Issuer-disclosed segments / revenue groups"; ws["F70"]="Source: Segment Analysis / annual filing"; ws["A71"]="Business mix uses only disclosed categories; no standalone product revenue is invented."
-    else: ws["A55"]="No reliable disclosed business-line revenue was extracted. Complete the yellow Segment Analysis inputs to enable this chart."; ws["A55"].font=Font(italic=True,color=GREY)
+    else: ws["A55"]="No reliable disclosed business-line revenue was extracted. Segment names may still be available on Segment Analysis; charts require financial values."; ws["A55"].font=Font(italic=True,color=GREY)
 
-    seg_section=_find(seg,"Reported Operating Segments"); margins=[]; margin_col=None; profit_col=None; margin_header="Latest Margin"; profit_header="Segment profitability"
+    seg_section=_find_any(seg,("Reported Operating / Reportable Segments","Reported Operating Segments","Reported Segments")); margins=[]; margin_col=None; profit_col=None; margin_header="Latest Margin"; profit_header="Segment profitability"
     if seg_section:
         header=seg_section+1
         for c in range(1,min(18,seg.max_column)+1):
             text=str(seg.cell(header,c).value or "")
             if "Margin" in text and "Δ" not in text: margin_col=c; margin_header=text
-            if any(k in text for k in ("Op. Income","Operating Income","EBITDA","Segment Profit")): profit_col=c; profit_header=text
+            if any(k in text for k in ("Op. Income","Operating Income","EBITDA","Segment Profit","Adjusted Earnings")): profit_col=c; profit_header=text
         if margin_col and profit_col:
             for r in range(header+1,min(seg.max_row,header+15)+1):
                 name=seg.cell(r,1).value; profit=seg.cell(r,profit_col).value
@@ -151,7 +148,10 @@ def repair_segment_charts(wb,ticker):
     for out_r,(src_r,name) in enumerate(margins[:10],3): ws.cell(out_r,42,name); ws.cell(out_r,43,f"='Segment Analysis'!{get_column_letter(margin_col)}{src_r}"); ws.cell(out_r,43).number_format=FMT_PCT
     if margins:
         end=2+min(10,len(margins)); ch=BarChart(); ch.type="bar"; ch.style=10; ch.title=f"{margin_header} by Segment"; ch.height=8.5; ch.width=13.5; ch.legend=None; ch.add_data(Reference(ws,min_col=43,min_row=2,max_row=end),titles_from_data=True); ch.set_categories(Reference(ws,min_col=42,min_row=3,max_row=end)); ch.x_axis.numFmt="0%"; ch.x_axis.title=margin_header; ch.visible_cells_only=False; ch.display_blanks="gap"; _labels(ch); ws.add_chart(ch,"I53"); ws["I70"]=f"Margin = {profit_header} ÷ segment revenue"; ws["M70"]="Source: Segment Analysis / annual filing"; ws["I71"]="Profitability uses the issuer's disclosed segment performance measure; missing economics are not estimated."
-    else: ws["I55"]="Segment profitability is not disclosed or not reliably extracted. Chart remains blank rather than estimating it."; ws["I55"].font=Font(italic=True,color=GREY)
+    else: ws["I55"]="Segment profitability is not disclosed or not reliably extracted. Segment names remain visible, while the chart stays blank rather than estimating economics."; ws["I55"].font=Font(italic=True,color=GREY)
     ws["A112"]=f"External segment source: {ticker} annual filing / Segment Analysis sheet. Monte Carlo, scenario, stress and DCF values are model outputs based on workbook assumptions."; ws["A112"].font=Font(italic=True,color=GREY,size=9)
 
-    ensure_ai_impact_analysis(wb,ticker); finalize_model_reliability(wb,ticker); _shorten_final_titles(wb)
+    ensure_ai_impact_analysis(wb,ticker)
+    try: ensure_news_analysis(wb,ticker)
+    except Exception as exc: print(f"Warning: Recent News & Impact failed: {exc}")
+    finalize_model_reliability(wb,ticker); _shorten_final_titles(wb)
