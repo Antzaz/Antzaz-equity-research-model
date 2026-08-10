@@ -2,7 +2,6 @@ from __future__ import annotations
 
 """Private hosted dashboard for the equity-research models in the portfolio universe."""
 
-import json
 from pathlib import Path
 import sys
 
@@ -86,11 +85,23 @@ def _price(value):
 
 
 def _right_of_label(ws, label):
+    if ws is None:
+        return None
     target = str(label).strip().lower()
     for row in ws.iter_rows():
         for cell in row:
             if str(cell.value or "").strip().lower() == target:
                 return ws.cell(cell.row, cell.column + 1).value
+    return None
+
+
+def _row_value(ws, label, value_col=2):
+    if ws is None:
+        return None
+    target = str(label).strip().lower()
+    for r in range(1, ws.max_row + 1):
+        if str(ws.cell(r, 1).value or "").strip().lower() == target:
+            return ws.cell(r, value_col).value
     return None
 
 
@@ -107,6 +118,14 @@ verdict = _right_of_label(summary, "Model View") if summary else None
 quant_score = _right_of_label(summary, "Quant Score / 100") if summary else None
 why = _right_of_label(summary, "Why") if summary else None
 
+people = wb["Leadership & Culture"] if "Leadership & Culture" in wb.sheetnames else None
+worker_score = _row_value(people, "Worker happiness / satisfaction signal")
+worker_scope = _row_value(people, "Worker happiness / satisfaction signal", 3)
+leadership_score = _row_value(people, "Composite proxy / 100")
+peer_ws = wb["Peer Comps"] if "Peer Comps" in wb.sheetnames else None
+market_share = _num(peer_ws["M4"].value) if peer_ws and peer_ws.max_column >= 13 else None
+market_share_basis = peer_ws["O4"].value if peer_ws and peer_ws.max_column >= 15 else None
+
 st.subheader(str(name or ticker))
 st.caption(" • ".join(str(x) for x in (sector, industry) if x))
 
@@ -119,6 +138,15 @@ c5.metric("Model view", str(verdict or "—"))
 if why:
     st.info(str(why))
 
+p1, p2, p3 = st.columns(3)
+p1.metric("Industry market share", _pct(market_share))
+p2.metric("Employee signal", "—" if _num(worker_score) is None else f"{_num(worker_score):.0f}/100*")
+p3.metric("Leadership proxy", "—" if _num(leadership_score) is None else f"{_num(leadership_score):.1f}/100")
+if market_share_basis:
+    st.caption(f"Market share: {market_share_basis}")
+if worker_scope:
+    st.caption(f"* Employee signal scope: {worker_scope}")
+
 with open(model_path, "rb") as f:
     st.download_button(
         "Download latest Excel model",
@@ -128,7 +156,9 @@ with open(model_path, "rb") as f:
     )
 
 
-tab_hist, tab_segments, tab_news, tab_sources = st.tabs(["Historical Financials", "Segments", "Recent News", "Workbook Sources"])
+tab_hist, tab_segments, tab_people, tab_news, tab_sources = st.tabs(
+    ["Historical Financials", "Segments", "Leadership & Culture", "Recent News", "Workbook Sources"]
+)
 
 with tab_hist:
     if "Historical Financials" not in wb.sheetnames:
@@ -191,6 +221,45 @@ with tab_segments:
             st.dataframe(pd.DataFrame(records), use_container_width=True)
         else:
             st.info("No segment names have been recovered yet.")
+
+with tab_people:
+    if people is None:
+        st.info("No Leadership & Culture research sheet is available in this workbook yet.")
+    else:
+        l1, l2 = st.columns(2)
+        with l1:
+            st.markdown("#### Workforce signal")
+            st.metric("Satisfaction / employee signal", "—" if _num(worker_score) is None else f"{_num(worker_score):.0f}/100")
+            if worker_scope:
+                st.write(worker_scope)
+            evidence = _row_value(people, "Evidence")
+            if evidence:
+                st.caption(str(evidence))
+        with l2:
+            st.markdown("#### Leadership research")
+            st.metric("Leadership evidence proxy", "—" if _num(leadership_score) is None else f"{_num(leadership_score):.1f}/100")
+            st.caption("Transparent research proxy based on execution, capital allocation, leadership depth, culture and governance disclosure—not a factual management rating.")
+
+        dimensions=[]
+        for r in range(14,21):
+            name_v=people.cell(r,1).value
+            score_v=_num(people.cell(r,2).value)
+            note_v=people.cell(r,3).value
+            if name_v and score_v is not None:
+                dimensions.append({"Dimension":name_v,"Score / 100":score_v,"Evidence / Caveat":note_v})
+        if dimensions:
+            st.dataframe(pd.DataFrame(dimensions),use_container_width=True,hide_index=True)
+
+        conclusion=_row_value(people,"Research conclusion")
+        best_peer=_row_value(people,"Best peer on current metrics")
+        candidate=_row_value(people,"Candidate for deeper research")
+        st.markdown("#### Same-sector alternative screen")
+        if conclusion:
+            st.write(conclusion)
+        if candidate:
+            st.success(f"Candidate for deeper research: {candidate}")
+        elif best_peer:
+            st.caption(f"Best current peer-screen score: {best_peer}; threshold for a clear alternative was not met.")
 
 with tab_news:
     if "Recent News & Impact" not in wb.sheetnames:
