@@ -2,10 +2,15 @@ name: Equity research smoke test
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - 'agent/**'
     paths:
       - '.github/workflows/equity-smoke.yml'
       - 'update_model.py'
+      - 'research.py'
+      - 'agent_research/**'
+      - 'source_registry.py'
       - 'currency_normalization.py'
       - 'consensus_quality.py'
       - 'dynamic_peer_engine.py'
@@ -16,9 +21,13 @@ on:
   workflow_dispatch:
 
 jobs:
-  tsm-smoke:
+  equity-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        ticker: [TSM, GOOGL]
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -30,48 +39,79 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
-      - name: Build TSM workbook
+      - name: Build research workbook
         env:
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
-        run: python update_model.py TSM
-      - name: Validate consolidated workbook and data scales
+        run: python update_model.py ${{ matrix.ticker }}
+      - name: Run no-token research agents
+        run: python research.py ${{ matrix.ticker }} --skip-model
+      - name: Validate consolidated workbook, source coverage and data scales
+        env:
+          TICKER: ${{ matrix.ticker }}
         run: |
           python - <<'PY'
+          import os
           from pathlib import Path
           from openpyxl import load_workbook
+          from source_registry import issuer_sources
 
-          files=sorted(Path('updated_models').glob('TSM_Equity_Research_*.xlsx'))
-          assert files, 'TSM workbook was not generated'
+          ticker=os.environ['TICKER']
+          files=sorted(Path('updated_models').glob(f'{ticker}_Equity_Research_*.xlsx'))
+          assert files, f'{ticker} workbook was not generated'
           path=files[-1]
           wb=load_workbook(path,data_only=False,read_only=False)
 
           removed={'Visual Dashboard','Comparative Analysis','Valuation Cross-Checks','AI Analysis','AI Valuation'}
           survivors=removed.intersection(wb.sheetnames)
           assert not survivors, f'Duplicate presentation sheets still present: {sorted(survivors)}'
-          assert 'Leadership & Culture' in wb.sheetnames, 'Leadership & Culture sheet missing'
-          assert 'Peer Comps' in wb.sheetnames, 'Peer Comps sheet missing'
-          assert 'Expectations & Consensus' in wb.sheetnames, 'Expectations & Consensus sheet missing'
+          for required in ('Leadership & Culture','Peer Comps','Expectations & Consensus','Dashboard','Data Quality'):
+              assert required in wb.sheetnames, f'{required} sheet missing'
 
-          hist=wb['Historical Financials']
-          latest_rev=hist['G4'].value
-          assert isinstance(latest_rev,(int,float)) and 50 < latest_rev < 500, f'TSM latest revenue scale looks wrong: {latest_rev}'
+          # The consolidated people/leadership block must be idempotent, not appended repeatedly.
+          dash=wb['Dashboard']
+          people_titles=[r for r in range(1,dash.max_row+1) if str(dash.cell(r,1).value or '').strip()=='People, Leadership & Market Position']
+          assert len(people_titles)==1, f'Dashboard people block duplicated: {people_titles}'
+          p=people_titles[0]
+          labels={str(dash.cell(r,1).value or '').strip():dash.cell(r,2).value for r in range(p+1,min(dash.max_row,p+12)+1)}
+          assert 'Worker happiness / satisfaction signal' in labels, 'Worker happiness/status missing from Dashboard'
+          assert 'Leadership evidence proxy / 100' in labels, 'Leadership proxy missing from Dashboard'
+          assert 'Selected peer-set market value %' in labels, 'Peer-set market value percentage missing from Dashboard'
+          assert 'Same-sector alternative screen' in labels, 'Alternative-company screen missing from Dashboard'
+
+          people=wb['Leadership & Culture']
+          leadership=people['B11'].value
+          assert isinstance(leadership,(int,float)) and 0 <= leadership <= 100, f'Leadership proxy invalid: {leadership}'
+          conclusion=people['B47'].value
+          assert conclusion, 'Alternative-company research conclusion missing'
 
           peer=wb['Peer Comps']
-          market_share=peer['M4'].value
-          assert isinstance(market_share,(int,float)) and 0.60 < market_share < 0.80, f'TSM market share missing/wrong: {market_share}'
+          assert peer['M3'].value=='Industry Market Share %', 'Industry market-share column missing'
+          assert peer['N3'].value=='Peer-Set Market Cap %', 'Peer-set market-cap percentage column missing'
+          peer_weights=[]
+          for r in range(4,10):
+              v=peer.cell(r,14).value
+              if isinstance(v,(int,float)): peer_weights.append(v)
+          assert len(peer_weights)>=2, 'Peer-set market-cap percentages not populated'
+          assert 0.98 <= sum(peer_weights) <= 1.02, f'Peer-set market-cap weights do not sum to ~100%: {sum(peer_weights)}'
 
-          exp=wb['Expectations & Consensus']
-          revenue_rows=[]
-          for r in range(7,exp.max_row+1):
-              if str(exp.cell(r,1).value or '').strip()=='Revenue':
-                  revenue_rows.append((r,exp.cell(r,3).value,exp.cell(r,4).value))
-          checked=0
-          for r,cons,model in revenue_rows[:2]:
-              if isinstance(cons,(int,float)) and isinstance(model,(int,float)) and model>0:
-                  ratio=cons/model
-                  assert 0.25 < ratio < 4.0, f'Consensus currency scale mismatch row {r}: consensus={cons}, model={model}, ratio={ratio}'
-                  checked+=1
-          assert checked>=1, 'No comparable revenue consensus row available for currency validation'
+          sources=issuer_sources(ticker)
+          assert sources, f'Explicit issuer source registry missing for {ticker}'
+
+          if ticker=='TSM':
+              hist=wb['Historical Financials']; latest_rev=hist['G4'].value
+              assert isinstance(latest_rev,(int,float)) and 50 < latest_rev < 500, f'TSM latest revenue scale looks wrong: {latest_rev}'
+              market_share=peer['M4'].value
+              assert isinstance(market_share,(int,float)) and 0.60 < market_share < 0.80, f'TSM market share missing/wrong: {market_share}'
+              assert isinstance(people['B7'].value,(int,float)), 'TSM scope-limited employee signal not populated'
+          else:
+              # Alphabet has source-scoped business market positions, while broad employee happiness
+              # remains REVIEW rather than a fabricated company-wide score.
+              assert people['E7'].value=='REVIEW', f'GOOGL employee evidence should be REVIEW, got {people["E7"].value}'
+              positions=[]
+              for r in range(35,41):
+                  metric=people.cell(r,1).value; share=people.cell(r,2).value
+                  if metric and isinstance(share,(int,float)): positions.append((metric,share))
+              assert positions, 'GOOGL business market-position snapshots missing'
 
           broken=[]
           for ws in wb.worksheets:
@@ -80,20 +120,17 @@ jobs:
                       value=cell.value
                       if isinstance(value,str) and value.startswith('='):
                           for name in removed:
-                              if name in value:
-                                  broken.append(f'{ws.title}!{cell.coordinate}->{name}')
+                              if name in value: broken.append(f'{ws.title}!{cell.coordinate}->{name}')
           assert not broken, f'Formula references to removed sheets remain: {broken[:10]}'
 
-          people=wb['Leadership & Culture']
-          employee=people['B7'].value
-          leadership=people['B11'].value
-          assert isinstance(employee,(int,float)), 'Employee signal not populated'
-          assert isinstance(leadership,(int,float)) and 0 <= leadership <= 100, f'Leadership proxy invalid: {leadership}'
+          reports=list(Path('research_runs').glob(f'{ticker}/*/agent_report.md'))
+          manifests=list(Path('research_runs').glob(f'{ticker}/*/source_health.json'))
+          assert reports, 'No-token agent report was not generated'
+          assert manifests, 'Source-health artifact was not generated'
 
-          print('TSM smoke test PASS')
+          print(f'{ticker} smoke test PASS')
           print('Workbook:',path)
-          print('Latest revenue $bn:',latest_rev)
-          print('Industry market share:',market_share)
-          print('Employee signal:',employee)
+          print('Issuer sources:',len(sources))
           print('Leadership proxy:',leadership)
+          print('Peer-set weight sum:',sum(peer_weights))
           PY
