@@ -2,6 +2,9 @@ portfolio.csv
 expected_returns.csv
 benchmark_weights.csv
 portfolio_decision_journal.csv
+company_thesis.csv
+institutional_views.csv
+thesis_risks.csv
 outputs/
 __pycache__/
 *.pyc
