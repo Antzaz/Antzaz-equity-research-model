@@ -10,6 +10,7 @@ from src.data import download_prices, fetch_info
 from src.portfolio import load_portfolio, build_holdings
 from src.risk import portfolio_risk, per_asset_risk
 from src.factors import build_factor_scores, factor_exposure
+from src.alpha_analysis import analyze_alpha
 from src.monte_carlo import bootstrap_portfolio
 from src.reverse_dcf import reverse_dcf_table
 from src.stress import beta_stress_test
@@ -145,6 +146,7 @@ def main():
     proxy_available = {
         name: ticker for name, ticker in proxy_map.items() if ticker in prices.columns
     }
+    proxy_returns = pd.DataFrame()
     if proxy_available:
         proxy_prices = prices[list(dict.fromkeys(proxy_available.values()))]
         proxy_returns_raw = proxy_prices.pct_change()
@@ -158,6 +160,33 @@ def main():
         )
     else:
         factor_proxy = pd.DataFrame()
+
+    # Alpha / factor-adjusted return layer.
+    print("Running CAPM and multi-factor alpha analysis...")
+    alpha_cfg = config.get("alpha_analysis", {})
+    rolling_windows = alpha_cfg.get(
+        "rolling_windows",
+        {"1Y": int(config["trading_days"]), "3Y": int(config["trading_days"]) * 3},
+    )
+    rolling_windows = {str(k): int(v) for k, v in rolling_windows.items() if int(v) > 30}
+    alpha_summary, alpha_loadings, rolling_alpha, alpha_decomposition, alpha_metadata = analyze_alpha(
+        portfolio_returns=portfolio_returns,
+        benchmark_returns=benchmark_returns,
+        proxy_returns=proxy_returns,
+        risk_free_rate=float(config["risk_free_rate"]),
+        trading_days=int(config["trading_days"]),
+        rolling_windows=rolling_windows,
+    )
+    if not alpha_summary.empty:
+        alpha_summary["RawActiveAnnualizedReturn"] = relative.get("active_annualized_return")
+        capm = alpha_summary[alpha_summary["Model"] == "CAPM - Benchmark"]
+        if not capm.empty:
+            row = capm.iloc[0]
+            risk_summary["annualized_alpha"] = row.get("AnnualizedAlpha")
+            risk_summary["alpha_t_stat"] = row.get("AlphaTStat")
+            risk_summary["alpha_p_value"] = row.get("AlphaPValue")
+            risk_summary["alpha_r_squared"] = row.get("R2")
+            risk_summary["alpha_method"] = "Jensen/CAPM regression vs configured benchmark"
 
     rolling_risk = rolling_risk_table(
         portfolio_returns,
@@ -234,13 +263,15 @@ def main():
         "monte_carlo": mc_summary,
         "reverse_dcf_assumptions": config["reverse_dcf"],
         "portfolio_constraints": constraints_cfg,
+        "alpha_analysis": alpha_metadata,
         "factor_proxy_note": (
             "ETF proxy sensitivities are public-data diagnostics, not a commercial "
             "multi-factor risk model."
         ),
         "attribution_note": (
-            "Return attribution uses static current weights and is analytical, not "
-            "transaction-level realized performance attribution."
+            "Return attribution and alpha use static current weights unless point-in-time "
+            "portfolio weights / transactions are supplied; they are research diagnostics, "
+            "not realized manager-performance attribution."
         ),
     }
 
@@ -264,6 +295,10 @@ def main():
         "rolling_risk": rolling_risk,
         "historical_stress_windows": historical_stress,
         "return_attribution": attribution,
+        "alpha_summary": alpha_summary,
+        "alpha_factor_loadings": alpha_loadings,
+        "rolling_alpha": rolling_alpha,
+        "alpha_return_decomposition": alpha_decomposition,
         "factor_scores": factors,
         "factor_exposure": factor_portfolio,
         "factor_proxy_sensitivity": factor_proxy,
@@ -283,6 +318,11 @@ def main():
     print("Analysis complete.")
     print(f"Latest outputs: {latest}")
     print(f"Snapshot:       {snapshot}")
+    if alpha_metadata.get("french_factor_warnings"):
+        print("Alpha note: some Kenneth French factor downloads were unavailable:")
+        for warning in alpha_metadata["french_factor_warnings"]:
+            print(f"  - {warning}")
+        print("CAPM and any available factor models were still exported.")
     print()
     if active_share is None:
         print("Optional: add benchmark_weights.csv to calculate true Active Share.")
