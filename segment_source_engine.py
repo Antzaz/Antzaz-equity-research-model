@@ -44,6 +44,12 @@ OFFICIAL_SEGMENT_PAGES = {
         "https://www.ubs.com/global/en/our-firm/what-we-do.html",
         "https://www.ubs.com/global/en/investor-relations/financial-information.html",
     ],
+    "TSM": [
+        "https://investor.tsmc.com/static/annualReports/2025/english/index.html",
+        "https://investor.tsmc.com/english/quarterly-results/2026/q2",
+        "https://investor.tsmc.com/english/monthly-revenue/2026",
+        "https://investor.tsmc.com/english/sec-filings",
+    ],
 }
 
 # Verified fallbacks are only used if live official/regulatory discovery cannot recover a
@@ -103,10 +109,10 @@ def _pdf_text(content: bytes) -> str:
         return ""
     try:
         reader = PdfReader(BytesIO(content))
-        # Segment descriptions normally occur in the business/notes sections. Cap page count
-        # to avoid turning a workbook refresh into a very slow PDF-processing job.
+        # Business/segment notes usually appear well before the appendices. Keep PDF reads
+        # bounded so official-source enrichment cannot silently stall a model for minutes.
         texts = []
-        for page in reader.pages[:220]:
+        for page in reader.pages[:120]:
             try:
                 texts.append(page.extract_text() or "")
             except Exception:
@@ -153,9 +159,8 @@ def sec_segment_documents(ticker: str, headers: dict) -> list[dict]:
         elif form in CURRENT_FORMS and current_added < 3:
             url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc.replace('-', '')}/{doc}"
             raw, text, resolved = _fetch_html(url, headers, 45)
-            # Keep current reports only if they look relevant to divisional/segment reporting.
             low = text.lower()
-            if text and any(k in low for k in ("segment", "business division", "business divisions", "group items")):
+            if text and any(k in low for k in ("segment", "business division", "business divisions", "group items", "wafer revenue", "platform")):
                 docs.append({"kind": f"SEC {form}", "url": resolved, "html": raw, "text": text, "filed": filed, "priority": 20})
                 current_added += 1
         if annual_added and current_added >= 3:
@@ -199,7 +204,6 @@ def issuer_segment_documents(ticker: str) -> list[dict]:
             docs.append({"kind": "Issuer website", "url": resolved, "html": raw, "text": text, "priority": 30})
             seen.add(key)
 
-        # Investor-relations pages often link directly to the annual report / results report.
         if _download_links is None or not any(k in page.lower() for k in ("investor", "financial", "report")):
             continue
         try:
@@ -208,7 +212,7 @@ def issuer_segment_documents(ticker: str) -> list[dict]:
             links = []
         for link in links[:10]:
             path = urlparse(link).path.lower()
-            if not any(k in (link + " " + path).lower() for k in ("annual", "financial", "result", "report")):
+            if not any(k in (link + " " + path).lower() for k in ("annual", "financial", "result", "report", "presentation", "management")):
                 continue
             raw2, text2, resolved2 = _fetch_html(link, None, 35)
             if not text2:
