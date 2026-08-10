@@ -50,6 +50,8 @@ from model_reliability import prepare_model_reliability
 from investment_summary import ensure_investment_summary
 from ownership_analysis import ensure_ownership_analysis
 from currency_normalization import normalize_workbook_currency
+from consensus_quality import normalize_expectations_consensus
+from research_extensions import ensure_research_extensions
 
 # institutional_layers historically created a 33-character temporary sheet name.
 # Patch its sheet factory once so both institutional refreshes are warning-free.
@@ -350,6 +352,15 @@ def main():
     except Exception as exc: print(f"Warning: Investment Summary failed: {exc}")
     try: ensure_ownership_analysis(wb,ticker)
     except Exception as exc: print(f"Warning: Ownership & Holders failed: {exc}")
+
+    # Run de-duplication and public-data quality controls only after every legacy generator
+    # has finished, so removed presentation tabs are not recreated later in the pipeline.
+    print("Consolidating duplicate tabs and extending market, workforce and leadership research...")
+    try: normalize_expectations_consensus(wb,ticker,info)
+    except Exception as exc: print(f"Warning: consensus currency alignment failed: {exc}")
+    try: ensure_research_extensions(wb,ticker,info)
+    except Exception as exc: print(f"Warning: research extension / workbook consolidation failed: {exc}")
+
     _ensure_excel_sheet_names(wb); _fix_all_charts(wb)
     if "Dashboard" in wb.sheetnames:
         wb["Dashboard"]["A1"]=f"{ticker} Long-Term Value Investing Dashboard"
