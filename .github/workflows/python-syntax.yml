@@ -28,6 +28,7 @@ jobs:
             segment_chart_fix.py \
             automation/portfolio_universe.py \
             automation/build_private_bundle.py \
+            automation/build_showcase_snapshot.py \
             institutional_research/run_research.py \
             institutional_research/dashboard.py \
             institutional_research/live_dashboard.py \
