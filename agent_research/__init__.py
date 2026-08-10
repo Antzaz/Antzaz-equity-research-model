@@ -2,6 +2,7 @@
 
 from .core import AgentContext, AgentResult, OpenAIResearchClient
 from .agents import FilingsAgent, KPIEarningsAgent, ThesisMonitorAgent, ResearchQAAgent
+from .source_health import SourceHealthAgent
 
 __all__ = [
     "AgentContext",
@@ -11,4 +12,5 @@ __all__ = [
     "KPIEarningsAgent",
     "ThesisMonitorAgent",
     "ResearchQAAgent",
+    "SourceHealthAgent",
 ]
