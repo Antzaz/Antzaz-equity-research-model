@@ -17,7 +17,7 @@ function New-RandomPassword {
     return [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+','-').Replace('/','_')
 }
 
-function Resolve-GhPath {
+function Resolve-GitHubCli {
     $cmd = Get-Command gh -ErrorAction SilentlyContinue
     if ($cmd) { return $cmd.Source }
 
@@ -31,37 +31,65 @@ function Resolve-GhPath {
     return $null
 }
 
-$GhPath = Resolve-GhPath
+$GhPath = Resolve-GitHubCli
 if (-not $GhPath) {
+    Write-Host "GitHub CLI is not installed. Installing the official GitHub CLI package with WinGet..."
     $winget = Get-Command winget -ErrorAction SilentlyContinue
     if (-not $winget) {
-        throw "GitHub CLI is not installed and WinGet is unavailable. Install GitHub CLI from https://cli.github.com/ and rerun this script."
+        throw "WinGet is unavailable. Install GitHub CLI from https://cli.github.com/ and rerun this script."
     }
-
-    Write-Host "GitHub CLI is not installed. Installing the official GitHub CLI package with WinGet..."
-    & winget install --id GitHub.cli --source winget --accept-source-agreements --accept-package-agreements
+    & winget install --id GitHub.cli --source winget --accept-package-agreements --accept-source-agreements
     if ($LASTEXITCODE -ne 0) {
-        throw "WinGet could not install GitHub CLI. Run: winget install --id GitHub.cli --source winget"
+        throw "GitHub CLI installation failed with exit code $LASTEXITCODE."
     }
-
-    # The MSI changes PATH for future terminals. Also locate/append it for this process so
-    # the setup can continue without requiring the user to close PowerShell.
-    $env:Path = "$env:ProgramFiles\GitHub CLI;$env:LOCALAPPDATA\Programs\GitHub CLI;$env:Path"
-    $GhPath = Resolve-GhPath
+    $GhPath = Resolve-GitHubCli
     if (-not $GhPath) {
-        throw "GitHub CLI was installed, but this PowerShell session cannot locate gh.exe. Open a new PowerShell window and rerun this script."
+        throw "GitHub CLI installed but gh.exe could not be located. Open a new PowerShell window and rerun this script."
     }
     Write-Host "GitHub CLI installed: $GhPath"
 }
 
+# Make gh available to child commands in this PowerShell process even when the installer
+# has not yet propagated PATH changes to the current terminal.
+$GhDir = Split-Path -Parent $GhPath
+if (($env:Path -split ';') -notcontains $GhDir) {
+    $env:Path = "$GhDir;$env:Path"
+}
+
 Write-Host "Checking GitHub CLI authentication..."
-& $GhPath auth status 2>$null
-if ($LASTEXITCODE -ne 0) {
+# A logged-out `gh auth status` returns a non-zero exit code. That is expected during
+# first-time setup, so temporarily avoid treating native stderr as a terminating error.
+$oldPreference = $ErrorActionPreference
+try {
+    $ErrorActionPreference = "Continue"
+    & $GhPath auth status *> $null
+    $authOk = ($LASTEXITCODE -eq 0)
+}
+finally {
+    $ErrorActionPreference = $oldPreference
+}
+
+if (-not $authOk) {
     Write-Host "GitHub CLI needs authorization. A browser/device login will start now."
+    Write-Host "Choose GitHub.com and complete the browser login for your Antzaz account."
     & $GhPath auth login --hostname github.com --git-protocol https --web
     if ($LASTEXITCODE -ne 0) {
-        throw "GitHub authentication did not complete. Run 'gh auth login' and then rerun this script."
+        throw "GitHub CLI authentication did not complete successfully."
     }
+}
+
+# Verify authentication after login using the resolved executable path.
+$oldPreference = $ErrorActionPreference
+try {
+    $ErrorActionPreference = "Continue"
+    & $GhPath auth status
+    $authOk = ($LASTEXITCODE -eq 0)
+}
+finally {
+    $ErrorActionPreference = $oldPreference
+}
+if (-not $authOk) {
+    throw "GitHub CLI is installed but authentication is still unavailable. Rerun this script and complete the browser login."
 }
 
 if (-not (Test-Path $PortfolioPath)) {
@@ -70,7 +98,7 @@ if (-not (Test-Path $PortfolioPath)) {
 
 $token = (& $GhPath auth token).Trim()
 if (-not $token) {
-    throw "GitHub CLI did not return an authentication token. Run 'gh auth login' first."
+    throw "GitHub CLI did not return an authentication token. Rerun this script and complete GitHub authentication."
 }
 
 $portfolioBytes = [System.IO.File]::ReadAllBytes($PortfolioPath)
@@ -109,7 +137,7 @@ $secrets | Set-Content -Encoding UTF8 $hostedPath
 Write-Host "Triggering first Daily private portfolio refresh workflow..."
 & $GhPath workflow run daily-portfolio-refresh.yml --repo $Repository --ref main
 if ($LASTEXITCODE -ne 0) {
-    throw "Could not trigger daily-portfolio-refresh.yml. Check that GitHub Actions is enabled for the repository."
+    throw "Could not trigger daily-portfolio-refresh.yml. Check that Actions are enabled for the repository."
 }
 
 Write-Host ""
