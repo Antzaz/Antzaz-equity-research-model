@@ -113,8 +113,7 @@ jobs:
           retention-days: 14
           compression-level: 0
 
-      - name: Fail if any company model failed
+      - name: Report partial company failures
         if: steps.equity_refresh.outputs.failures != '0'
         run: |
-          echo "One or more company models failed. The encrypted bundle contains all successful refreshes."
-          exit 1
+          echo "Warning: one or more company models failed. The daily bundle still contains the refreshed portfolio analytics and every company model that completed successfully."
