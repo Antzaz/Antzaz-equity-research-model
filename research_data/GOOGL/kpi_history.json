@@ -1,0 +1,52 @@
+{
+  "ticker": "GOOGL",
+  "snapshots": [
+    {
+      "captured_at": "2026-08-10T00:00:00+00:00",
+      "fingerprint": "61619fa804854b9f",
+      "workbook": "seeded-from-ai_effect_analysis.py",
+      "kpis": [
+        {
+          "kpi": "Google Cloud Q2 revenue",
+          "current": 24.8,
+          "unit_comparison": "$bn / +82% YoY",
+          "signal": "Very strong",
+          "investment_read_through": "Cloud acceleration is a direct enterprise AI demand and monetization signal.",
+          "as_of": "2026-Q2",
+          "source_url": "https://blog.google/company-news/inside-google/message-ceo/alphabet-earnings-q2-2026/",
+          "data_type": "Company reported"
+        },
+        {
+          "kpi": "Google Cloud backlog",
+          "current": 514.0,
+          "unit_comparison": "$bn",
+          "signal": "Very strong",
+          "investment_read_through": "Large contracted demand supports duration, but conversion depends on capacity and customer utilization.",
+          "as_of": "2026-Q2",
+          "source_url": "https://blog.google/company-news/inside-google/message-ceo/alphabet-earnings-q2-2026/",
+          "data_type": "Company reported"
+        },
+        {
+          "kpi": "Gemini app monthly active users",
+          "current": 950.0,
+          "unit_comparison": "million",
+          "signal": "Strong",
+          "investment_read_through": "Near-billion-user distribution creates monetization optionality; revenue/user and engagement quality remain key.",
+          "as_of": "2026-Q2",
+          "source_url": "https://blog.google/company-news/inside-google/message-ceo/alphabet-earnings-q2-2026/",
+          "data_type": "Company reported"
+        },
+        {
+          "kpi": "AI Mode monthly active users",
+          "current": 1.0,
+          "unit_comparison": "billion+",
+          "signal": "Strong",
+          "investment_read_through": "Tests whether AI expands Search usage without degrading commercial query economics.",
+          "as_of": "2026-Q2",
+          "source_url": "https://blog.google/company-news/inside-google/message-ceo/alphabet-earnings-q2-2026/",
+          "data_type": "Company reported"
+        }
+      ]
+    }
+  ]
+}
