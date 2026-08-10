@@ -49,6 +49,7 @@ from dynamic_peer_engine import ensure_dynamic_peer_comps
 from model_reliability import prepare_model_reliability
 from investment_summary import ensure_investment_summary
 from ownership_analysis import ensure_ownership_analysis
+from currency_normalization import normalize_workbook_currency
 
 # institutional_layers historically created a 33-character temporary sheet name.
 # Patch its sheet factory once so both institutional refreshes are warning-free.
@@ -299,6 +300,11 @@ def main():
         prepare_model_reliability(wb,ticker)
     except Exception as exc:
         print(f"Warning: initial history normalization failed: {exc}")
+    try:
+        print("Normalizing reporting currency and ADR units...")
+        normalize_workbook_currency(wb,ticker,info)
+    except Exception as exc:
+        print(f"Warning: currency / ADR normalization failed: {exc}")
     update_scenarios(wb,hist,info); ensure_stress_test(wb); calibrate_scenario_cash_flow(wb)
     try:
         peers=ensure_dynamic_peer_comps(wb,ticker)
@@ -315,6 +321,7 @@ def main():
         if ticker in {"GOOGL","GOOG"}: ensure_segment_analysis(wb,ticker,SEC_HEADERS)
         else: ensure_segment_analysis_v2(wb,ticker,SEC_HEADERS)
     except Exception as exc: print(f"Warning: Segment Analysis module failed: {exc}")
+    print("Building advanced valuation analytics...")
     try: ensure_advanced_analytics(wb,ticker,info)
     except Exception as exc: print(f"Warning: Advanced Analytics module failed: {exc}")
     try: ensure_visual_dashboard(wb,ticker)
@@ -324,14 +331,21 @@ def main():
     except Exception as exc: print(f"Warning: Final Segment Analysis refresh failed: {exc}")
     try: ensure_analysis_charts(wb,ticker)
     except Exception as exc: print(f"Warning: Analysis Charts module failed: {exc}")
+    print("Running model-quality and institutional controls...")
     try: ensure_model_quality(wb,ticker)
     except Exception as exc: print(f"Warning: Model Quality / Research Workbench failed: {exc}")
     try: ensure_institutional_layers(wb,ticker)
     except Exception as exc: print(f"Warning: Institutional Layers failed: {exc}")
     try: refresh_cross_company_tabs(wb,ticker)
     except Exception as exc: print(f"Warning: Cross-company cleanup failed: {exc}")
+    print("Finalizing source checks, segment enrichment, valuation analytics and news...")
     try: repair_segment_charts(wb,ticker)
     except Exception as exc: print(f"Warning: Segment chart / final reliability repair failed: {exc}")
+    try:
+        normalize_workbook_currency(wb,ticker,info)
+    except Exception as exc:
+        print(f"Warning: final currency / ADR normalization failed: {exc}")
+    print("Building final investment summary and ownership view...")
     try: ensure_investment_summary(wb,ticker)
     except Exception as exc: print(f"Warning: Investment Summary failed: {exc}")
     try: ensure_ownership_analysis(wb,ticker)
