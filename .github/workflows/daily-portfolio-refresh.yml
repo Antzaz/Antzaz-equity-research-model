@@ -1,0 +1,120 @@
+name: Daily private portfolio refresh
+
+on:
+  schedule:
+    - cron: '17 8 * * *'
+      timezone: 'Europe/Helsinki'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+          cache-dependency-path: institutional_research/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r institutional_research/requirements.txt
+          python -m pip install openpyxl requests lxml beautifulsoup4 pypdf pyzipper
+
+      - name: Restore private portfolio
+        env:
+          PORTFOLIO_CSV_B64: ${{ secrets.PORTFOLIO_CSV_B64 }}
+        run: |
+          python - <<'PY'
+          import base64, os
+          from pathlib import Path
+          raw = os.environ.get('PORTFOLIO_CSV_B64', '').strip()
+          if not raw:
+              raise SystemExit('Missing required Actions secret: PORTFOLIO_CSV_B64')
+          path = Path('institutional_research/portfolio.csv')
+          path.parent.mkdir(parents=True, exist_ok=True)
+          path.write_bytes(base64.b64decode(raw))
+          print('Private portfolio restored for this runner only.')
+          PY
+
+      - name: Build and mask private research universe
+        run: |
+          python automation/portfolio_universe.py institutional_research/portfolio.csv > "$RUNNER_TEMP/portfolio_tickers.txt"
+          count=0
+          while IFS= read -r ticker; do
+            [ -z "$ticker" ] && continue
+            echo "::add-mask::$ticker"
+            count=$((count + 1))
+          done < "$RUNNER_TEMP/portfolio_tickers.txt"
+          echo "Active portfolio companies: $count"
+
+      - name: Refresh portfolio analytics
+        run: |
+          if python institutional_research/run_research.py > "$RUNNER_TEMP/portfolio_refresh.log" 2>&1; then
+            echo "Portfolio analytics refreshed successfully."
+          else
+            echo "Portfolio analytics refresh failed."
+            cat "$RUNNER_TEMP/portfolio_refresh.log"
+            exit 1
+          fi
+
+      - name: Refresh equity models for portfolio companies only
+        id: equity_refresh
+        env:
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+        run: |
+          failures=0
+          index=0
+          while IFS= read -r ticker; do
+            [ -z "$ticker" ] && continue
+            index=$((index + 1))
+            log="$RUNNER_TEMP/equity_${index}.log"
+            if python update_model.py "$ticker" > "$log" 2>&1; then
+              echo "Company model $index refreshed."
+            else
+              failures=$((failures + 1))
+              echo "Company model $index failed; sanitized log follows."
+              cat "$log"
+            fi
+          done < "$RUNNER_TEMP/portfolio_tickers.txt"
+          echo "failures=$failures" >> "$GITHUB_OUTPUT"
+          echo "Equity refresh complete: $index company model(s), $failures failure(s)."
+
+      - name: Build encrypted private live-data bundle
+        env:
+          LIVE_BUNDLE_PASSWORD: ${{ secrets.LIVE_BUNDLE_PASSWORD }}
+        run: |
+          if [ -z "$LIVE_BUNDLE_PASSWORD" ]; then
+            echo "Missing required Actions secret: LIVE_BUNDLE_PASSWORD"
+            exit 1
+          fi
+          python automation/build_private_bundle.py \
+            --portfolio institutional_research/portfolio.csv \
+            --portfolio-outputs institutional_research/outputs/latest \
+            --models-dir updated_models \
+            --output "$RUNNER_TEMP/private-live-data.zip" \
+            --password "$LIVE_BUNDLE_PASSWORD"
+
+      - name: Upload encrypted live data
+        uses: actions/upload-artifact@v4
+        with:
+          name: private-live-data
+          path: ${{ runner.temp }}/private-live-data.zip
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: Fail if any company model failed
+        if: steps.equity_refresh.outputs.failures != '0'
+        run: |
+          echo "One or more company models failed. The encrypted bundle contains all successful refreshes."
+          exit 1
