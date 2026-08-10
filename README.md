@@ -27,6 +27,23 @@ The generated workbook includes:
 - same-sector alternative-company screening;
 - research notes, checklist, journal and data-quality controls.
 
+## Agent-assisted research
+
+Use the agent orchestrator when you want the normal company model plus evidence monitoring and research QA:
+
+```powershell
+python .\research.py GOOGL
+```
+
+Phase 1 adds four specialist agents around the deterministic workbook:
+
+- Filings & Financials Agent;
+- KPI / Earnings Agent with durable KPI history;
+- Thesis Monitor Agent;
+- Research QA / Skeptic Agent.
+
+Optional evidence-bound LLM reasoning can be enabled with `python .\research.py GOOGL --ai` after setting `OPENAI_API_KEY`. AI narrative never overwrites model inputs or executes trades. See `AI_AGENTS.md` for governance, commands and the roadmap for institutional, competitive, valuation-challenge, portfolio-manager and decision-journal agents.
+
 ## Source hierarchy
 
 The model prefers primary and issuer-owned sources where possible:
@@ -57,7 +74,7 @@ The current generator removes redundant presentation sheets. `Dashboard`, `Peer 
 
 GitHub Actions runs:
 
-- a Python syntax check on core research modules; and
+- a Python syntax check on core research modules, including the agent orchestrator; and
 - an end-to-end TSM smoke test that builds a real workbook and validates currency scale, consensus alignment, market-share data, consolidated tabs and broken formula references.
 
-Generated workbooks, private portfolio files, local Streamlit secrets and runtime caches are excluded from Git tracking.
+Generated workbooks, agent run reports, private portfolio files, local Streamlit secrets and runtime caches are excluded from Git tracking. Durable public KPI history under `research_data/` is retained for longitudinal thesis monitoring.
