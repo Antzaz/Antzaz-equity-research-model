@@ -3,7 +3,7 @@ from __future__ import annotations
 """Download and decrypt the latest private live-data artifact from GitHub Actions.
 
 Designed for Streamlit Cloud or another hosted dashboard. Secrets stay outside the
-repository; the public repository contains only the generic loader code.
+repository; the repository contains only the generic loader code.
 """
 
 from io import BytesIO
@@ -12,7 +12,15 @@ from pathlib import Path
 import shutil
 import zipfile
 
-import pyzipper
+try:
+    import pyzipper
+except ImportError as exc:
+    raise ImportError(
+        "The private live portal requires pyzipper to decrypt its AES bundle. "
+        "From the repository root run: "
+        "python -m pip install -r .\\institutional_research\\requirements.txt"
+    ) from exc
+
 import requests
 
 
