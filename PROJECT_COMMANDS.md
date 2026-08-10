@@ -18,6 +18,29 @@ cd "C:\Users\Antza\Documents\Antzaz-equity-research-model"; git pull; python .\u
 cd "C:\Users\Antza\Documents\Antzaz-equity-research-model\institutional_research"; python -m pip install -r .\requirements.txt; python .\run_research.py; python -m streamlit run .\dashboard.py
 ```
 
+## Institutional investor comparison
+
+Creates/uses private local inputs for your company assumptions, public institutional disclosures and thesis-falsification rules, then exports Berkshire/Buffett-style screening and direct institutional comparisons.
+
+```powershell
+cd "C:\Users\Antza\Documents\Antzaz-equity-research-model\institutional_research"; python .\run_institutional_comparison.py
+```
+
+Guide: `institutional_research\INSTITUTIONAL_COMPARISON.md`
+
+Private inputs created from templates:
+
+- `company_thesis.csv`
+- `institutional_views.csv`
+- `thesis_risks.csv`
+
+Outputs:
+
+- `outputs\institutional_comparison\buffett_style_scorecard.csv`
+- `outputs\institutional_comparison\institutional_comparison.csv`
+- `outputs\institutional_comparison\institutional_consensus.csv`
+- `outputs\institutional_comparison\thesis_risks.csv`
+
 ## Private unified live portal
 
 Requires the `[live_data]` Streamlit secrets and a successful `Daily private portfolio refresh` GitHub Actions run. The dependency install is important because the encrypted live bundle uses `pyzipper`.
