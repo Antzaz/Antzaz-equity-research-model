@@ -3,6 +3,12 @@
   "history_period": "10y",
   "trading_days": 252,
   "risk_free_rate": 0.04,
+  "alpha_analysis": {
+    "rolling_windows": {
+      "1Y": 252,
+      "3Y": 756
+    }
+  },
   "monte_carlo": {
     "simulations": 5000,
     "horizon_days": 252,
