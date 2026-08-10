@@ -17,6 +17,8 @@ jobs:
         run: |
           python -m py_compile \
             update_model.py \
+            currency_normalization.py \
+            consensus_rebase.py \
             equity_live_dashboard.py \
             showcase/app.py \
             issuer_source_engine.py \
