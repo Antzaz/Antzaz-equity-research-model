@@ -7,6 +7,7 @@ on stale history, enforces dynamic same-sector peers, recreates segment/business
 and generates the current news-impact research sheet.
 """
 
+import re
 from openpyxl.chart import BarChart, Reference
 from openpyxl.chart.label import DataLabelList
 from openpyxl.styles import Font, PatternFill, Alignment
@@ -40,6 +41,31 @@ def _find_any(ws,labels):
         r=_find(ws,label)
         if r is not None: return r
     return None
+
+def _segment_key(name):
+    text=str(name or "").strip()
+    m=re.search(r"\(([A-Z]{2,10})\)\s*$",text)
+    if m: return m.group(1).lower()
+    if re.fullmatch(r"[A-Z]{2,10}",text): return text.lower()
+    return re.sub(r"[^a-z0-9]","",text.lower())
+def _dedupe_segment_aliases(seg):
+    section=_find_any(seg,("Reported Operating / Reportable Segments","Reported Operating Segments","Reported Segments"))
+    if section is None: return
+    header=section+1; stop=_find_any(seg,("Revenue by Business Line / Product Group","Revenue by Business Line","Revenue by Business Line / Disclosed Revenue Group")) or min(seg.max_row+1,header+20)
+    seen={}
+    for r in range(header+1,stop):
+        name=seg.cell(r,1).value
+        if not name: continue
+        key=_segment_key(name)
+        if not key: continue
+        if key not in seen:
+            seen[key]=r; continue
+        keep=seen[key]
+        # Prefer any missing economics from the duplicate row, but keep the earlier canonical label.
+        for c in range(2,min(16,seg.max_column)+1):
+            if seg.cell(keep,c).value in (None,"") and seg.cell(r,c).value not in (None,""):
+                seg.cell(keep,c).value=seg.cell(r,c).value
+        for c in range(1,min(16,seg.max_column)+1): seg.cell(r,c).value=None
 
 def _chart_row(ch):
     try: return ch.anchor._from.row
@@ -108,7 +134,7 @@ def repair_segment_charts(wb,ticker):
         try: ensure_news_analysis(wb,ticker)
         except Exception as exc: print(f"Warning: Recent News & Impact failed: {exc}")
         _shorten_final_titles(wb); return
-    ws=wb["Analysis Charts"]; seg=wb["Segment Analysis"]; _remove_target_charts(ws)
+    ws=wb["Analysis Charts"]; seg=wb["Segment Analysis"]; _dedupe_segment_aliases(seg); _remove_target_charts(ws)
     for row in ws.iter_rows(min_row=2,max_row=20,min_col=39,max_col=45):
         for cell in row: cell.value=None
 
