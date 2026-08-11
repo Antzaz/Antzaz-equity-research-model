@@ -1,0 +1,312 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Iterable
+import json
+
+import numpy as np
+import pandas as pd
+import yfinance as yf
+from openpyxl import load_workbook
+
+from .common import num, max_drawdown_from_prices
+
+DEFAULT_UNIVERSE = [
+    "AAPL","MSFT","GOOGL","AMZN","META","NVDA","AVGO","TSM","AMD","QCOM",
+    "JPM","BAC","V","MA","UNH","LLY","JNJ","XOM","CVX","CAT","GE","COST","WMT","HD","NEE",
+]
+BENCHMARK = "SPY"
+
+
+def latest_workbook(repo_root: Path, ticker: str) -> Path:
+    files = sorted((repo_root / "updated_models").glob(f"{ticker}_Equity_Research_*.xlsx"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not files:
+        raise FileNotFoundError(f"No generated workbook found for {ticker}")
+    return files[0]
+
+
+def peer_tickers_from_workbook(path: Path, target: str) -> list[str]:
+    wb = load_workbook(path, data_only=True, read_only=True)
+    if "Peer Comps" not in wb.sheetnames:
+        return [target]
+    ws = wb["Peer Comps"]
+    out = []
+    for r in range(4, min(ws.max_row, 40) + 1):
+        sym = str(ws.cell(r, 2).value or "").strip().upper()
+        if sym and sym not in out:
+            out.append(sym)
+    return out or [target]
+
+
+def workbook_current_snapshot(path: Path, ticker: str) -> dict[str, float | str | None]:
+    wb = load_workbook(path, data_only=True, read_only=True)
+    out: dict[str, float | str | None] = {"ticker": ticker}
+    if "Historical Financials" in wb.sheetnames:
+        h = wb["Historical Financials"]
+        rev = num(h["G4"].value); op = num(h["G9"].value); ni = num(h["G11"].value)
+        ocf = num(h["G14"].value); cap = num(h["G15"].value); rd = num(h["G19"].value); sbc = num(h["G21"].value)
+        prior_rev = num(h["F4"].value)
+        out.update({
+            "revenue_growth": (rev / prior_rev - 1) if rev and prior_rev else None,
+            "operating_margin": op / rev if rev and op is not None else None,
+            "net_margin": ni / rev if rev and ni is not None else None,
+            "fcf_margin": (ocf - cap) / rev if rev and ocf is not None and cap is not None else None,
+            "capex_to_revenue": cap / rev if rev and cap is not None else None,
+            "rd_to_revenue": rd / rev if rev and rd is not None else None,
+            "sbc_to_revenue": sbc / rev if rev and sbc is not None else None,
+        })
+    if "Company Data" in wb.sheetnames:
+        d = wb["Company Data"]
+        out["forward_pe"] = num(d["B15"].value)
+        mc = num(d["B10"].value); net_debt = num(d["B14"].value)
+        out["net_debt_to_market_cap"] = net_debt / mc if mc and net_debt is not None else None
+    return out
+
+
+def _series_value(df: pd.DataFrame, labels: list[str], col) -> float | None:
+    if df is None or df.empty or col not in df.columns:
+        return None
+    for label in labels:
+        if label in df.index:
+            return num(df.at[label, col])
+    return None
+
+
+def annual_fundamental_rows(ticker: str, benchmark_prices: pd.Series | None = None) -> list[dict]:
+    try:
+        t = yf.Ticker(ticker)
+        inc = t.income_stmt
+        cf = t.cashflow
+        bs = t.balance_sheet
+        hist = t.history(period="10y", auto_adjust=True)
+    except Exception:
+        return []
+    if inc is None or inc.empty or hist is None or hist.empty:
+        return []
+    close = hist["Close"].dropna()
+    rows = []
+    cols = sorted(pd.to_datetime(inc.columns))
+    for i, col in enumerate(cols):
+        rev = _series_value(inc,["Total Revenue","Operating Revenue"],col)
+        op = _series_value(inc,["Operating Income"],col)
+        ni = _series_value(inc,["Net Income","Net Income Common Stockholders"],col)
+        equity = _series_value(bs,["Stockholders Equity","Total Equity Gross Minority Interest"],col)
+        cash = _series_value(bs,["Cash Cash Equivalents And Short Term Investments","Cash And Cash Equivalents"],col)
+        debt = _series_value(bs,["Total Debt"],col)
+        ocf = _series_value(cf,["Operating Cash Flow","Total Cash From Operating Activities"],col)
+        capex = _series_value(cf,["Capital Expenditure","Capital Expenditures"],col)
+        rd = _series_value(inc,["Research And Development"],col)
+        if capex is not None:
+            capex = abs(capex)
+        if rev in (None, 0):
+            continue
+        prev_rev = None
+        if i > 0:
+            prev_col = cols[i-1]
+            prev_rev = _series_value(inc,["Total Revenue","Operating Revenue"],prev_col)
+        as_of = pd.Timestamp(col).tz_localize(None) + pd.Timedelta(days=120)
+        start = close.index.searchsorted(as_of)
+        if start >= len(close):
+            continue
+        p0 = float(close.iloc[start])
+        target_date = as_of + pd.DateOffset(years=1)
+        end = close.index.searchsorted(target_date)
+        if end >= len(close):
+            continue
+        p1 = float(close.iloc[end])
+        stock_ret = p1 / p0 - 1.0
+        bench_ret = 0.0
+        if benchmark_prices is not None and not benchmark_prices.empty:
+            bp = benchmark_prices.dropna()
+            b0i = bp.index.searchsorted(as_of); b1i = bp.index.searchsorted(target_date)
+            if b0i < len(bp) and b1i < len(bp):
+                bench_ret = float(bp.iloc[b1i] / bp.iloc[b0i] - 1.0)
+        past = close.loc[:as_of].tail(252)
+        mom12 = float(past.iloc[-1] / past.iloc[0] - 1.0) if len(past) >= 126 else None
+        past6 = close.loc[:as_of].tail(126)
+        mom6 = float(past6.iloc[-1] / past6.iloc[0] - 1.0) if len(past6) >= 63 else None
+        vol6 = float(past6.pct_change().std() * np.sqrt(252)) if len(past6) >= 63 else None
+        rows.append({
+            "ticker": ticker,
+            "as_of": as_of,
+            "target_date": target_date,
+            "revenue_growth": (rev / prev_rev - 1.0) if prev_rev not in (None,0) else None,
+            "operating_margin": op / rev if op is not None else None,
+            "net_margin": ni / rev if ni is not None else None,
+            "fcf_margin": (ocf - capex) / rev if ocf is not None and capex is not None else None,
+            "capex_to_revenue": capex / rev if capex is not None else None,
+            "rd_to_revenue": rd / rev if rd is not None else None,
+            "roe": ni / equity if ni is not None and equity not in (None,0) else None,
+            "net_debt_to_revenue": ((debt or 0) - (cash or 0)) / rev,
+            "momentum_12m": mom12,
+            "momentum_6m": mom6,
+            "volatility_6m": vol6,
+            "drawdown_12m": max_drawdown_from_prices(past),
+            "target_excess_return_12m": stock_ret - bench_ret,
+        })
+    return rows
+
+
+def build_expected_return_dataset(universe: Iterable[str], benchmark: str = BENCHMARK) -> pd.DataFrame:
+    try:
+        bp = yf.Ticker(benchmark).history(period="10y", auto_adjust=True)["Close"]
+    except Exception:
+        bp = pd.Series(dtype=float)
+    rows = []
+    for ticker in dict.fromkeys(str(x).upper() for x in universe):
+        rows.extend(annual_fundamental_rows(ticker, bp))
+    return pd.DataFrame(rows)
+
+
+def current_market_features(ticker: str) -> dict[str, float | None]:
+    try:
+        hist = yf.Ticker(ticker).history(period="2y", auto_adjust=True)["Close"].dropna()
+    except Exception:
+        hist = pd.Series(dtype=float)
+    out = {"momentum_12m":None,"momentum_6m":None,"volatility_6m":None,"drawdown_12m":None}
+    if len(hist) >= 63:
+        p6 = hist.tail(126)
+        out["momentum_6m"] = float(p6.iloc[-1]/p6.iloc[0]-1) if len(p6)>=63 else None
+        out["volatility_6m"] = float(p6.pct_change().std()*np.sqrt(252))
+    if len(hist) >= 126:
+        p12 = hist.tail(252)
+        out["momentum_12m"] = float(p12.iloc[-1]/p12.iloc[0]-1)
+        out["drawdown_12m"] = max_drawdown_from_prices(p12)
+    return out
+
+
+def earnings_history(ticker: str, limit: int = 40) -> pd.DataFrame:
+    try:
+        df = yf.Ticker(ticker).get_earnings_dates(limit=limit)
+    except Exception:
+        return pd.DataFrame()
+    if df is None or df.empty:
+        return pd.DataFrame()
+    out = df.copy().reset_index()
+    date_col = out.columns[0]
+    out = out.rename(columns={date_col:"earnings_date","EPS Estimate":"eps_estimate","Reported EPS":"reported_eps","Surprise(%)":"surprise_pct"})
+    out["earnings_date"] = pd.to_datetime(out["earnings_date"], errors="coerce", utc=True).dt.tz_convert(None)
+    out["surprise_pct"] = pd.to_numeric(out.get("surprise_pct"), errors="coerce")
+    med = out["surprise_pct"].abs().median(skipna=True)
+    if pd.notna(med) and med > 1:
+        out["surprise_pct"] = out["surprise_pct"] / 100.0
+    return out.sort_values("earnings_date").reset_index(drop=True)
+
+
+def earnings_model_frame(ticker: str) -> pd.DataFrame:
+    e = earnings_history(ticker)
+    if e.empty:
+        return e
+    try:
+        prices = yf.Ticker(ticker).history(period="10y", auto_adjust=True)["Close"].dropna()
+    except Exception:
+        prices = pd.Series(dtype=float)
+    rows=[]
+    surprises = e["surprise_pct"]
+    for i,row in e.iterrows():
+        if i < 4 or pd.isna(row.get("surprise_pct")):
+            continue
+        dt = row["earnings_date"]
+        pre = prices.loc[:dt].tail(63) if not prices.empty else pd.Series(dtype=float)
+        rows.append({
+            "as_of": dt - pd.Timedelta(days=1),
+            "target_date": dt,
+            "prior_surprise_1q": num(surprises.iloc[i-1]),
+            "prior_surprise_2q_avg": num(surprises.iloc[i-2:i].mean()),
+            "prior_surprise_4q_avg": num(surprises.iloc[i-4:i].mean()),
+            "surprise_vol_4q": num(surprises.iloc[i-4:i].std()),
+            "price_momentum_3m": float(pre.iloc[-1]/pre.iloc[0]-1) if len(pre)>=40 else None,
+            "price_vol_3m": float(pre.pct_change().std()*np.sqrt(252)) if len(pre)>=40 else None,
+            "eps_estimate": num(row.get("eps_estimate")),
+            "target_surprise": num(row.get("surprise_pct")),
+        })
+    return pd.DataFrame(rows)
+
+
+def historical_financial_anomaly_frame(workbook: Path) -> pd.DataFrame:
+    wb=load_workbook(workbook,data_only=True,read_only=True)
+    if "Historical Financials" not in wb.sheetnames:
+        return pd.DataFrame()
+    h=wb["Historical Financials"]
+    rows=[]
+    for c in range(2,8):
+        year=h.cell(3,c).value; rev=num(h.cell(4,c).value)
+        if not isinstance(year,(int,float)) or not rev:
+            continue
+        prev=num(h.cell(4,c-1).value) if c>2 else None
+        op=num(h.cell(9,c).value); ni=num(h.cell(11,c).value); ocf=num(h.cell(14,c).value); cap=num(h.cell(15,c).value); rd=num(h.cell(19,c).value); sbc=num(h.cell(21,c).value)
+        rows.append({
+            "year":int(year),
+            "revenue_growth":rev/prev-1 if prev else None,
+            "operating_margin":op/rev if op is not None else None,
+            "net_margin":ni/rev if ni is not None else None,
+            "fcf_margin":(ocf-cap)/rev if ocf is not None and cap is not None else None,
+            "capex_to_revenue":cap/rev if cap is not None else None,
+            "rd_to_revenue":rd/rev if rd is not None else None,
+            "sbc_to_revenue":sbc/rev if sbc is not None else None,
+        })
+    return pd.DataFrame(rows)
+
+
+def regime_feature_frame(period: str = "10y") -> pd.DataFrame:
+    symbols=["SPY","TLT","HYG","LQD","DBC","UUP"]
+    try:
+        raw=yf.download(symbols,period=period,auto_adjust=True,progress=False,group_by="column")
+        close=raw["Close"] if isinstance(raw.columns,pd.MultiIndex) else raw
+    except Exception:
+        return pd.DataFrame()
+    if close.empty:
+        return pd.DataFrame()
+    close=close.ffill().dropna(how="all")
+    monthly=close.resample("ME").last()
+    daily=close.pct_change()
+    out=pd.DataFrame(index=monthly.index)
+    out["equity_6m"]=monthly["SPY"].pct_change(6)
+    out["bond_6m"]=monthly["TLT"].pct_change(6)
+    out["credit_6m"]=monthly["HYG"].pct_change(6)-monthly["LQD"].pct_change(6)
+    out["commodity_6m"]=monthly["DBC"].pct_change(6)
+    out["dollar_6m"]=monthly["UUP"].pct_change(6)
+    vol=daily["SPY"].rolling(63).std()*np.sqrt(252)
+    out["equity_vol_3m"]=vol.resample("ME").last()
+    return out.dropna()
+
+
+def load_ai_kpi_snapshots(repo_root: Path, ticker: str) -> pd.DataFrame:
+    path=repo_root/"research_data"/ticker/"kpi_history.json"
+    if not path.exists():
+        return pd.DataFrame()
+    try:
+        payload=json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return pd.DataFrame()
+    rows=[]
+    for snap in payload.get("snapshots",[]):
+        base={"captured_at":pd.to_datetime(snap.get("captured_at"),errors="coerce")}
+        for k in snap.get("kpis",[]):
+            name=str(k.get("kpi") or "").strip()
+            val=num(k.get("current"))
+            if name and val is not None:
+                base[name]=val
+        rows.append(base)
+    return pd.DataFrame(rows).sort_values("captured_at") if rows else pd.DataFrame()
+
+
+def load_portfolio(repo_root: Path) -> pd.DataFrame:
+    path=repo_root/"institutional_research"/"portfolio.csv"
+    if not path.exists():
+        return pd.DataFrame()
+    try:
+        df=pd.read_csv(path)
+    except Exception:
+        return pd.DataFrame()
+    cols={c.lower():c for c in df.columns}
+    ticker_col=cols.get("ticker")
+    if not ticker_col:
+        return pd.DataFrame()
+    out=pd.DataFrame({"ticker":df[ticker_col].astype(str).str.upper().str.strip()})
+    weight_col=cols.get("weight")
+    if weight_col:
+        out["current_weight"]=pd.to_numeric(df[weight_col],errors="coerce")
+    else:
+        out["current_weight"]=1/len(out) if len(out) else None
+    return out.dropna(subset=["ticker"])
