@@ -140,8 +140,12 @@ def _ticker_from_wb(wb):
 def _safe_update_scenarios(wb,hist,info):
     result=_ORIGINAL_UPDATE_SCENARIOS(wb,hist,info)
     ticker=_ticker_from_wb(wb)
+    # Preserve the exact market-data snapshot used for beta/market-cap inputs so the
+    # post-statements and final WACC refresh cannot switch from provider beta to a
+    # regression beta after DCF/Monte Carlo have already been calculated.
+    setattr(wb,"_wacc_info",info or {})
     if ticker:
-        try: apply_dynamic_wacc(wb,ticker,info)
+        try: apply_dynamic_wacc(wb,ticker,getattr(wb,"_wacc_info",{}))
         except Exception as exc: print(f"Warning: initial dynamic WACC failed: {exc}")
     return result
 update_model.update_scenarios=_safe_update_scenarios
@@ -168,8 +172,9 @@ def _safe_financial_statements(wb,ticker,facts):
         result=repair_financial_statements(wb,ticker); setattr(wb,"_financial_statement_repair",result)
         print(f"Financial Statements fallback repair: filled={result.get('filled',0)}, core coverage={result.get('coverage',0):.0%}")
     except Exception as exc: print(f"Warning: Financial Statements fallback repair failed: {exc}")
-    # Recalculate WACC after the reported tax rate / statement repair is available, before DCF analytics.
-    try: apply_dynamic_wacc(wb,ticker,None)
+    # Recalculate WACC after the reported tax rate / statement repair is available, before DCF analytics,
+    # but keep the same beta/market-cap snapshot captured at scenario construction.
+    try: apply_dynamic_wacc(wb,ticker,getattr(wb,"_wacc_info",{}))
     except Exception as exc: print(f"Warning: post-statements dynamic WACC failed: {exc}")
     return ws
 update_model.ensure_financial_statements=_safe_financial_statements
@@ -185,8 +190,9 @@ def _safe_research_extensions(wb,ticker,info=None):
     try:
         fin=repair_financial_statements(wb,ticker); setattr(wb,"_financial_statement_repair",fin)
     except Exception as exc: print(f"Warning: final Financial Statements repair failed: {exc}")
-    # Use final public market inputs for the saved workbook and downstream proof trail.
-    try: apply_dynamic_wacc(wb,ticker,info)
+    # Refresh source dates at the end without changing the market-data snapshot that fed valuation.
+    wacc_info=info or getattr(wb,"_wacc_info",{})
+    try: apply_dynamic_wacc(wb,ticker,wacc_info)
     except Exception as exc: print(f"Warning: final dynamic WACC refresh failed: {exc}")
     result=_ORIGINAL_RESEARCH_EXTENSIONS(wb,ticker,info)
     try: finalize_score_transparency(wb,ticker,fin.get("coverage") if isinstance(fin,dict) else None)
