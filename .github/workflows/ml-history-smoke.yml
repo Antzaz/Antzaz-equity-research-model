@@ -1,0 +1,41 @@
+name: Persistent ML history smoke test
+
+on:
+  push:
+    branches:
+      - main
+      - 'agent/**'
+    paths:
+      - 'machine_learning/history_store.py'
+      - 'machine_learning/history_sources.py'
+      - 'ml_history.py'
+      - 'ml_research.py'
+      - 'tests/test_ml_history.py'
+      - '.github/workflows/ml-history-smoke.yml'
+  workflow_dispatch:
+
+jobs:
+  history-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Compile history layer
+        run: python -m compileall -q machine_learning/history_store.py machine_learning/history_sources.py ml_history.py ml_research.py tests/test_ml_history.py
+      - name: Run deterministic SQLite tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: python tests/test_ml_history.py
+      - name: Check CLI without network calls
+        run: |
+          python ml_history.py --help
+          python ml_history.py status --db /tmp/ml_history_test.sqlite || python ml_history.py --db /tmp/ml_history_test.sqlite status
