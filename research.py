@@ -6,10 +6,11 @@ Examples:
     python research.py GOOGL --ai
     python research.py GOOGL --skip-model --ai
 
-The existing update_model.py remains the deterministic source of workbook calculations.
-Specialist agents inspect the generated workbook, maintain KPI history, monitor thesis
-evidence, check registered data sources, and run research QA. LLM reasoning is opt-in.
-The machine-learning layer is also opt-in because it downloads a broader training universe.
+The guarded safe_update_model.py entry point runs the existing deterministic model after
+installing cross-border data-integrity checks. Specialist agents inspect the generated
+workbook, maintain KPI history, monitor thesis evidence, check registered data sources,
+and run research QA. LLM reasoning is opt-in. The machine-learning layer is also opt-in
+because it downloads a broader training universe.
 """
 
 from __future__ import annotations
@@ -40,7 +41,7 @@ RUNS_DIR = BASE / "research_runs"
 def valid_ticker(raw: str) -> str:
     ticker = raw.upper().strip()
     if not re.fullmatch(r"[A-Z0-9.\-]{1,10}", ticker):
-        raise argparse.ArgumentTypeError("Enter only a ticker, e.g. GOOGL, MSFT, NVDA, or TSM.")
+        raise argparse.ArgumentTypeError("Enter only a ticker, e.g. GOOGL, MSFT, NVDA, TSM, or SIE.DE.")
     return ticker
 
 
@@ -56,8 +57,8 @@ def latest_workbook(ticker: str) -> Path:
 
 
 def run_model(ticker: str) -> None:
-    print(f"[model] Building deterministic research workbook for {ticker}...")
-    subprocess.run([sys.executable, str(BASE / "update_model.py"), ticker], cwd=BASE, check=True)
+    print(f"[model] Building guarded deterministic research workbook for {ticker}...")
+    subprocess.run([sys.executable, str(BASE / "safe_update_model.py"), ticker], cwd=BASE, check=True)
 
 
 def run_ml(ticker: str, workbook: Path) -> None:
@@ -72,7 +73,7 @@ def run_ml(ticker: str, workbook: Path) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Agent-assisted equity research orchestrator")
     parser.add_argument("ticker", type=valid_ticker)
-    parser.add_argument("--skip-model", action="store_true", help="Reuse the newest existing workbook instead of running update_model.py")
+    parser.add_argument("--skip-model", action="store_true", help="Reuse the newest existing workbook instead of running the guarded deterministic model")
     parser.add_argument("--ai", action="store_true", help="Enable evidence-bound OpenAI reasoning. Requires OPENAI_API_KEY.")
     parser.add_argument("--ml", action="store_true", help="Run the six-model scikit-learn research layer and write ML & Quantitative Research into the workbook. Uses no OpenAI tokens.")
     parser.add_argument("--model", help="OpenAI model override. Otherwise uses OPENAI_RESEARCH_MODEL or the project default.")
@@ -106,6 +107,7 @@ def render_report(ticker: str, workbook: Path, results: list, ai_model: str | No
         "- AI narrative and ML output do not overwrite financial inputs or DCF assumptions.",
         "- Reported facts, calculations, model estimates, and inference remain separate.",
         "- ML walk-forward testing and data-readiness gates are preferred to filling missing outputs with fabricated data.",
+        "- Cross-border annual data passes completed-fiscal-year and scale-integrity checks before valuation.",
         "- Market-share records preserve their market definition and source.",
         "- Valuation changes remain analyst-reviewed and are calculated by the existing deterministic model.",
         "",
@@ -165,6 +167,7 @@ def main() -> int:
         "workbook": str(workbook),
         "ai_model": ctx.ai_model,
         "ml_enabled": bool(args.ml),
+        "data_integrity_runner": "safe_update_model.py",
         "results": [x.to_dict() for x in results],
     }
     (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False, default=str) + "\n", encoding="utf-8")
