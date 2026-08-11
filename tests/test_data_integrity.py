@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+# Regression fixtures mirror the cross-border corruption observed in a generated Siemens workbook.
 from datetime import datetime, timezone
 
 from openpyxl import Workbook
