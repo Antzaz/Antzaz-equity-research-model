@@ -34,6 +34,24 @@ python .\research.py GOOGL --skip-model
 
 Guide: `AI_AGENTS.md`
 
+## Six-model machine-learning research
+
+Build the normal workbook and deterministic agents, then run the six-model ML layer. This uses scikit-learn and does not call the OpenAI API:
+
+```powershell
+cd "C:\Users\Antza\Documents\Antzaz-equity-research-model"; git pull; python -m pip install -r .\requirements.txt; python .\research.py GOOGL --ml
+```
+
+Run only the ML layer against the newest already-generated workbook:
+
+```powershell
+python .\ml_research.py GOOGL
+```
+
+The six-model layer includes expected 12-month excess return, earnings-surprise/consensus challenge, financial anomaly detection, market-regime classification, AI-impact ML and portfolio position sizing. Results are written to one `ML & Quantitative Research` workbook tab and to gitignored `ml_runs/` artifacts.
+
+Guide: `MACHINE_LEARNING.md`
+
 ## Portfolio research — refresh data and launch local dashboard
 
 ```powershell
