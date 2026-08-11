@@ -190,11 +190,17 @@ def _safe_research_extensions(wb,ticker,info=None):
     try:
         fin=repair_financial_statements(wb,ticker); setattr(wb,"_financial_statement_repair",fin)
     except Exception as exc: print(f"Warning: final Financial Statements repair failed: {exc}")
-    # Refresh source dates at the end without changing the market-data snapshot that fed valuation.
+
+    # Let all legacy/consolidation extensions finish first because some of them rebuild Data Quality.
+    # Then restore the final public-data WACC/segment controls and score proof trail so the saved
+    # workbook exactly matches the assumptions used by DCF/Monte Carlo.
+    result=_ORIGINAL_RESEARCH_EXTENSIONS(wb,ticker,info)
     wacc_info=info or getattr(wb,"_wacc_info",{})
     try: apply_dynamic_wacc(wb,ticker,wacc_info)
     except Exception as exc: print(f"Warning: final dynamic WACC refresh failed: {exc}")
-    result=_ORIGINAL_RESEARCH_EXTENSIONS(wb,ticker,info)
+    if str(ticker).upper()=="COST":
+        try: ensure_costco_segment_analysis(wb,ticker)
+        except Exception as exc: print(f"Warning: final Costco Segment Analysis refresh failed: {exc}")
     try: finalize_score_transparency(wb,ticker,fin.get("coverage") if isinstance(fin,dict) else None)
     except Exception as exc: print(f"Warning: score transparency finalization failed: {exc}")
     try: ensure_decision_view(wb,ticker)
