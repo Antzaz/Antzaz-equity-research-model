@@ -60,6 +60,14 @@ def workbook_current_snapshot(path: Path, ticker: str) -> dict[str, float | str 
         out["forward_pe"] = num(d["B15"].value)
         mc = num(d["B10"].value); net_debt = num(d["B14"].value)
         out["net_debt_to_market_cap"] = net_debt / mc if mc and net_debt is not None else None
+        latest_rev = num(wb["Historical Financials"]["G4"].value) if "Historical Financials" in wb.sheetnames else None
+        out["net_debt_to_revenue"] = net_debt / latest_rev if latest_rev and net_debt is not None else None
+    if "Peer Comps" in wb.sheetnames:
+        peer = wb["Peer Comps"]
+        for r in range(4, min(peer.max_row, 30) + 1):
+            if str(peer.cell(r, 2).value or "").strip().upper() == ticker.upper():
+                out["roe"] = num(peer.cell(r, 8).value)
+                break
     return out
 
 
@@ -84,6 +92,7 @@ def annual_fundamental_rows(ticker: str, benchmark_prices: pd.Series | None = No
     if inc is None or inc.empty or hist is None or hist.empty:
         return []
     close = hist["Close"].dropna()
+    close.index = pd.to_datetime(close.index, utc=True).tz_convert(None)
     rows = []
     cols = sorted(pd.to_datetime(inc.columns))
     for i, col in enumerate(cols):
@@ -117,7 +126,8 @@ def annual_fundamental_rows(ticker: str, benchmark_prices: pd.Series | None = No
         stock_ret = p1 / p0 - 1.0
         bench_ret = 0.0
         if benchmark_prices is not None and not benchmark_prices.empty:
-            bp = benchmark_prices.dropna()
+            bp = benchmark_prices.dropna().copy()
+            bp.index = pd.to_datetime(bp.index, utc=True).tz_convert(None)
             b0i = bp.index.searchsorted(as_of); b1i = bp.index.searchsorted(target_date)
             if b0i < len(bp) and b1i < len(bp):
                 bench_ret = float(bp.iloc[b1i] / bp.iloc[b0i] - 1.0)
@@ -150,6 +160,7 @@ def annual_fundamental_rows(ticker: str, benchmark_prices: pd.Series | None = No
 def build_expected_return_dataset(universe: Iterable[str], benchmark: str = BENCHMARK) -> pd.DataFrame:
     try:
         bp = yf.Ticker(benchmark).history(period="10y", auto_adjust=True)["Close"]
+        bp.index = pd.to_datetime(bp.index, utc=True).tz_convert(None)
     except Exception:
         bp = pd.Series(dtype=float)
     rows = []
@@ -161,6 +172,7 @@ def build_expected_return_dataset(universe: Iterable[str], benchmark: str = BENC
 def current_market_features(ticker: str) -> dict[str, float | None]:
     try:
         hist = yf.Ticker(ticker).history(period="2y", auto_adjust=True)["Close"].dropna()
+        hist.index = pd.to_datetime(hist.index, utc=True).tz_convert(None)
     except Exception:
         hist = pd.Series(dtype=float)
     out = {"momentum_12m":None,"momentum_6m":None,"volatility_6m":None,"drawdown_12m":None}
@@ -199,6 +211,7 @@ def earnings_model_frame(ticker: str) -> pd.DataFrame:
         return e
     try:
         prices = yf.Ticker(ticker).history(period="10y", auto_adjust=True)["Close"].dropna()
+        prices.index = pd.to_datetime(prices.index, utc=True).tz_convert(None)
     except Exception:
         prices = pd.Series(dtype=float)
     rows=[]
