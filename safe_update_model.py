@@ -28,7 +28,7 @@ import update_model
 import advanced_analytics_v2
 import institutional_lenses
 import research_extensions
-from financial_statement_repair_v2 import repair_financial_statements
+from financial_statement_repair_final import repair_financial_statements
 from score_engine_v2 import advanced_scorecard
 from score_integration_v2 import institutional_dimensions, leadership_proxy, finalize_score_transparency
 
@@ -36,17 +36,13 @@ BASE=Path(__file__).resolve().parent
 
 
 def _safe_year(value):
-    if isinstance(value,(datetime,date,pd.Timestamp)):
-        return int(pd.Timestamp(value).year)
-    if isinstance(value,bool) or value is None:
-        return None
+    if isinstance(value,(datetime,date,pd.Timestamp)): return int(pd.Timestamp(value).year)
+    if isinstance(value,bool) or value is None: return None
     if isinstance(value,(int,float)):
-        n=int(value)
-        return n if 1900<=n<=2100 and float(value)==n else None
+        n=int(value); return n if 1900<=n<=2100 and float(value)==n else None
     text=str(value).strip()
     if re.fullmatch(r"(?:19|20)\d{2}",text): return int(text)
-    m=re.search(r"(?:19|20)\d{2}",text)
-    return int(m.group(0)) if m else None
+    m=re.search(r"(?:19|20)\d{2}",text); return int(m.group(0)) if m else None
 
 
 def _safe_number(value):
@@ -68,6 +64,8 @@ _ORIGINAL_RESEARCH_EXTENSIONS=update_model.ensure_research_extensions
 
 issuer_source_engine._year=_safe_year
 issuer_source_engine._number=_safe_number
+# Operating income must be preferred to pretax income in Yahoo statement recovery.
+issuer_source_engine.YF_INCOME_ROWS["op"]=["Operating Income","Operating Income Loss","Pretax Income"]
 
 issuer_source_engine.ISSUER_IR_PAGES.setdefault("SIE.DE",[
     "https://www.siemens.com/es-es/company/investor-relations/financial-results/",
@@ -83,7 +81,6 @@ def _safe_build_crossborder_history(ticker,info,facts):
     hist,meta=_ORIGINAL_BUILD(ticker,info,facts)
     return data_integrity.sanitize_crossborder_history(ticker,info,hist,meta)
 
-
 issuer_source_engine.build_crossborder_history=_safe_build_crossborder_history
 model_reliability.build_crossborder_history=_safe_build_crossborder_history
 
@@ -94,7 +91,6 @@ def _safe_update_filings(wb,ticker):
         for r in range(4,20):
             for c in range(1,6): ws.cell(r,c).value=None
     return _ORIGINAL_UPDATE_FILINGS(wb,ticker)
-
 
 update_model.update_filings=_safe_update_filings
 
@@ -116,7 +112,6 @@ def _safe_select_dynamic_peers(wb,ticker,count=9):
         if len(peers)>=count: break
     return target,sector,industry,peers
 
-
 dynamic_peer_engine.select_dynamic_peers=_safe_select_dynamic_peers
 
 
@@ -124,22 +119,16 @@ def _safe_normalize_workbook_currency(wb,ticker,info):
     result=_ORIGINAL_NORMALIZE(wb,ticker,info)
     data_integrity.apply_workbook_integrity_controls(wb,ticker,info,getattr(wb,"_issuer_source_meta",None))
     return result
-
-
 update_model.normalize_workbook_currency=_safe_normalize_workbook_currency
 
 
 def _safe_financial_statements(wb,ticker,facts):
     ws=_ORIGINAL_FINANCIAL_STATEMENTS(wb,ticker,facts)
     try:
-        result=repair_financial_statements(wb,ticker)
-        setattr(wb,"_financial_statement_repair",result)
+        result=repair_financial_statements(wb,ticker); setattr(wb,"_financial_statement_repair",result)
         print(f"Financial Statements fallback repair: filled={result.get('filled',0)}, core coverage={result.get('coverage',0):.0%}")
-    except Exception as exc:
-        print(f"Warning: Financial Statements fallback repair failed: {exc}")
+    except Exception as exc: print(f"Warning: Financial Statements fallback repair failed: {exc}")
     return ws
-
-
 update_model.ensure_financial_statements=_safe_financial_statements
 
 # Single scoring source of truth. Functions created earlier resolve these module globals at runtime.
@@ -149,39 +138,25 @@ research_extensions._leadership_proxy=leadership_proxy
 
 
 def _safe_research_extensions(wb,ticker,info=None):
-    # model_reliability can patch Financial Statements again later; repair once more before
-    # leadership/institutional scoring so all quality metrics use the final reported data.
     fin={}
     try:
-        fin=repair_financial_statements(wb,ticker)
-        setattr(wb,"_financial_statement_repair",fin)
-    except Exception as exc:
-        print(f"Warning: final Financial Statements repair failed: {exc}")
+        fin=repair_financial_statements(wb,ticker); setattr(wb,"_financial_statement_repair",fin)
+    except Exception as exc: print(f"Warning: final Financial Statements repair failed: {exc}")
     result=_ORIGINAL_RESEARCH_EXTENSIONS(wb,ticker,info)
-    try:
-        finalize_score_transparency(wb,ticker,fin.get("coverage") if isinstance(fin,dict) else None)
-    except Exception as exc:
-        print(f"Warning: score transparency finalization failed: {exc}")
+    try: finalize_score_transparency(wb,ticker,fin.get("coverage") if isinstance(fin,dict) else None)
+    except Exception as exc: print(f"Warning: score transparency finalization failed: {exc}")
     return result
-
-
 update_model.ensure_research_extensions=_safe_research_extensions
 
 
 def _disk_preflight(min_free_gb=1.5):
     free=shutil.disk_usage(BASE).free/(1024**3)
     if free<min_free_gb:
-        raise OSError(
-            f"Only {free:.2f} GB free on the project drive. Free at least {min_free_gb:.1f} GB "
-            "before running the equity model so Git/Excel temporary files and the final workbook can be written safely."
-        )
+        raise OSError(f"Only {free:.2f} GB free on the project drive. Free at least {min_free_gb:.1f} GB before running the equity model so Git/Excel temporary files and the final workbook can be written safely.")
     print(f"Disk-space preflight: {free:.2f} GB free")
 
 
 def main():
-    _disk_preflight()
-    update_model.main()
+    _disk_preflight(); update_model.main()
 
-
-if __name__=="__main__":
-    main()
+if __name__=="__main__": main()
