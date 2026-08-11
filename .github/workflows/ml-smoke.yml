@@ -32,7 +32,7 @@ jobs:
       - name: Compile ML modules
         run: python -m compileall -q machine_learning ml_research.py research.py tests/test_ml_models.py
       - name: Run deterministic six-model smoke test
-        run: python tests/test_ml_models.py
+        run: PYTHONPATH=. python tests/test_ml_models.py
       - name: Check CLI wiring
         run: |
           python ml_research.py --help
