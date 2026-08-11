@@ -1,0 +1,44 @@
+name: Cross-border data integrity smoke test
+
+on:
+  push:
+    branches:
+      - main
+      - 'agent/**'
+    paths:
+      - 'data_integrity.py'
+      - 'safe_update_model.py'
+      - 'research.py'
+      - 'issuer_source_engine.py'
+      - 'model_reliability.py'
+      - 'currency_normalization.py'
+      - 'dynamic_peer_engine.py'
+      - 'tests/test_data_integrity.py'
+      - '.github/workflows/data-integrity-smoke.yml'
+  workflow_dispatch:
+
+jobs:
+  integrity-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Compile integrity layer
+        run: python -m compileall -q data_integrity.py safe_update_model.py research.py tests/test_data_integrity.py
+      - name: Run deterministic integrity regression tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: python tests/test_data_integrity.py
+      - name: Check guarded CLI wiring
+        run: |
+          python research.py --help
+          grep -q 'safe_update_model.py' research.py
