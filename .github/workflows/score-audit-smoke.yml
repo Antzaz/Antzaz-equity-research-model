@@ -1,0 +1,118 @@
+name: Sector-aware score and Costco audit smoke test
+
+on:
+  push:
+    branches:
+      - main
+      - 'agent/**'
+    paths:
+      - 'score_engine_v2.py'
+      - 'score_integration_v2.py'
+      - 'financial_statement_repair_v2.py'
+      - 'safe_update_model.py'
+      - 'tests/test_score_engine_v2.py'
+      - '.github/workflows/score-audit-smoke.yml'
+  workflow_dispatch:
+
+jobs:
+  score-unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Compile score layer
+        run: python -m compileall -q score_engine_v2.py score_integration_v2.py financial_statement_repair_v2.py safe_update_model.py tests/test_score_engine_v2.py
+      - name: Run Costco-like deterministic score regression
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: python tests/test_score_engine_v2.py
+
+  cost-live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Build guarded Costco workbook
+        env:
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+        run: python safe_update_model.py COST
+      - name: Validate Costco fundamentals, scores and proof trail
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from openpyxl import load_workbook
+
+          files=sorted(Path('updated_models').glob('COST_Equity_Research_*.xlsx'))
+          assert files, 'COST workbook missing'
+          wb=load_workbook(files[-1],data_only=False,read_only=False)
+          for name in ('Investment Summary','Historical Financials','Financial Statements','Institutional Comparison','Advanced Analytics','Score Audit Trail','Data Quality'):
+              assert name in wb.sheetnames, f'{name} missing'
+
+          h=wb['Historical Financials']
+          rev=h['G4'].value; op=h['G9'].value; ni=h['G11'].value; ocf=h['G14'].value; cap=h['G15'].value
+          assert isinstance(rev,(int,float)) and 250 < rev < 310, f'Costco revenue scale bad: {rev}'
+          assert isinstance(op,(int,float)) and 8 < op < 13, f'Costco operating income bad: {op}'
+          assert isinstance(ni,(int,float)) and 6 < ni < 10, f'Costco net income bad: {ni}'
+          assert isinstance(ocf,(int,float)) and isinstance(cap,(int,float)), 'Costco OCF/capex missing'
+
+          fs=wb['Financial Statements']
+          def section(title):
+              for r in range(1,fs.max_row+1):
+                  if str(fs.cell(r,1).value or '').strip()==title: return r
+          i0=section('Income Statement'); b0=section('Balance Sheet')
+          assert i0 and b0
+          def row(label):
+              for r in range(i0,b0):
+                  if str(fs.cell(r,1).value or '').strip()==label: return r
+          pr=row('Pre-Tax Income'); opr=row('Operating Income'); nr=row('Net Income'); tr=row('Income Taxes')
+          assert all((pr,opr,nr,tr)), 'Core income statement labels missing'
+          years=[c for c in range(2,8) if isinstance(fs.cell(i0+1,c).value,(int,float))]
+          assert years, 'Financial statement years missing'
+          latest=years[-1]
+          pretax=fs.cell(pr,latest).value; operating=fs.cell(opr,latest).value; net=fs.cell(nr,latest).value; tax=fs.cell(tr,latest).value
+          assert isinstance(pretax,(int,float)) and isinstance(operating,(int,float)) and abs(pretax-operating)>.01, f'Pre-tax still incorrectly equals operating income: {pretax} vs {operating}'
+          assert isinstance(net,(int,float)) and net>0, f'Income-statement net income missing: {net}'
+          assert isinstance(tax,(int,float)) and tax>0, f'Income taxes missing: {tax}'
+
+          audit=wb['Score Audit Trail']
+          cats={str(audit.cell(r,1).value or ''):audit.cell(r,2).value for r in range(7,12)}
+          quality=cats.get('Business Quality'); valuation=cats.get('Valuation / Stock Attractiveness')
+          assert isinstance(quality,(int,float)) and quality>60, f'Costco quality score unexpectedly weak: {quality}'
+          assert isinstance(valuation,(int,float)), 'Valuation score missing'
+          assert quality>valuation+20, f'Company-quality/stock-price distinction not visible: quality={quality}, valuation={valuation}'
+
+          inv=wb['Investment Summary']
+          assert isinstance(inv['B11'].value,(int,float)) and abs(inv['B11'].value-quality)<.1, 'Investment Summary quality score not reconciled to audit trail'
+          assert 'Score Audit Trail' in str(inv['H11'].value), 'Investment Summary proof pointer missing'
+
+          inst=wb['Institutional Comparison']
+          assert inst.cell(10,10).value=='Business Quality Fit / 100', 'Institutional quality-fit column missing'
+          qfits=[inst.cell(r,10).value for r in range(11,21) if isinstance(inst.cell(r,10).value,(int,float))]
+          assert len(qfits)==10 and max(qfits)>60, f'Institutional business-quality fits still implausibly weak: {qfits}'
+          assert any('Institutional Score Calculation Proof' in str(inst.cell(r,1).value or '') for r in range(1,inst.max_row+1)), 'Institutional contribution proof section missing'
+
+          dq=wb['Data Quality']; labels={str(dq.cell(r,1).value or ''):str(dq.cell(r,2).value or '') for r in range(1,dq.max_row+1)}
+          assert labels.get('Score methodology consistency')=='PASS'
+          assert labels.get('Business-model-aware quality scoring')=='PASS'
+          assert labels.get('Financial Statements core coverage') in {'PASS','REVIEW'}
+          print('COST score-audit smoke PASS')
+          print('Business quality:',quality,'Valuation:',valuation)
+          PY
