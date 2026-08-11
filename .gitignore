@@ -10,6 +10,7 @@ htmlcov/
 updated_models/
 research_runs/
 ml_runs/
+ml_data/
 *.tmp
 institutional_research/portfolio.csv
 institutional_research/outputs/
