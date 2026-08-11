@@ -1,0 +1,123 @@
+name: WACC segment and decision smoke test
+
+on:
+  push:
+    branches:
+      - main
+      - 'agent/**'
+    paths:
+      - 'safe_update_model.py'
+      - 'wacc_engine.py'
+      - 'costco_segment_analysis.py'
+      - 'decision_view_v2.py'
+      - 'score_engine_v2.py'
+      - '.github/workflows/wacc-segment-decision-smoke.yml'
+  workflow_dispatch:
+
+jobs:
+  cost-live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Compile new modules
+        run: python -m py_compile wacc_engine.py costco_segment_analysis.py decision_view_v2.py safe_update_model.py
+      - name: Build guarded Costco workbook
+        env:
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+        run: python safe_update_model.py COST
+      - name: Validate dynamic WACC, Costco segments and decision view
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import math
+          from openpyxl import load_workbook
+
+          files=sorted(Path('updated_models').glob('COST_Equity_Research_*.xlsx'))
+          assert files, 'COST workbook missing'
+          path=files[-1]
+          wb=load_workbook(path,data_only=False,read_only=False)
+          for name in ('Decision View','Cost of Capital','Investment Summary','Score Audit Trail','Segment Analysis','Three-Case Scenarios','Data Quality'):
+              assert name in wb.sheetnames, f'{name} missing'
+
+          # WACC must be company-specific and reconcile from components.
+          coc=wb['Cost of Capital']
+          vals={str(coc.cell(r,1).value or '').strip():coc.cell(r,2).value for r in range(6,18)}
+          rf=vals['Risk-free rate']; erp=vals['Equity risk premium']; beta=vals['Equity beta']; coe=vals['Cost of equity']
+          cod=vals['After-tax cost of debt']; ew=vals['Equity weight']; dw=vals['Debt weight']
+          assert all(isinstance(x,(int,float)) for x in (rf,erp,beta,coe,cod,ew,dw)), vals
+          assert abs(coe-(rf+beta*erp))<1e-8, 'Cost of equity formula mismatch'
+          expected=ew*coe+dw*cod
+          scenario=wb['Three-Case Scenarios']; base=scenario['C6'].value; bear=scenario['B6'].value; bull=scenario['D6'].value
+          assert isinstance(base,(int,float)) and abs(base-expected)<1e-8, f'WACC does not reconcile: {base} vs {expected}'
+          assert abs(base-.09)>.0005, f'Base WACC still looks like inherited template 9%: {base}'
+          assert bear>base>bull, (bear,base,bull)
+          assert abs((bear-base)-.015)<1e-8 and abs((base-bull)-.010)<1e-8, 'Scenario WACC adjustments wrong'
+
+          # Verified Costco annual and current reportable segments.
+          seg=wb['Segment Analysis']
+          assert str(seg['A5'].value).startswith('Reported Geographic Segments'), seg['A5'].value
+          names=[str(seg.cell(r,1).value or '').strip() for r in range(7,10)]
+          assert names==['United States','Canada','Other International'], names
+          latest=[seg.cell(r,4).value for r in range(7,10)]
+          assert all(isinstance(x,(int,float)) for x in latest), latest
+          assert abs(sum(latest)-275.235)<.01, latest
+          ops=[seg.cell(r,9).value for r in range(7,10)]
+          assert abs(sum(ops)-10.383)<.01, ops
+          ytd_names=[str(seg.cell(r,1).value or '').strip() for r in range(14,17)]
+          assert ytd_names==names, ytd_names
+          ytd=[seg.cell(r,3).value for r in range(14,17)]
+          assert abs(sum(ytd)-207.431)<.01, ytd
+          assert not any('management' in str(seg.cell(r,1).value or '').lower() for r in range(1,seg.max_row+1)), 'Narrative parser garbage segment survived'
+          assert any(str(seg.cell(r,1).value or '').strip()=='44W digitally-enabled comparable sales' for r in range(1,seg.max_row+1)), 'Current digital KPI missing'
+
+          # Decision view must separate quality from price and use reconciled numbers.
+          dv=wb['Decision View']
+          assert 'Is the Stock Attractive' in str(dv['A1'].value), dv['A1'].value
+          view=str(dv['B6'].value or '')
+          assert view, 'Headline model view missing'
+          score_rows={str(dv.cell(r,1).value or '').strip():r for r in range(12,20)}
+          q=dv.cell(score_rows['Business Quality'],2).value
+          v=dv.cell(score_rows['Valuation / Price'],2).value
+          o=dv.cell(score_rows['Overall Investment Score'],2).value
+          assert isinstance(q,(int,float)) and q>65, f'Costco quality unexpectedly weak: {q}'
+          assert isinstance(v,(int,float)) and isinstance(o,(int,float)), (v,o)
+          assert q>v, f'Quality/valuation distinction missing: {q} vs {v}'
+          assert isinstance(dv['B32'].value,(int,float)) and abs(dv['B32'].value-base)<1e-8, 'Decision WACC not reconciled'
+          assert 'Latest Annual Revenue Growth' in [str(dv.cell(r,1).value or '') for r in range(32,39)]
+          assert 'Current / TTM Revenue Growth' in [str(dv.cell(r,1).value or '') for r in range(32,39)]
+
+          inv=wb['Investment Summary']
+          texts=' '.join(str(inv.cell(r,c).value or '') for r in range(1,min(inv.max_row,25)+1) for c in range(1,min(inv.max_column,10)+1))
+          assert 'overall score' in texts.lower(), 'Investment Summary why-line was not reconciled'
+          assert 'Current / TTM Revenue Growth (market-data field)' in [str(inv.cell(r,1).value or '') for r in range(1,inv.max_row+1)], 'Annual/TTM growth labels remain ambiguous'
+
+          # No literal broken formula references.
+          broken=[]
+          for ws in wb.worksheets:
+              for row in ws.iter_rows():
+                  for cell in row:
+                      value=cell.value
+                      if isinstance(value,str) and value.startswith('=') and '#REF!' in value:
+                          broken.append(f'{ws.title}!{cell.coordinate}')
+          assert not broken, broken[:20]
+
+          dq=wb['Data Quality']; checks={str(dq.cell(r,1).value or ''):str(dq.cell(r,2).value or '') for r in range(1,dq.max_row+1)}
+          assert checks.get('Company-specific WACC calculation')=='PASS', checks.get('Company-specific WACC calculation')
+          assert checks.get('Segment Analysis public-data coverage')=='PASS', checks.get('Segment Analysis public-data coverage')
+          assert checks.get('Decision-view score reconciliation')=='PASS', checks.get('Decision-view score reconciliation')
+
+          print('COST WACC/segment/decision smoke PASS')
+          print('Workbook:',path)
+          print('WACC:',base,'Rf:',rf,'ERP:',erp,'Beta:',beta)
+          print('View:',view,'Quality:',q,'Valuation:',v,'Overall:',o)
+          PY
