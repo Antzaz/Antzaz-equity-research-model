@@ -2,12 +2,16 @@ from __future__ import annotations
 
 """Guarded entry point for the deterministic equity model.
 
-This wrapper installs source-integrity and scoring controls before running update_model.py:
+This wrapper installs source-integrity, scoring and valuation controls before running
+update_model.py:
 - date-like cells cannot become financial values or fake fiscal years;
 - cross-border annual history is independently sanity-checked;
 - sparse SEC statement sheets receive structured fallback data rather than silent blanks;
+- WACC is calculated per company from public market inputs instead of inheriting 9% from the template;
 - one sector-aware Score Engine feeds Advanced Analytics, Investment Summary and institutional lenses;
 - every reusable score receives an audit trail with formula, inputs and sources;
+- verified issuer/regulator segment data can replace failed generic parsing;
+- the final Decision View reconciles quality, valuation, downside and margin of safety;
 - alternate exchange listings are deduplicated in peer discovery;
 - a disk-space preflight avoids building a workbook that cannot be saved.
 """
@@ -31,6 +35,9 @@ import research_extensions
 from financial_statement_repair_final import repair_financial_statements
 from score_engine_v2 import advanced_scorecard
 from score_integration_v2 import institutional_dimensions, leadership_proxy, finalize_score_transparency
+from wacc_engine import apply_dynamic_wacc
+from costco_segment_analysis import ensure_costco_segment_analysis
+from decision_view_v2 import ensure_decision_view
 
 BASE=Path(__file__).resolve().parent
 
@@ -59,6 +66,9 @@ _ORIGINAL_BUILD=issuer_source_engine.build_crossborder_history
 _ORIGINAL_UPDATE_FILINGS=update_model.update_filings
 _ORIGINAL_SELECT_PEERS=dynamic_peer_engine.select_dynamic_peers
 _ORIGINAL_NORMALIZE=update_model.normalize_workbook_currency
+_ORIGINAL_UPDATE_SCENARIOS=update_model.update_scenarios
+_ORIGINAL_SEGMENT_V2=update_model.ensure_segment_analysis_v2
+_ORIGINAL_SEGMENT_ENRICH=segment_chart_fix.enrich_segment_analysis
 _ORIGINAL_FINANCIAL_STATEMENTS=update_model.ensure_financial_statements
 _ORIGINAL_RESEARCH_EXTENSIONS=update_model.ensure_research_extensions
 
@@ -122,12 +132,45 @@ def _safe_normalize_workbook_currency(wb,ticker,info):
 update_model.normalize_workbook_currency=_safe_normalize_workbook_currency
 
 
+def _ticker_from_wb(wb):
+    try: return str(wb["Company Data"]["B4"].value or "").upper().strip()
+    except Exception: return ""
+
+
+def _safe_update_scenarios(wb,hist,info):
+    result=_ORIGINAL_UPDATE_SCENARIOS(wb,hist,info)
+    ticker=_ticker_from_wb(wb)
+    if ticker:
+        try: apply_dynamic_wacc(wb,ticker,info)
+        except Exception as exc: print(f"Warning: initial dynamic WACC failed: {exc}")
+    return result
+update_model.update_scenarios=_safe_update_scenarios
+
+
+def _safe_segment_v2(wb,ticker,headers):
+    if str(ticker).upper()=="COST":
+        return ensure_costco_segment_analysis(wb,ticker)
+    return _ORIGINAL_SEGMENT_V2(wb,ticker,headers)
+update_model.ensure_segment_analysis_v2=_safe_segment_v2
+
+
+def _safe_segment_enrichment(wb,ticker,headers):
+    # The verified Costco primary-source sheet must not be polluted by narrative-parser fragments.
+    if str(ticker).upper()=="COST":
+        return ensure_costco_segment_analysis(wb,ticker)
+    return _ORIGINAL_SEGMENT_ENRICH(wb,ticker,headers)
+segment_chart_fix.enrich_segment_analysis=_safe_segment_enrichment
+
+
 def _safe_financial_statements(wb,ticker,facts):
     ws=_ORIGINAL_FINANCIAL_STATEMENTS(wb,ticker,facts)
     try:
         result=repair_financial_statements(wb,ticker); setattr(wb,"_financial_statement_repair",result)
         print(f"Financial Statements fallback repair: filled={result.get('filled',0)}, core coverage={result.get('coverage',0):.0%}")
     except Exception as exc: print(f"Warning: Financial Statements fallback repair failed: {exc}")
+    # Recalculate WACC after the reported tax rate / statement repair is available, before DCF analytics.
+    try: apply_dynamic_wacc(wb,ticker,None)
+    except Exception as exc: print(f"Warning: post-statements dynamic WACC failed: {exc}")
     return ws
 update_model.ensure_financial_statements=_safe_financial_statements
 
@@ -142,9 +185,14 @@ def _safe_research_extensions(wb,ticker,info=None):
     try:
         fin=repair_financial_statements(wb,ticker); setattr(wb,"_financial_statement_repair",fin)
     except Exception as exc: print(f"Warning: final Financial Statements repair failed: {exc}")
+    # Use final public market inputs for the saved workbook and downstream proof trail.
+    try: apply_dynamic_wacc(wb,ticker,info)
+    except Exception as exc: print(f"Warning: final dynamic WACC refresh failed: {exc}")
     result=_ORIGINAL_RESEARCH_EXTENSIONS(wb,ticker,info)
     try: finalize_score_transparency(wb,ticker,fin.get("coverage") if isinstance(fin,dict) else None)
     except Exception as exc: print(f"Warning: score transparency finalization failed: {exc}")
+    try: ensure_decision_view(wb,ticker)
+    except Exception as exc: print(f"Warning: Decision View finalization failed: {exc}")
     return result
 update_model.ensure_research_extensions=_safe_research_extensions
 
