@@ -2,12 +2,14 @@
 
 Examples:
     python research.py GOOGL
+    python research.py GOOGL --ml
     python research.py GOOGL --ai
     python research.py GOOGL --skip-model --ai
 
 The existing update_model.py remains the deterministic source of workbook calculations.
 Specialist agents inspect the generated workbook, maintain KPI history, monitor thesis
 evidence, check registered data sources, and run research QA. LLM reasoning is opt-in.
+The machine-learning layer is also opt-in because it downloads a broader training universe.
 """
 
 from __future__ import annotations
@@ -58,23 +60,34 @@ def run_model(ticker: str) -> None:
     subprocess.run([sys.executable, str(BASE / "update_model.py"), ticker], cwd=BASE, check=True)
 
 
+def run_ml(ticker: str, workbook: Path) -> None:
+    print(f"[ml] Running six-model machine-learning research layer for {ticker}...")
+    subprocess.run(
+        [sys.executable, str(BASE / "ml_research.py"), ticker, "--workbook", str(workbook)],
+        cwd=BASE,
+        check=True,
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Agent-assisted equity research orchestrator")
     parser.add_argument("ticker", type=valid_ticker)
     parser.add_argument("--skip-model", action="store_true", help="Reuse the newest existing workbook instead of running update_model.py")
     parser.add_argument("--ai", action="store_true", help="Enable evidence-bound OpenAI reasoning. Requires OPENAI_API_KEY.")
+    parser.add_argument("--ml", action="store_true", help="Run the six-model scikit-learn research layer and write ML & Quantitative Research into the workbook. Uses no OpenAI tokens.")
     parser.add_argument("--model", help="OpenAI model override. Otherwise uses OPENAI_RESEARCH_MODEL or the project default.")
     parser.add_argument("--strict", action="store_true", help="Return a non-zero exit code when Research QA fails.")
     return parser
 
 
-def render_report(ticker: str, workbook: Path, results: list, ai_model: str | None) -> str:
+def render_report(ticker: str, workbook: Path, results: list, ai_model: str | None, ml_enabled: bool = False) -> str:
     lines = [
         f"# {ticker} Agent Research Report",
         "",
         f"Generated: {datetime.now().astimezone().isoformat(timespec='seconds')}",
         f"Workbook: `{workbook}`",
         f"AI reasoning: {'enabled (' + ai_model + ')' if ai_model else 'disabled; deterministic agent checks only'}",
+        f"Machine learning: {'enabled; see ML & Quantitative Research' if ml_enabled else 'not run'}",
         "",
         "## Agent results",
         "",
@@ -89,9 +102,10 @@ def render_report(ticker: str, workbook: Path, results: list, ai_model: str | No
     lines.extend([
         "## Governance",
         "",
-        "- The agents do not execute trades.",
-        "- AI narrative does not overwrite financial inputs or DCF assumptions.",
-        "- Reported facts, calculations, and inference remain separate.",
+        "- The agents and ML models do not execute trades.",
+        "- AI narrative and ML output do not overwrite financial inputs or DCF assumptions.",
+        "- Reported facts, calculations, model estimates, and inference remain separate.",
+        "- ML walk-forward testing and data-readiness gates are preferred to filling missing outputs with fabricated data.",
         "- Market-share records preserve their market definition and source.",
         "- Valuation changes remain analyst-reviewed and are calculated by the existing deterministic model.",
         "",
@@ -138,14 +152,23 @@ def main() -> int:
         results.append(result)
         print(f"        {result.status}: {result.summary}")
 
+    if args.ml:
+        try:
+            run_ml(ticker, workbook)
+        except Exception as exc:
+            print(f"[ml] WARNING: six-model ML layer failed without changing the deterministic valuation model: {exc}")
+            if args.strict:
+                return 3
+
     manifest = {
         "ticker": ticker,
         "workbook": str(workbook),
         "ai_model": ctx.ai_model,
+        "ml_enabled": bool(args.ml),
         "results": [x.to_dict() for x in results],
     }
     (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False, default=str) + "\n", encoding="utf-8")
-    report = render_report(ticker, workbook, results, ctx.ai_model)
+    report = render_report(ticker, workbook, results, ctx.ai_model, bool(args.ml))
     report_path = run_dir / "agent_report.md"
     report_path.write_text(report, encoding="utf-8")
 
