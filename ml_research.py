@@ -156,6 +156,9 @@ def main()->int:
     regime=MarketRegimeModel().fit_predict(regime_feature_frame(period="20y"))
     ai=AIImpactMLModel().fit_predict(load_ai_kpi_snapshots(BASE,ticker))
 
+    # Apply validation gates before any downstream model consumes another model's prediction.
+    expected,earnings,anomaly,regime,ai=gate_results([expected,earnings,anomaly,regime,ai])
+
     portfolio_df=load_portfolio(BASE)
     if portfolio_df.empty:
         portfolio=PortfolioPositionSizingModel().optimize(pd.DataFrame(),None)
@@ -164,12 +167,12 @@ def main()->int:
         tickers=portfolio_df["ticker"].tolist()
         returns=_portfolio_returns_db(store,tickers) if store is not None else pd.DataFrame()
         if returns.empty: returns=_portfolio_returns_live(tickers)
-        # Weak expected-return evidence is intentionally excluded from portfolio optimization.
         exp_inputs={ticker:expected.prediction} if expected.status=="PASS" and isinstance(expected.prediction,float) else {}
         weights=dict(zip(portfolio_df["ticker"],portfolio_df["current_weight"].fillna(0.0)))
         portfolio=PortfolioPositionSizingModel().optimize(returns,exp_inputs,weights,max_weight=args.max_position,risk_aversion=args.risk_aversion)
+    portfolio=gate_results([portfolio])[0]
 
-    results=gate_results([expected,earnings,anomaly,regime,ai,portfolio])
+    results=[expected,earnings,anomaly,regime,ai,portfolio]
     for r in results: print(f"[ml] {r.name}: {r.status} / {r.confidence}")
 
     stamp=datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
