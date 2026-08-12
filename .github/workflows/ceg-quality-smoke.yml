@@ -1,0 +1,104 @@
+name: CEG full model quality smoke test
+
+on:
+  push:
+    branches:
+      - main
+      - 'agent/**'
+    paths:
+      - 'safe_update_model.py'
+      - 'financial_statement_integrity_v3.py'
+      - 'score_engine_v3.py'
+      - 'output_quality_v3.py'
+      - 'constellation_segment_analysis.py'
+      - 'ml_research.py'
+      - 'machine_learning/**'
+      - '.github/workflows/ceg-quality-smoke.yml'
+  workflow_dispatch:
+
+jobs:
+  ceg-live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Compile quality layer
+        run: python -m py_compile safe_update_model.py financial_statement_integrity_v3.py score_engine_v3.py output_quality_v3.py constellation_segment_analysis.py ml_research.py machine_learning/quality.py machine_learning/workbook.py
+      - name: Build guarded CEG workbook
+        env:
+          SEC_USER_AGENT: ''
+        run: python safe_update_model.py CEG
+      - name: Run ML layer
+        run: python ml_research.py CEG
+      - name: Validate statements scores segments ML charts and pruning
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from openpyxl import load_workbook
+
+          path=sorted(Path('updated_models').glob('CEG_Equity_Research_*.xlsx'))[-1]
+          wb=load_workbook(path,data_only=False,read_only=False)
+          required={'Decision View','Financial Statements','Historical Financials','Score Audit Trail','Segment Analysis','Data Quality','ML & Quantitative Research'}
+          assert required.issubset(wb.sheetnames), required-set(wb.sheetnames)
+          assert 'Business Portfolio Map' not in wb.sheetnames
+
+          fs=wb['Financial Statements']; hs=wb['Historical Financials']
+          def find(ws,label):
+              for r in range(1,ws.max_row+1):
+                  if str(ws.cell(r,1).value or '').strip().lower()==label.lower(): return r
+          i0=find(fs,'Income Statement'); c0=find(fs,'Cash Flow Statement')
+          iy={int(fs.cell(i0+1,c).value):c for c in range(2,8) if isinstance(fs.cell(i0+1,c).value,(int,float))}
+          hc={int(hs.cell(3,c).value):c for c in range(2,8) if isinstance(hs.cell(3,c).value,(int,float))}
+          assert 2025 in iy and 2025 in hc
+          rev=find(fs,'Revenue'); op=find(fs,'Operating Income'); ni=find(fs,'Net Income')
+          assert abs(fs.cell(rev,iy[2025]).value-25.533)<.03, fs.cell(rev,iy[2025]).value
+          assert abs(fs.cell(op,iy[2025]).value-3.086)<.03, fs.cell(op,iy[2025]).value
+          assert abs(fs.cell(ni,iy[2025]).value-2.319)<.03, fs.cell(ni,iy[2025]).value
+          assert abs(hs.cell(4,hc[2025]).value-25.533)<.03, hs.cell(4,hc[2025]).value
+          assert abs(hs.cell(9,hc[2025]).value-3.086)<.03, hs.cell(9,hc[2025]).value
+          growth=hs.cell(4,hc[2025]).value/hs.cell(4,hc[2024]).value-1
+          assert .06<growth<.11, growth
+
+          seg=wb['Segment Analysis']; names={str(seg.cell(r,1).value or '').strip() for r in range(1,seg.max_row+1)}
+          for name in ('Mid-Atlantic','Midwest','New York','ERCOT','Other Power Regions','Calpine'): assert name in names, name
+          assert not any('management' in x.lower() for x in names)
+
+          audit=wb['Score Audit Trail']; statuses={str(audit.cell(r,1).value or ''):str(audit.cell(r,10).value or '') for r in range(1,audit.max_row+1)}
+          assert 'Growth' in statuses and 'Balance Sheet' in statuses
+
+          dq=wb['Data Quality']; checks={str(dq.cell(r,1).value or ''):str(dq.cell(r,2).value or '') for r in range(1,dq.max_row+1)}
+          assert checks.get('Canonical financial-statement reconciliation')=='PASS', checks.get('Canonical financial-statement reconciliation')
+          assert checks.get('Segment Analysis public-data coverage')=='PASS', checks.get('Segment Analysis public-data coverage')
+          assert checks.get('Score-engine single-source reconciliation')=='PASS'
+
+          ml=wb['ML & Quantitative Research']
+          assert len(ml._charts)>=2, f'Expected ML charts, found {len(ml._charts)}'
+          # A weak supervised walk-forward must not be presented as PASS.
+          for r in range(7,13):
+              name=str(ml.cell(r,1).value or '')
+              status=str(ml.cell(r,2).value or '')
+              if name in {'Expected 12M Excess Return','Consensus / Earnings Surprise'}:
+                  text=str(ml.cell(r,5).value or '')
+                  if "'r2': -" in text and "'directional_accuracy': 0.5" in text:
+                      assert status!='PASS', (name,status,text)
+
+          broken=[]
+          for ws in wb.worksheets:
+              for row in ws.iter_rows():
+                  for cell in row:
+                      v=cell.value
+                      if isinstance(v,str) and v.startswith('=') and '#REF!' in v: broken.append(f'{ws.title}!{cell.coordinate}')
+          assert not broken, broken[:20]
+          print('CEG quality smoke PASS')
+          print('Workbook:',path)
+          print('ML charts:',len(ml._charts),'growth:',growth)
+          PY
