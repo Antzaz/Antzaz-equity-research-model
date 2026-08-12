@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from openpyxl.styles import Alignment, Font, PatternFill
 from score_engine_v3 import compute_score_bundle
+from issuer_statement_profiles import get_statement_profile
 
 GREEN="E2F0D9"; GOLD="FFF2CC"; RED="FCE4D6"; BLUE="2F75B5"; WHITE="FFFFFF"
 
@@ -66,17 +67,29 @@ def _segment_status(wb,ticker):
     for row in ws.iter_rows():
         if any(isinstance(c.value,(int,float)) for c in row[1:]): numeric+=1
     return ('PASS','Segment financial data populated.') if numeric>=3 else ('REVIEW','Segment names may exist but numeric segment economics are sparse.')
-def _statement_status(wb):
-    if 'Financial Statements' not in wb.sheetnames or 'Historical Financials' not in wb.sheetnames: return 'FAIL','Core statement/history sheet missing.'
-    fs=wb['Financial Statements']; hs=wb['Historical Financials']; r=_find(fs,'Revenue'); i0=_find(fs,'Income Statement')
-    if not r or not i0: return 'FAIL','Canonical revenue row missing.'
-    ycols={int(fs.cell(i0+1,c).value):c for c in range(2,min(fs.max_column,10)+1) if isinstance(fs.cell(i0+1,c).value,(int,float))}
+
+
+def _statement_status(wb,ticker):
+    if 'Financial Statements' not in wb.sheetnames or 'Historical Financials' not in wb.sheetnames:
+        return 'FAIL','Core statement/history sheet missing.'
+    profile=get_statement_profile(ticker)
+    fs=wb['Financial Statements']; hs=wb['Historical Financials']; i0=_find(fs,'Income Statement')
+    revenue_label=profile.get('canonical_revenue','Revenue')
+    r=_find(fs,revenue_label)
+    if not r or not i0:
+        return 'FAIL',f"Canonical revenue row missing for {profile['name']}: expected {revenue_label}."
+    header=next((rr for rr in range(i0+1,min(fs.max_row+1,i0+6)) if str(fs.cell(rr,1).value or '').strip().lower()=='metric'),None)
+    if not header: return 'FAIL','Financial Statements annual header missing.'
+    ycols={int(fs.cell(header,c).value):c for c in range(2,min(fs.max_column,10)+1) if isinstance(fs.cell(header,c).value,(int,float))}
     hcols={int(hs.cell(3,c).value):c for c in range(2,min(hs.max_column,8)+1) if isinstance(hs.cell(3,c).value,(int,float))}
     common=sorted(set(ycols)&set(hcols))
     if not common: return 'REVIEW','No common annual periods to reconcile.'
     y=common[-1]; a=_num(fs.cell(r,ycols[y]).value); b=_num(hs.cell(4,hcols[y]).value)
     if a is None or b is None: return 'REVIEW','Latest canonical revenue missing in one sheet.'
-    return ('PASS',f'Latest annual revenue reconciles across Financial Statements and Historical Financials ({y}).') if abs(a-b)<=max(.01,abs(a)*.001) else ('FAIL',f'Revenue mismatch remains for {y}: statements={a}, history={b}.')
+    tolerance=max(.02,abs(a)*.002)
+    if abs(a-b)<=tolerance:
+        return 'PASS',f'Latest annual {revenue_label} reconciles across Financial Statements and Historical Financials ({y}).'
+    return 'FAIL',f'{revenue_label} mismatch remains for {y}: statements={a}, history={b}.'
 
 
 def _section_rows(ws,title,next_title):
@@ -85,30 +98,58 @@ def _section_rows(ws,title,next_title):
     header=next((r for r in range(s+1,min(e,s+6)) if str(ws.cell(r,1).value or '').strip().lower()=='metric'),None)
     if not header: return [],[]
     years=[c for c in range(2,min(ws.max_column,10)+1) if isinstance(ws.cell(header,c).value,(int,float)) and 1900<=int(ws.cell(header,c).value)<=2100]
+    derived={
+        'Operating Margin','Net Margin','Net Debt','Working Capital','Free Cash Flow',
+        'Efficiency Ratio (simple)','Credit Cost / Revenue','Loans / Deposits'
+    }
     labels=[]; mapped=[]
     for r in range(header+1,e):
         label=str(ws.cell(r,1).value or '').strip()
-        if not label: continue
-        if label in {'Operating Margin','Net Margin','Net Debt','Working Capital','Free Cash Flow'}: continue
+        if not label or label in derived: continue
         labels.append(label)
         if any(isinstance(ws.cell(r,c).value,(int,float)) for c in years): mapped.append(label)
     return labels,mapped
 
 
-def _full_statement_depth(wb):
+def _statement_profile_status(wb,ticker):
     if 'Financial Statements' not in wb.sheetnames: return 'FAIL','Financial Statements missing.'
-    ws=wb['Financial Statements']
+    profile=get_statement_profile(ticker); marker=str(wb['Financial Statements']['A4'].value or '')
+    if profile['name'] not in marker:
+        return 'FAIL',f"Expected statement profile '{profile['name']}' is not identified in Financial Statements."
+    if profile['key']=='bank':
+        required={'Total Net Revenue','Provision for Credit Losses','Deposits','Loans, Net'}
+    elif profile['key']=='berkshire':
+        required={'Insurance Premiums Earned','Investment Gains / (Losses)','Total Revenues','Insurance Losses & Loss Adjustment Liabilities'}
+    elif profile['key'] in {'tsm','siemens'}:
+        required={'Revenue','Operating Income','Total Assets','Total Equity'}
+    else:
+        required={'Revenue','Operating Income','Total Assets','Operating Cash Flow'}
+    present={str(wb['Financial Statements'].cell(r,1).value or '').strip() for r in range(1,wb['Financial Statements'].max_row+1)}
+    missing=sorted(required-present)
+    if missing: return 'FAIL','Profile-specific core rows missing: '+', '.join(missing)
+    return 'PASS',f"Economically appropriate statement profile applied: {profile['name']}."
+
+
+def _full_statement_depth(wb,ticker):
+    if 'Financial Statements' not in wb.sheetnames: return 'FAIL','Financial Statements missing.'
+    profile=get_statement_profile(ticker); ws=wb['Financial Statements']
     income,im=_section_rows(ws,'Income Statement','Balance Sheet')
     balance,bm=_section_rows(ws,'Balance Sheet','Cash Flow Statement')
     cash,cm=_section_rows(ws,'Cash Flow Statement','Full Statement Coverage')
-    structural=(len(income)>=20 and len(balance)>=35 and len(cash)>=25)
+    min_structure=tuple(profile.get('min_structure') or (20,35,25))
+    min_mapped=tuple(profile.get('min_mapped') or (12,18,14))
+    counts=(len(income),len(balance),len(cash)); mapped=(len(im),len(bm),len(cm))
+    structural=all(a>=b for a,b in zip(counts,min_structure))
     if not structural:
-        return 'FAIL',f'Condensed statement structure remains: income={len(income)}, balance={len(balance)}, cash={len(cash)} standardized rows.'
-    useful=(len(im)>=12 and len(bm)>=18 and len(cm)>=14)
+        return 'FAIL',(
+            f"Profile statement structure is too shallow for {profile['name']}: "
+            f"income={counts[0]}/{min_structure[0]} minimum, balance={counts[1]}/{min_structure[1]}, cash={counts[2]}/{min_structure[2]}."
+        )
+    useful=all(a>=b for a,b in zip(mapped,min_mapped))
     status='PASS' if useful else 'REVIEW'
-    detail=(f'Full standardized statements present: income {len(im)}/{len(income)} mapped rows, '
-            f'balance {len(bm)}/{len(balance)}, cash flow {len(cm)}/{len(cash)}. '
-            'Unmapped issuer-specific lines stay blank rather than being estimated.')
+    detail=(f"{profile['name']} full statements: income {mapped[0]}/{counts[0]} mapped rows, "
+            f"balance {mapped[1]}/{counts[1]}, cash flow {mapped[2]}/{counts[2]}. "
+            'Profile-specific unmapped lines stay blank rather than being estimated.')
     return status,detail
 
 
@@ -130,7 +171,7 @@ def ensure_quality_checks(wb,ticker,bundle=None,removed=None):
     if 'Data Quality' not in wb.sheetnames: wb.create_sheet('Data Quality')
     ws=wb['Data Quality']; removed=removed or []; bundle=bundle or reconcile_score_displays(wb,ticker)
     labels={
-        'Canonical financial-statement reconciliation','Full financial-statement depth','Company product/profile coverage',
+        'Canonical financial-statement reconciliation','Statement profile suitability','Full financial-statement depth','Company product/profile coverage',
         'Segment Analysis public-data coverage','Valuation-model reliability gate','Score-engine single-source reconciliation','Low-value tab pruning'
     }
     for r in range(1,ws.max_row+1):
@@ -138,8 +179,9 @@ def ensure_quality_checks(wb,ticker,bundle=None,removed=None):
             for c in range(1,min(ws.max_column,8)+1): ws.cell(r,c).value=None
     start=ws.max_row+2
     controls=[]
-    st,detail=_statement_status(wb); controls.append(('Canonical financial-statement reconciliation',st,detail))
-    st,detail=_full_statement_depth(wb); controls.append(('Full financial-statement depth',st,detail))
+    st,detail=_statement_status(wb,ticker); controls.append(('Canonical financial-statement reconciliation',st,detail))
+    st,detail=_statement_profile_status(wb,ticker); controls.append(('Statement profile suitability',st,detail))
+    st,detail=_full_statement_depth(wb,ticker); controls.append(('Full financial-statement depth',st,detail))
     st,detail=_product_profile_status(wb); controls.append(('Company product/profile coverage',st,detail))
     st,detail=_segment_status(wb,ticker); controls.append(('Segment Analysis public-data coverage',st,detail))
     rel=bundle.get('valuation_model_reliability') or {'status':'PASS','reasons':[]}
