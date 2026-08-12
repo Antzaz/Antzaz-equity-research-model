@@ -119,7 +119,7 @@ jobs:
           assert find(fs,profile['canonical_revenue']) is not None,(ticker,profile['canonical_revenue'])
 
           product_header=find(cd,'Business / Segment'); assert product_header
-          products=[str(cd.cell(r,2).value or '').strip() for r in range(product_header+1,min(cd.max_row,product_header+12)+1)]
+          products=[str(cd.cell(r,2).value or '').strip() for r in range(product_header+1,min(cd.max_row,product_header+10)+1)]
           assert len([x for x in products if x])>=4,(ticker,products)
 
           if profile['key']=='bank':
