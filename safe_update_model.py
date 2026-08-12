@@ -5,8 +5,8 @@ from __future__ import annotations
 This wrapper installs source-integrity, scoring, statement and valuation controls before
 running update_model.py. The final workbook uses canonical annual financial definitions,
 company-specific WACC, reliability-gated scoring, verified segment adapters where available,
-full three-statement reporting, a main-products/company profile, and a final quality/pruning
-pass before save.
+profile-aware full three-statement reporting, a main-products/company profile, and a final
+quality/pruning pass before save.
 """
 
 from datetime import date, datetime
@@ -28,7 +28,7 @@ import research_extensions
 import score_integration_v2
 import decision_view_v2
 from financial_statement_integrity_v3 import repair_financial_statements_v3 as repair_financial_statements
-from full_financial_statements_v2 import expand_financial_statements
+from full_financial_statements_v3 import expand_financial_statements
 from verified_full_statement_adapters import apply_verified_full_statement_adapter
 from company_profile_v2 import enrich_company_data
 from score_engine_v3 import advanced_scorecard, compute_score_bundle
@@ -145,6 +145,13 @@ def _ticker_from_wb(wb):
     except Exception: return ""
 
 
+def _pending_crossborder_normalization(wb):
+    info=getattr(wb,"_wacc_info",{}) or {}
+    financial=str(info.get("financialCurrency") or "").upper().strip()
+    quote=str(info.get("currency") or "").upper().strip()
+    return bool(financial and quote and financial!=quote),financial,quote
+
+
 def _safe_update_scenarios(wb,hist,info):
     ticker=_ticker_from_wb(wb)
     guarded={y:dict(v) for y,v in (hist or {}).items()}
@@ -181,18 +188,23 @@ segment_chart_fix.enrich_segment_analysis=_safe_segment_enrichment
 
 def _safe_financial_statements(wb,ticker,facts):
     _ORIGINAL_FINANCIAL_STATEMENTS(wb,ticker,facts)
+    crossborder,financial,quote=_pending_crossborder_normalization(wb)
     initial={}
-    try:
-        initial=repair_financial_statements(wb,ticker) or {}
-        print(f"Financial Statements canonical pre-repair: filled={initial.get('filled',0)}, history_sync={initial.get('history_sync',0)}")
-    except Exception as exc:
-        print(f"Warning: Financial Statements canonical pre-repair failed: {exc}")
+    if crossborder:
+        print(f"Financial Statements canonical pre-repair deferred: reporting {financial} -> valuation {quote}")
+    else:
+        try:
+            initial=repair_financial_statements(wb,ticker) or {}
+            print(f"Financial Statements canonical pre-repair: filled={initial.get('filled',0)}, history_sync={initial.get('history_sync',0)}")
+        except Exception as exc:
+            print(f"Warning: Financial Statements canonical pre-repair failed: {exc}")
     expansion={}
     try:
         expansion=expand_financial_statements(wb,ticker,facts) or {}
         setattr(wb,"_full_statement_expansion",expansion)
         print(
             "Full Financial Statements: "
+            f"profile={expansion.get('profile','default')}, "
             f"income={expansion.get('income_rows',0)}/{expansion.get('income_total',0)}, "
             f"balance={expansion.get('balance_rows',0)}/{expansion.get('balance_total',0)}, "
             f"cash={expansion.get('cash_rows',0)}/{expansion.get('cash_total',0)}"
@@ -204,13 +216,18 @@ def _safe_financial_statements(wb,ticker,facts):
         if verified.get("written"): print(f"Verified full-statement adapter: {ticker} wrote {verified['written']} annual cells")
     except Exception as exc:
         print(f"Warning: verified full-statement adapter failed: {exc}")
-    try:
-        final=repair_financial_statements(wb,ticker) or {}
-        final["full_statement_expansion"]=expansion
+    if crossborder:
+        final={"deferred_for_currency_normalization":True,"reporting_currency":financial,"valuation_currency":quote,"full_statement_expansion":expansion}
         setattr(wb,"_financial_statement_repair",final)
-        print(f"Financial Statements canonical final repair: filled={final.get('filled',0)}, history_sync={final.get('history_sync',0)}")
-    except Exception as exc:
-        print(f"Warning: Financial Statements canonical final repair failed: {exc}")
+        print("Financial Statements canonical final repair deferred until post-FX normalization")
+    else:
+        try:
+            final=repair_financial_statements(wb,ticker) or {}
+            final["full_statement_expansion"]=expansion
+            setattr(wb,"_financial_statement_repair",final)
+            print(f"Financial Statements canonical final repair: filled={final.get('filled',0)}, history_sync={final.get('history_sync',0)}")
+        except Exception as exc:
+            print(f"Warning: Financial Statements canonical final repair failed: {exc}")
     try: apply_dynamic_wacc(wb,ticker,getattr(wb,"_wacc_info",{}))
     except Exception as exc: print(f"Warning: post-statements dynamic WACC failed: {exc}")
     return wb["Financial Statements"] if "Financial Statements" in wb.sheetnames else None
@@ -238,6 +255,9 @@ research_extensions._leadership_proxy=leadership_proxy
 def _safe_research_extensions(wb,ticker,info=None):
     fin={}
     try:
+        # update_model.main() has already run its final currency normalization before this hook.
+        # Only now is it safe to synchronize foreign reporting-currency statements into the
+        # canonical valuation-currency Historical Financials sheet.
         apply_verified_full_statement_adapter(wb,ticker)
         fin=repair_financial_statements(wb,ticker) or {}
         fin["full_statement_expansion"]=getattr(wb,"_full_statement_expansion",{})
