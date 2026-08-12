@@ -167,21 +167,54 @@ def _product_profile_status(wb):
     return 'FAIL','Company Data product profile contains no populated products/services.'
 
 
+def _company_classification_status(wb,ticker):
+    if 'Company Data' not in wb.sheetnames: return 'FAIL','Company Data missing.'
+    ws=wb['Company Data']; t=str(ticker).upper().strip()
+    sector=str(ws['B6'].value or '').strip(); industry=str(ws['B7'].value or '').strip()
+    if not sector or not industry: return 'REVIEW','Sector or industry is missing; peer classification should not use stale template metadata.'
+    if t not in {'GOOGL','GOOG'} and (sector,industry)==('Communication Services','Internet Content & Information'):
+        return 'FAIL','Stale Alphabet template sector/industry survived into a different issuer.'
+    expected={
+        'SIE.DE':('Industrials','Specialty Industrial Machinery'),
+        'BRK.B':('Financial Services','Insurance - Diversified'),
+        'BRK-B':('Financial Services','Insurance - Diversified'),
+    }.get(t)
+    if expected and (sector,industry)!=expected:
+        return 'FAIL',f'Classification mismatch: expected {expected[0]} / {expected[1]}, got {sector} / {industry}.'
+    return 'PASS',f'Company classification is populated and issuer-consistent: {sector} / {industry}.'
+
+
+def _finalize_statement_currency_label(wb):
+    if 'Financial Statements' not in wb.sheetnames: return 'FAIL','Financial Statements missing.'
+    info=getattr(wb,'_wacc_info',{}) or {}
+    reporting=str(info.get('financialCurrency') or '').upper().strip()
+    quote=str(info.get('currency') or '').upper().strip()
+    # At finalization, cross-border financials have already been normalized into the traded/
+    # valuation currency. Same-currency listings remain in their native reporting currency.
+    final_currency=quote if reporting and quote and reporting!=quote else (reporting or quote or 'USD')
+    ws=wb['Financial Statements']
+    ws['A3']=f'{final_currency} billions unless otherwise stated. EPS and share-count rows use the units shown in their labels.'
+    return 'PASS',f'Financial Statements final currency basis: {final_currency}; reporting={reporting or "unknown"}, traded/valuation={quote or "unknown"}.'
+
+
 def ensure_quality_checks(wb,ticker,bundle=None,removed=None):
     if 'Data Quality' not in wb.sheetnames: wb.create_sheet('Data Quality')
     ws=wb['Data Quality']; removed=removed or []; bundle=bundle or reconcile_score_displays(wb,ticker)
     labels={
-        'Canonical financial-statement reconciliation','Statement profile suitability','Full financial-statement depth','Company product/profile coverage',
-        'Segment Analysis public-data coverage','Valuation-model reliability gate','Score-engine single-source reconciliation','Low-value tab pruning'
+        'Canonical financial-statement reconciliation','Statement profile suitability','Full financial-statement depth','Statement currency basis',
+        'Company classification freshness','Company product/profile coverage','Segment Analysis public-data coverage','Valuation-model reliability gate',
+        'Score-engine single-source reconciliation','Low-value tab pruning'
     }
     for r in range(1,ws.max_row+1):
         if str(ws.cell(r,1).value or '') in labels:
             for c in range(1,min(ws.max_column,8)+1): ws.cell(r,c).value=None
     start=ws.max_row+2
     controls=[]
+    st,detail=_finalize_statement_currency_label(wb); controls.append(('Statement currency basis',st,detail))
     st,detail=_statement_status(wb,ticker); controls.append(('Canonical financial-statement reconciliation',st,detail))
     st,detail=_statement_profile_status(wb,ticker); controls.append(('Statement profile suitability',st,detail))
     st,detail=_full_statement_depth(wb,ticker); controls.append(('Full financial-statement depth',st,detail))
+    st,detail=_company_classification_status(wb,ticker); controls.append(('Company classification freshness',st,detail))
     st,detail=_product_profile_status(wb); controls.append(('Company product/profile coverage',st,detail))
     st,detail=_segment_status(wb,ticker); controls.append(('Segment Analysis public-data coverage',st,detail))
     rel=bundle.get('valuation_model_reliability') or {'status':'PASS','reasons':[]}
