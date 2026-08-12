@@ -5,7 +5,8 @@ from __future__ import annotations
 This wrapper installs source-integrity, scoring, statement and valuation controls before
 running update_model.py. The final workbook uses canonical annual financial definitions,
 company-specific WACC, reliability-gated scoring, verified segment adapters where available,
-and a final quality/pruning pass before save.
+full three-statement reporting, a main-products/company profile, and a final quality/pruning
+pass before save.
 """
 
 from datetime import date, datetime
@@ -27,6 +28,9 @@ import research_extensions
 import score_integration_v2
 import decision_view_v2
 from financial_statement_integrity_v3 import repair_financial_statements_v3 as repair_financial_statements
+from full_financial_statements_v2 import expand_financial_statements
+from verified_full_statement_adapters import apply_verified_full_statement_adapter
+from company_profile_v2 import enrich_company_data
 from score_engine_v3 import advanced_scorecard, compute_score_bundle
 from score_integration_v2 import institutional_dimensions, leadership_proxy, finalize_score_transparency
 from wacc_engine import apply_dynamic_wacc
@@ -176,14 +180,40 @@ segment_chart_fix.enrich_segment_analysis=_safe_segment_enrichment
 
 
 def _safe_financial_statements(wb,ticker,facts):
-    ws=_ORIGINAL_FINANCIAL_STATEMENTS(wb,ticker,facts)
+    _ORIGINAL_FINANCIAL_STATEMENTS(wb,ticker,facts)
+    initial={}
     try:
-        result=repair_financial_statements(wb,ticker); setattr(wb,"_financial_statement_repair",result)
-        print(f"Financial Statements canonical repair: filled={result.get('filled',0)}, history_sync={result.get('history_sync',0)}")
-    except Exception as exc: print(f"Warning: Financial Statements canonical repair failed: {exc}")
+        initial=repair_financial_statements(wb,ticker) or {}
+        print(f"Financial Statements canonical pre-repair: filled={initial.get('filled',0)}, history_sync={initial.get('history_sync',0)}")
+    except Exception as exc:
+        print(f"Warning: Financial Statements canonical pre-repair failed: {exc}")
+    expansion={}
+    try:
+        expansion=expand_financial_statements(wb,ticker,facts) or {}
+        setattr(wb,"_full_statement_expansion",expansion)
+        print(
+            "Full Financial Statements: "
+            f"income={expansion.get('income_rows',0)}/{expansion.get('income_total',0)}, "
+            f"balance={expansion.get('balance_rows',0)}/{expansion.get('balance_total',0)}, "
+            f"cash={expansion.get('cash_rows',0)}/{expansion.get('cash_total',0)}"
+        )
+    except Exception as exc:
+        print(f"Warning: full Financial Statements expansion failed: {exc}")
+    try:
+        verified=apply_verified_full_statement_adapter(wb,ticker) or {}
+        if verified.get("written"): print(f"Verified full-statement adapter: {ticker} wrote {verified['written']} annual cells")
+    except Exception as exc:
+        print(f"Warning: verified full-statement adapter failed: {exc}")
+    try:
+        final=repair_financial_statements(wb,ticker) or {}
+        final["full_statement_expansion"]=expansion
+        setattr(wb,"_financial_statement_repair",final)
+        print(f"Financial Statements canonical final repair: filled={final.get('filled',0)}, history_sync={final.get('history_sync',0)}")
+    except Exception as exc:
+        print(f"Warning: Financial Statements canonical final repair failed: {exc}")
     try: apply_dynamic_wacc(wb,ticker,getattr(wb,"_wacc_info",{}))
     except Exception as exc: print(f"Warning: post-statements dynamic WACC failed: {exc}")
-    return ws
+    return wb["Financial Statements"] if "Financial Statements" in wb.sheetnames else None
 update_model.ensure_financial_statements=_safe_financial_statements
 
 
@@ -208,7 +238,10 @@ research_extensions._leadership_proxy=leadership_proxy
 def _safe_research_extensions(wb,ticker,info=None):
     fin={}
     try:
-        fin=repair_financial_statements(wb,ticker); setattr(wb,"_financial_statement_repair",fin)
+        apply_verified_full_statement_adapter(wb,ticker)
+        fin=repair_financial_statements(wb,ticker) or {}
+        fin["full_statement_expansion"]=getattr(wb,"_full_statement_expansion",{})
+        setattr(wb,"_financial_statement_repair",fin)
     except Exception as exc: print(f"Warning: final Financial Statements repair failed: {exc}")
     result=_ORIGINAL_RESEARCH_EXTENSIONS(wb,ticker,info)
     wacc_info=info or getattr(wb,"_wacc_info",{})
@@ -216,6 +249,11 @@ def _safe_research_extensions(wb,ticker,info=None):
     except Exception as exc: print(f"Warning: final dynamic WACC refresh failed: {exc}")
     try: _verified_segment(wb,ticker)
     except Exception as exc: print(f"Warning: final verified Segment Analysis refresh failed: {exc}")
+    try:
+        profile=enrich_company_data(wb,ticker,info or {}) or {}
+        setattr(wb,"_company_profile",profile)
+        print(f"Company Data products/services: {profile.get('products',0)} rows ({profile.get('source','unknown')})")
+    except Exception as exc: print(f"Warning: Company Data product/profile enrichment failed: {exc}")
 
     removed=[]
     try: removed=prune_low_value_tabs(wb)
