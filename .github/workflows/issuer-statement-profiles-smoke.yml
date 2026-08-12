@@ -36,7 +36,8 @@ jobs:
 
           expected={
               'GOOGL':'google','GOOG':'google','AMZN':'amazon','NVDA':'nvidia',
-              'JPM':'bank','BRK.B':'berkshire','BRK-B':'berkshire','TSM':'tsm','SIE.DE':'siemens'
+              'JPM':'bank','BRK.B':'berkshire','BRK-B':'berkshire','TSM':'tsm','SIE.DE':'siemens',
+              'CEG':'default','GEV':'default'
           }
           for ticker,key in expected.items():
               p=get_statement_profile(ticker)
@@ -46,7 +47,7 @@ jobs:
               assert len(p['cash'])>=p['min_structure'][2],(ticker,'cash',len(p['cash']),p['min_structure'])
           assert provider_symbol('BRK.B')=='BRK-B'
           assert provider_symbol('BRK.A')=='BRK-A'
-          for ticker in ('GOOGL','AMZN','NVDA','JPM','BRK.B','TSM','SIE.DE'):
+          for ticker in ('GOOGL','AMZN','NVDA','JPM','BRK.B','TSM','SIE.DE','CEG','GEV'):
               assert len(CURATED_PRODUCTS[ticker]['rows'])>=4,(ticker,len(CURATED_PRODUCTS[ticker]['rows']))
           bank=get_statement_profile('JPM')
           labels={r[0] for r in bank['income']}|{r[0] for r in bank['balance']}
@@ -67,7 +68,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ticker: [GOOGL, AMZN, NVDA, JPM, BRK.B, TSM, SIE.DE]
+        ticker: [GOOGL, AMZN, NVDA, JPM, BRK.B, TSM, SIE.DE, CEG, GEV]
     env:
       SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
     steps:
@@ -140,6 +141,17 @@ jobs:
               assert 'EUR' in str(fs['A3'].value or ''),fs['A3'].value
               assert str(cd['B6'].value or '')=='Industrials',cd['B6'].value
               assert str(cd['B7'].value or '')=='Specialty Industrial Machinery',cd['B7'].value
+          if ticker=='CEG':
+              # Preserve the issuer-verified accounting-definition fixes from the prior release.
+              ih=section_header('Income Statement','Balance Sheet')[2]
+              bh=section_header('Balance Sheet','Cash Flow Statement')[2]
+              ch=section_header('Cash Flow Statement','Full Statement Coverage')[2]
+              iy={int(fs.cell(ih,c).value):c for c in range(2,min(fs.max_column,10)+1) if isinstance(fs.cell(ih,c).value,(int,float))}
+              by={int(fs.cell(bh,c).value):c for c in range(2,min(fs.max_column,10)+1) if isinstance(fs.cell(bh,c).value,(int,float))}
+              cy={int(fs.cell(ch,c).value):c for c in range(2,min(fs.max_column,10)+1) if isinstance(fs.cell(ch,c).value,(int,float))}
+              assert abs(fs.cell(find(fs,'Revenue'),iy[2025]).value-25.533)<.03
+              assert abs(fs.cell(find(fs,'Depreciation, Amortization & Accretion'),cy[2025]).value-2.601)<.01
+              assert abs(fs.cell(find(fs,'Property & Equipment, Net'),by[2024]).value-21.671)<.01
 
           dq=wb['Data Quality']; checks={str(dq.cell(r,1).value or ''):str(dq.cell(r,2).value or '') for r in range(1,dq.max_row+1)}
           assert checks.get('Statement profile suitability')=='PASS',(ticker,checks.get('Statement profile suitability'))
