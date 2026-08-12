@@ -36,10 +36,8 @@ def _bayesian_is_empty(wb):
 
 def prune_low_value_tabs(wb):
     removed=[]
-    # Redundant with the now-authoritative Segment Analysis and usually contained manual prompts/blanks.
     if 'Business Portfolio Map' in wb.sheetnames:
         wb.remove(wb['Business Portfolio Map']); removed.append('Business Portfolio Map')
-    # An empty Bayesian template creates false precision and a permanently missing score dimension.
     if _bayesian_is_empty(wb) and 'Base Rates & Probabilities' in wb.sheetnames:
         wb.remove(wb['Base Rates & Probabilities']); removed.append('Base Rates & Probabilities (empty template)')
     return removed
@@ -82,7 +80,6 @@ def _statement_status(wb):
 def ensure_quality_checks(wb,ticker,bundle=None,removed=None):
     if 'Data Quality' not in wb.sheetnames: wb.create_sheet('Data Quality')
     ws=wb['Data Quality']; removed=removed or []; bundle=bundle or reconcile_score_displays(wb,ticker)
-    # Remove prior copies of our controls by blanking their rows.
     labels={'Canonical financial-statement reconciliation','Segment Analysis public-data coverage','Valuation-model reliability gate','Score-engine single-source reconciliation','Low-value tab pruning'}
     for r in range(1,ws.max_row+1):
         if str(ws.cell(r,1).value or '') in labels:
@@ -91,7 +88,9 @@ def ensure_quality_checks(wb,ticker,bundle=None,removed=None):
     controls=[]
     st,detail=_statement_status(wb); controls.append(('Canonical financial-statement reconciliation',st,detail))
     st,detail=_segment_status(wb,ticker); controls.append(('Segment Analysis public-data coverage',st,detail))
-    rel=bundle.get('valuation_model_reliability') or {'status':'PASS','reasons':[]}; controls.append(('Valuation-model reliability gate',rel.get('status','REVIEW'),' '.join(rel.get('reasons') or []) or 'Base valuation output is economically interpretable.'))
+    rel=bundle.get('valuation_model_reliability') or {'status':'PASS','reasons':[]}
+    rel_status='FAIL' if rel.get('status')!='PASS' else 'PASS'
+    controls.append(('Valuation-model reliability gate',rel_status,' '.join(rel.get('reasons') or []) or 'Base valuation output is economically interpretable.'))
     controls.append(('Score-engine single-source reconciliation','PASS',f"Score Engine v3; effective weight coverage {bundle.get('coverage',0):.0%}. Weak/missing dimensions are reweighted rather than fabricated."))
     controls.append(('Low-value tab pruning','PASS','Removed: '+', '.join(removed) if removed else 'No low-value empty tabs required removal.'))
     for i,(name,status,detail) in enumerate(controls,start):
