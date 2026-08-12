@@ -46,20 +46,26 @@ def peer_tickers_from_workbook(path: Path, target: str) -> list[str]:
     return out or [target]
 
 
+def _latest_history_columns(ws):
+    cols=[c for c in range(2,min(ws.max_column,8)+1) if isinstance(ws.cell(3,c).value,(int,float))]
+    return cols[-1] if cols else None, cols[-2] if len(cols)>=2 else None
+
+
 def workbook_current_snapshot(path: Path, ticker: str) -> dict[str, float | str | None]:
     wb = load_workbook(path, data_only=True, read_only=True)
     out: dict[str, float | str | None] = {"ticker": ticker}
     if "Historical Financials" in wb.sheetnames:
         h = wb["Historical Financials"]
-        rev = num(h["G4"].value); op = num(h["G9"].value); ni = num(h["G11"].value)
-        ocf = num(h["G14"].value); cap = num(h["G15"].value); rd = num(h["G19"].value); sbc = num(h["G21"].value)
-        prior_rev = num(h["F4"].value)
+        c,pc=_latest_history_columns(h)
+        rev = num(h.cell(4,c).value) if c else None; op = num(h.cell(9,c).value) if c else None; ni = num(h.cell(11,c).value) if c else None
+        ocf = num(h.cell(14,c).value) if c else None; cap = num(h.cell(15,c).value) if c else None; rd = num(h.cell(19,c).value) if c else None; sbc = num(h.cell(21,c).value) if c else None
+        prior_rev = num(h.cell(4,pc).value) if pc else None
         out.update({
             "revenue_growth": (rev / prior_rev - 1) if rev and prior_rev else None,
             "operating_margin": op / rev if rev and op is not None else None,
             "net_margin": ni / rev if rev and ni is not None else None,
-            "fcf_margin": (ocf - cap) / rev if rev and ocf is not None and cap is not None else None,
-            "capex_to_revenue": cap / rev if rev and cap is not None else None,
+            "fcf_margin": (ocf - abs(cap)) / rev if rev and ocf is not None and cap is not None else None,
+            "capex_to_revenue": abs(cap) / rev if rev and cap is not None else None,
             "rd_to_revenue": rd / rev if rev and rd is not None else None,
             "sbc_to_revenue": sbc / rev if rev and sbc is not None else None,
         })
@@ -68,8 +74,9 @@ def workbook_current_snapshot(path: Path, ticker: str) -> dict[str, float | str 
         out["forward_pe"] = num(d["B15"].value)
         mc = num(d["B10"].value); net_debt = num(d["B14"].value)
         out["net_debt_to_market_cap"] = net_debt / mc if mc and net_debt is not None else None
-        latest_rev = num(wb["Historical Financials"]["G4"].value) if "Historical Financials" in wb.sheetnames else None
-        out["net_debt_to_revenue"] = net_debt / latest_rev if latest_rev and net_debt is not None else None
+        if "Historical Financials" in wb.sheetnames:
+            h=wb["Historical Financials"]; c,_=_latest_history_columns(h); rev=num(h.cell(4,c).value) if c else None
+            out["net_debt_to_revenue"] = net_debt / rev if rev and net_debt is not None else None
     if "Peer Comps" in wb.sheetnames:
         peer = wb["Peer Comps"]
         for r in range(4, min(peer.max_row, 30) + 1):
@@ -214,9 +221,10 @@ def earnings_history(ticker: str, limit: int = 40) -> pd.DataFrame:
 
 
 def earnings_model_frame(ticker: str) -> pd.DataFrame:
+    columns=["as_of","target_date","prior_surprise_1q","prior_surprise_2q_avg","prior_surprise_4q_avg","surprise_vol_4q","price_momentum_3m","price_vol_3m","eps_estimate","target_surprise"]
     e = earnings_history(ticker)
     if e.empty:
-        return e
+        return pd.DataFrame(columns=columns)
     try:
         prices = yf.Ticker(ticker).history(period="10y", auto_adjust=True)["Close"].dropna()
         prices.index = pd.to_datetime(prices.index, utc=True).tz_convert(None)
@@ -225,21 +233,26 @@ def earnings_model_frame(ticker: str) -> pd.DataFrame:
     rows=[]
     surprises = e["surprise_pct"]
     for i,row in e.iterrows():
-        if i < 4 or pd.isna(row.get("surprise_pct")): 
+        if i < 4 or pd.isna(row.get("surprise_pct")):
             continue
         event=pd.Timestamp(row["earnings_date"])
-        prior=prices.loc[:event].tail(63)
+        as_of=event-pd.Timedelta(days=1)
+        prior=prices.loc[:as_of].tail(63)
         mom=float(prior.iloc[-1]/prior.iloc[0]-1) if len(prior)>=30 else None
         vol=float(prior.pct_change().std()*np.sqrt(252)) if len(prior)>=30 else None
         rows.append({
-            "earnings_date":event,
+            "as_of":as_of,
+            "target_date":event,
             "prior_surprise_1q":num(surprises.iloc[i-1]),
             "prior_surprise_2q_avg":num(surprises.iloc[max(0,i-2):i].mean()),
             "prior_surprise_4q_avg":num(surprises.iloc[max(0,i-4):i].mean()),
             "surprise_vol_4q":num(surprises.iloc[max(0,i-4):i].std()),
-            "momentum_3m":mom,"volatility_3m":vol,"eps_estimate":num(row.get("eps_estimate")),"target_surprise_pct":num(row.get("surprise_pct")),
+            "price_momentum_3m":mom,
+            "price_vol_3m":vol,
+            "eps_estimate":num(row.get("eps_estimate")),
+            "target_surprise":num(row.get("surprise_pct")),
         })
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows,columns=columns)
 
 
 def regime_feature_frame(period: str = "20y") -> pd.DataFrame:
@@ -251,7 +264,7 @@ def regime_feature_frame(period: str = "20y") -> pd.DataFrame:
     monthly=data.resample("ME").last().dropna()
     r6=monthly.pct_change(6); vol=monthly["SPY"].pct_change().rolling(3).std()*np.sqrt(12)
     return pd.DataFrame({
-        "equity_6m":r6["SPY"],"duration_6m":r6["TLT"],"credit_6m":r6["HYG"]-r6["LQD"],
+        "equity_6m":r6["SPY"],"bond_6m":r6["TLT"],"credit_6m":r6["HYG"]-r6["LQD"],
         "commodity_6m":r6["DBC"],"dollar_6m":r6["UUP"],"equity_vol_3m":vol,
     }).dropna()
 
@@ -266,7 +279,7 @@ def historical_financial_anomaly_frame(path: Path) -> pd.DataFrame:
         if not isinstance(year,(int,float)): continue
         rev=num(ws.cell(4,c).value); op=num(ws.cell(9,c).value); ni=num(ws.cell(11,c).value); ocf=num(ws.cell(14,c).value); cap=num(ws.cell(15,c).value); rd=num(ws.cell(19,c).value); sbc=num(ws.cell(21,c).value)
         if rev in (None,0): continue
-        rows.append({"year":int(year),"revenue_growth":rev/prev_rev-1 if prev_rev else None,"operating_margin":op/rev if op is not None else None,"net_margin":ni/rev if ni is not None else None,"fcf_margin":(ocf-cap)/rev if ocf is not None and cap is not None else None,"capex_to_revenue":cap/rev if cap is not None else None,"rd_to_revenue":rd/rev if rd is not None else None,"sbc_to_revenue":sbc/rev if sbc is not None else None})
+        rows.append({"year":int(year),"revenue_growth":rev/prev_rev-1 if prev_rev else None,"operating_margin":op/rev if op is not None else None,"net_margin":ni/rev if ni is not None else None,"fcf_margin":(ocf-abs(cap))/rev if ocf is not None and cap is not None else None,"capex_to_revenue":abs(cap)/rev if cap is not None else None,"rd_to_revenue":rd/rev if rd is not None else None,"sbc_to_revenue":sbc/rev if sbc is not None else None})
         prev_rev=rev
     return pd.DataFrame(rows)
 
