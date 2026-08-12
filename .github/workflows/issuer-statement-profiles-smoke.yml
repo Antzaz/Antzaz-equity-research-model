@@ -26,11 +26,13 @@ jobs:
           python -m pip install -r requirements.txt
       - name: Compile profile layer
         run: |
-          python -m py_compile issuer_statement_profiles.py full_financial_statements_v3.py financial_statement_integrity_v4.py safe_update_model.py output_quality_v3.py
+          python -m py_compile issuer_statement_profiles.py full_financial_statements_v3.py financial_statement_integrity_v4.py runtime_data_guards.py company_profile_v2.py safe_update_model.py output_quality_v3.py
       - name: Validate profile selection and economics
         run: |
           python - <<'PY'
           from issuer_statement_profiles import get_statement_profile
+          from runtime_data_guards import provider_symbol
+          from company_profile_v2 import CURATED_PRODUCTS
 
           expected={
               'GOOGL':'google','GOOG':'google','AMZN':'amazon','NVDA':'nvidia',
@@ -42,6 +44,10 @@ jobs:
               assert len(p['income'])>=p['min_structure'][0],(ticker,'income',len(p['income']),p['min_structure'])
               assert len(p['balance'])>=p['min_structure'][1],(ticker,'balance',len(p['balance']),p['min_structure'])
               assert len(p['cash'])>=p['min_structure'][2],(ticker,'cash',len(p['cash']),p['min_structure'])
+          assert provider_symbol('BRK.B')=='BRK-B'
+          assert provider_symbol('BRK.A')=='BRK-A'
+          for ticker in ('GOOGL','AMZN','NVDA','JPM','BRK.B','TSM','SIE.DE'):
+              assert len(CURATED_PRODUCTS[ticker]['rows'])>=4,(ticker,len(CURATED_PRODUCTS[ticker]['rows']))
           bank=get_statement_profile('JPM')
           labels={r[0] for r in bank['income']}|{r[0] for r in bank['balance']}
           assert {'Total Net Revenue','Provision for Credit Losses','Loans, Net','Deposits'}.issubset(labels)
@@ -91,17 +97,20 @@ jobs:
           path=sorted(Path('updated_models').glob(f'{ticker}_Equity_Research_*.xlsx'))[-1]
           wb=load_workbook(path,data_only=False,read_only=False)
           assert {'Company Data','Financial Statements','Historical Financials','Data Quality'}.issubset(wb.sheetnames)
-          fs=wb['Financial Statements']; profile=get_statement_profile(ticker)
+          fs=wb['Financial Statements']; profile=get_statement_profile(ticker); cd=wb['Company Data']
           assert profile['name'] in str(fs['A4'].value or ''),(ticker,fs['A4'].value,profile['name'])
 
           def find(ws,label):
               for r in range(1,ws.max_row+1):
                   if str(ws.cell(r,1).value or '').strip().lower()==label.lower(): return r
               return None
-          def section_rows(start_label,end_label):
+          def section_header(start_label,end_label):
               s=find(fs,start_label); e=find(fs,end_label) if end_label else fs.max_row+1
               assert s and e,(ticker,start_label,end_label)
               h=next(r for r in range(s+1,min(e,s+6)) if str(fs.cell(r,1).value or '').strip().lower()=='metric')
+              return s,e,h
+          def section_rows(start_label,end_label):
+              s,e,h=section_header(start_label,end_label)
               derived={'Operating Margin','Net Margin','Net Debt','Working Capital','Free Cash Flow','Efficiency Ratio (simple)','Credit Cost / Revenue','Loans / Deposits'}
               return [str(fs.cell(r,1).value or '').strip() for r in range(h+1,e) if str(fs.cell(r,1).value or '').strip() and str(fs.cell(r,1).value or '').strip() not in derived]
 
@@ -109,18 +118,34 @@ jobs:
           assert all(a>=b for a,b in zip(counts,profile['min_structure'])),(ticker,counts,profile['min_structure'])
           assert find(fs,profile['canonical_revenue']) is not None,(ticker,profile['canonical_revenue'])
 
+          product_header=find(cd,'Business / Segment'); assert product_header
+          products=[str(cd.cell(r,2).value or '').strip() for r in range(product_header+1,min(cd.max_row,product_header+12)+1)]
+          assert len([x for x in products if x])>=4,(ticker,products)
+
           if profile['key']=='bank':
               for label in ('Total Net Revenue','Provision for Credit Losses','Loans, Net','Deposits'):
                   assert find(fs,label),label
-              fcf=find(fs,'Free Cash Flow'); assert fcf and all(fs.cell(fcf,c).value in (None,'') for c in range(2,min(fs.max_column,9)+1))
+              _s,_e,ch=section_header('Cash Flow Statement','Full Statement Coverage')
+              year_cols=[c for c in range(2,min(fs.max_column,10)+1) if isinstance(fs.cell(ch,c).value,(int,float)) and 1900<=int(fs.cell(ch,c).value)<=2100]
+              fcf=find(fs,'Free Cash Flow'); assert fcf and all(fs.cell(fcf,c).value in (None,'') for c in year_cols)
           if profile['key']=='berkshire':
               for label in ('Insurance Premiums Earned','Investment Gains / (Losses)','Insurance Losses & Loss Adjustment Liabilities'):
                   assert find(fs,label),label
+              assert 'Berkshire' in str(cd['B5'].value or ''),cd['B5'].value
+              assert str(cd['B6'].value or '')=='Financial Services',cd['B6'].value
+              assert str(cd['B7'].value or '')=='Insurance - Diversified',cd['B7'].value
           if profile['key']=='tsm':
               assert 'USD' in str(fs['A3'].value or ''),fs['A3'].value
+          if profile['key']=='siemens':
+              assert 'EUR' in str(fs['A3'].value or ''),fs['A3'].value
+              assert str(cd['B6'].value or '')=='Industrials',cd['B6'].value
+              assert str(cd['B7'].value or '')=='Specialty Industrial Machinery',cd['B7'].value
 
           dq=wb['Data Quality']; checks={str(dq.cell(r,1).value or ''):str(dq.cell(r,2).value or '') for r in range(1,dq.max_row+1)}
           assert checks.get('Statement profile suitability')=='PASS',(ticker,checks.get('Statement profile suitability'))
+          assert checks.get('Statement currency basis')=='PASS',(ticker,checks.get('Statement currency basis'))
+          assert checks.get('Company classification freshness')=='PASS',(ticker,checks.get('Company classification freshness'))
+          assert checks.get('Company product/profile coverage')=='PASS',(ticker,checks.get('Company product/profile coverage'))
           assert checks.get('Full financial-statement depth') in {'PASS','REVIEW'},(ticker,checks.get('Full financial-statement depth'))
           assert checks.get('Canonical financial-statement reconciliation') in {'PASS','REVIEW'},(ticker,checks.get('Canonical financial-statement reconciliation'))
           if ticker=='TSM':
@@ -134,5 +159,5 @@ jobs:
                       if isinstance(v,str) and v.startswith('=') and '#REF!' in v:
                           broken.append(f'{ws.title}!{cell.coordinate}')
           assert not broken,broken[:20]
-          print(ticker,'issuer profile smoke PASS',path,'profile',profile['key'],'rows',counts)
+          print(ticker,'issuer profile smoke PASS',path,'profile',profile['key'],'rows',counts,'products',len([x for x in products if x]))
           PY
