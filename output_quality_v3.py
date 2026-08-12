@@ -70,23 +70,77 @@ def _statement_status(wb):
     if 'Financial Statements' not in wb.sheetnames or 'Historical Financials' not in wb.sheetnames: return 'FAIL','Core statement/history sheet missing.'
     fs=wb['Financial Statements']; hs=wb['Historical Financials']; r=_find(fs,'Revenue'); i0=_find(fs,'Income Statement')
     if not r or not i0: return 'FAIL','Canonical revenue row missing.'
-    ycols={int(fs.cell(i0+1,c).value):c for c in range(2,min(fs.max_column,8)+1) if isinstance(fs.cell(i0+1,c).value,(int,float))}
+    ycols={int(fs.cell(i0+1,c).value):c for c in range(2,min(fs.max_column,10)+1) if isinstance(fs.cell(i0+1,c).value,(int,float))}
     hcols={int(hs.cell(3,c).value):c for c in range(2,min(hs.max_column,8)+1) if isinstance(hs.cell(3,c).value,(int,float))}
     common=sorted(set(ycols)&set(hcols))
     if not common: return 'REVIEW','No common annual periods to reconcile.'
     y=common[-1]; a=_num(fs.cell(r,ycols[y]).value); b=_num(hs.cell(4,hcols[y]).value)
     if a is None or b is None: return 'REVIEW','Latest canonical revenue missing in one sheet.'
     return ('PASS',f'Latest annual revenue reconciles across Financial Statements and Historical Financials ({y}).') if abs(a-b)<=max(.01,abs(a)*.001) else ('FAIL',f'Revenue mismatch remains for {y}: statements={a}, history={b}.')
+
+
+def _section_rows(ws,title,next_title):
+    s=_find(ws,title); e=_find(ws,next_title) if next_title else ws.max_row+1
+    if not s or not e: return [],[]
+    header=next((r for r in range(s+1,min(e,s+6)) if str(ws.cell(r,1).value or '').strip().lower()=='metric'),None)
+    if not header: return [],[]
+    years=[c for c in range(2,min(ws.max_column,10)+1) if isinstance(ws.cell(header,c).value,(int,float)) and 1900<=int(ws.cell(header,c).value)<=2100]
+    labels=[]; mapped=[]
+    for r in range(header+1,e):
+        label=str(ws.cell(r,1).value or '').strip()
+        if not label: continue
+        if label in {'Operating Margin','Net Margin','Net Debt','Working Capital','Free Cash Flow'}: continue
+        labels.append(label)
+        if any(isinstance(ws.cell(r,c).value,(int,float)) for c in years): mapped.append(label)
+    return labels,mapped
+
+
+def _full_statement_depth(wb):
+    if 'Financial Statements' not in wb.sheetnames: return 'FAIL','Financial Statements missing.'
+    ws=wb['Financial Statements']
+    income,im=_section_rows(ws,'Income Statement','Balance Sheet')
+    balance,bm=_section_rows(ws,'Balance Sheet','Cash Flow Statement')
+    cash,cm=_section_rows(ws,'Cash Flow Statement','Full Statement Coverage')
+    structural=(len(income)>=20 and len(balance)>=35 and len(cash)>=25)
+    if not structural:
+        return 'FAIL',f'Condensed statement structure remains: income={len(income)}, balance={len(balance)}, cash={len(cash)} standardized rows.'
+    useful=(len(im)>=12 and len(bm)>=18 and len(cm)>=14)
+    status='PASS' if useful else 'REVIEW'
+    detail=(f'Full standardized statements present: income {len(im)}/{len(income)} mapped rows, '
+            f'balance {len(bm)}/{len(balance)}, cash flow {len(cm)}/{len(cash)}. '
+            'Unmapped issuer-specific lines stay blank rather than being estimated.')
+    return status,detail
+
+
+def _product_profile_status(wb):
+    if 'Company Data' not in wb.sheetnames: return 'FAIL','Company Data missing.'
+    ws=wb['Company Data']; header=_find(ws,'Business Overview & Main Products / Services')
+    if not header: return 'FAIL','Main products/services section missing from Company Data.'
+    product_header=_find(ws,'Business / Segment')
+    if not product_header: return 'FAIL','Product table header missing from Company Data.'
+    rows=0
+    for r in range(product_header+1,min(ws.max_row,product_header+12)+1):
+        if str(ws.cell(r,2).value or '').strip(): rows+=1
+    if rows>=3: return 'PASS',f'Company Data contains {rows} main product/service rows with business-line context and source fields.'
+    if rows>=1: return 'REVIEW',f'Company Data product profile exists but has only {rows} reliably identified row(s).'
+    return 'FAIL','Company Data product profile contains no populated products/services.'
+
+
 def ensure_quality_checks(wb,ticker,bundle=None,removed=None):
     if 'Data Quality' not in wb.sheetnames: wb.create_sheet('Data Quality')
     ws=wb['Data Quality']; removed=removed or []; bundle=bundle or reconcile_score_displays(wb,ticker)
-    labels={'Canonical financial-statement reconciliation','Segment Analysis public-data coverage','Valuation-model reliability gate','Score-engine single-source reconciliation','Low-value tab pruning'}
+    labels={
+        'Canonical financial-statement reconciliation','Full financial-statement depth','Company product/profile coverage',
+        'Segment Analysis public-data coverage','Valuation-model reliability gate','Score-engine single-source reconciliation','Low-value tab pruning'
+    }
     for r in range(1,ws.max_row+1):
         if str(ws.cell(r,1).value or '') in labels:
             for c in range(1,min(ws.max_column,8)+1): ws.cell(r,c).value=None
     start=ws.max_row+2
     controls=[]
     st,detail=_statement_status(wb); controls.append(('Canonical financial-statement reconciliation',st,detail))
+    st,detail=_full_statement_depth(wb); controls.append(('Full financial-statement depth',st,detail))
+    st,detail=_product_profile_status(wb); controls.append(('Company product/profile coverage',st,detail))
     st,detail=_segment_status(wb,ticker); controls.append(('Segment Analysis public-data coverage',st,detail))
     rel=bundle.get('valuation_model_reliability') or {'status':'PASS','reasons':[]}
     rel_status='FAIL' if rel.get('status')!='PASS' else 'PASS'
