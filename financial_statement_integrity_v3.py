@@ -157,9 +157,8 @@ def _alpha_value(report,key):
     return _num(v) if v not in (None,'None','-') else None
 
 def _fill_alpha_blanks(wb,ticker):
-    """Use at most three Alpha Vantage calls and only fill blank core annual cells."""
-    reports=_alpha_reports(ticker)
-    if not reports or 'Financial Statements' not in wb.sheetnames: return 0
+    """Use at most three Alpha Vantage calls, and zero calls when core annual cells are complete."""
+    if 'Financial Statements' not in wb.sheetnames: return 0
     ws=wb['Financial Statements']; i0=_section(ws,'Income Statement'); b0=_section(ws,'Balance Sheet'); c0=_section(ws,'Cash Flow Statement')
     if not i0 or not b0 or not c0: return 0
     iy=_year_cols(ws,i0+1); bh=next((r for r in range(b0+1,min(b0+4,ws.max_row)+1) if str(ws.cell(r,1).value or '').strip().lower()=='metric'),b0+1); by=_year_cols(ws,bh); cy=_year_cols(ws,c0+1)
@@ -168,17 +167,22 @@ def _fill_alpha_blanks(wb,ticker):
         ('BALANCE_SHEET',b0,c0-1,by,{"Cash & Cash Equivalents":'cashAndCashEquivalentsAtCarryingValue','Total Current Assets':'totalCurrentAssets','Property & Equipment, Net':'propertyPlantEquipment','Total Assets':'totalAssets','Total Current Liabilities':'totalCurrentLiabilities','Long-Term Debt':'longTermDebt','Total Liabilities':'totalLiabilities',"Stockholders' Equity":'totalShareholderEquity'}),
         ('CASH_FLOW',c0,ws.max_row,cy,{'Operating Cash Flow':'operatingCashflow','Capital Expenditures':'capitalExpenditures'}),
     ]
-    filled=0
+    gaps=[]
     for fn,start,end,cols,mapping in maps:
         for label,key in mapping.items():
             r=_find(ws,label,start,end)
             if not r: continue
             for y,c in cols.items():
-                if _num(ws.cell(r,c).value) is not None: continue
-                v=_alpha_value((reports.get(fn) or {}).get(y),key)
-                if v is None: continue
-                if label=='Capital Expenditures': v=-abs(v)
-                _set(ws,r,c,v); filled+=1
+                if _num(ws.cell(r,c).value) is None: gaps.append((fn,r,y,c,key,label))
+    if not gaps: return 0
+    reports=_alpha_reports(ticker)
+    if not reports: return 0
+    filled=0
+    for fn,r,y,c,key,label in gaps:
+        v=_alpha_value((reports.get(fn) or {}).get(y),key)
+        if v is None: continue
+        if label=='Capital Expenditures': v=-abs(v)
+        _set(ws,r,c,v); filled+=1
     return filled
 
 
@@ -220,8 +224,7 @@ def _integrity_section(wb,ticker,primary_written,synced,alpha_filled):
     for item in rows:
         r+=1
         for c,v in enumerate(item,1): ws.cell(r,c,v); ws.cell(r,c).alignment=Alignment(wrap_text=True,vertical='top')
-        if item[1] in {'PASS','N/A'}: ws.cell(r,2).fill=PatternFill('solid',fgColor=GREEN)
-        else: ws.cell(r,2).fill=PatternFill('solid',fgColor=GOLD)
+        ws.cell(r,2).fill=PatternFill('solid',fgColor=GREEN if item[1] in {'PASS','N/A'} else GOLD)
     for col,w in {'A':30,'B':14,'C':52,'D':46,'E':42,'F':50,'G':38}.items(): ws.column_dimensions[col].width=max(ws.column_dimensions[col].width or 0,w)
 
 
