@@ -160,7 +160,9 @@ def _product_profile_status(wb):
     product_header=_find(ws,'Business / Segment')
     if not product_header: return 'FAIL','Product table header missing from Company Data.'
     rows=0
-    for r in range(product_header+1,min(ws.max_row,product_header+12)+1):
+    # Product rows are reserved for at most ten entries immediately below the table header.
+    # Row 32 is the separate research-rule note and must never be counted as a product.
+    for r in range(product_header+1,min(ws.max_row,product_header+10)+1):
         if str(ws.cell(r,2).value or '').strip(): rows+=1
     if rows>=3: return 'PASS',f'Company Data contains {rows} main product/service rows with business-line context and source fields.'
     if rows>=1: return 'REVIEW',f'Company Data product profile exists but has only {rows} reliably identified row(s).'
