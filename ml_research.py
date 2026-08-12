@@ -20,6 +20,7 @@ from machine_learning.data import (
     peer_tickers_from_workbook, regime_feature_frame, workbook_current_snapshot,
 )
 from machine_learning.history_store import HistoryStore, utc_now
+from machine_learning.quality import gate_results
 from machine_learning.workbook import write_ml_sheet
 
 BASE=Path(__file__).resolve().parent
@@ -101,7 +102,7 @@ def _journal(store:HistoryStore|None,ticker:str,stamp:str,results):
         pred=r.prediction
         if pred is None: continue
         rows.append((stamp,ticker,r.name,utc_now(),365 if "12M" in r.name else None,json.dumps(pred,default=str),r.confidence,
-                     json.dumps(r.details or {},default=str),"ml-layer-v2",utc_now()))
+                     json.dumps({**(r.details or {}),"status":r.status},default=str),"ml-layer-v3-quality-gated",utc_now()))
     if not rows: return
     with store.connect() as con:
         con.executemany(
@@ -141,7 +142,6 @@ def main()->int:
     expected=expected_model.fit_predict(expected_frame,current)
     expected.details=dict(expected.details or {}); expected.details["training_source"]=expected_source
     expected.details["feature_columns"]=expected_model.feature_cols
-    print(f"[ml] {expected.name}: {expected.status}")
 
     earnings_frame=pd.DataFrame(); earnings_source="live fallback"
     if store is not None:
@@ -151,16 +151,10 @@ def main()->int:
     if earnings_frame.empty: earnings_frame=earnings_model_frame(ticker)
     earnings=EarningsSurpriseModel().fit_predict(earnings_frame)
     earnings.details=dict(earnings.details or {}); earnings.details["training_source"]=earnings_source
-    print(f"[ml] {earnings.name}: {earnings.status}")
 
     anomaly=FinancialAnomalyModel().fit_predict(historical_financial_anomaly_frame(workbook))
-    print(f"[ml] {anomaly.name}: {anomaly.status}")
-
     regime=MarketRegimeModel().fit_predict(regime_feature_frame(period="20y"))
-    print(f"[ml] {regime.name}: {regime.status}")
-
     ai=AIImpactMLModel().fit_predict(load_ai_kpi_snapshots(BASE,ticker))
-    print(f"[ml] {ai.name}: {ai.status}")
 
     portfolio_df=load_portfolio(BASE)
     if portfolio_df.empty:
@@ -170,12 +164,14 @@ def main()->int:
         tickers=portfolio_df["ticker"].tolist()
         returns=_portfolio_returns_db(store,tickers) if store is not None else pd.DataFrame()
         if returns.empty: returns=_portfolio_returns_live(tickers)
-        exp_inputs={ticker:expected.prediction} if isinstance(expected.prediction,float) else {}
+        # Weak expected-return evidence is intentionally excluded from portfolio optimization.
+        exp_inputs={ticker:expected.prediction} if expected.status=="PASS" and isinstance(expected.prediction,float) else {}
         weights=dict(zip(portfolio_df["ticker"],portfolio_df["current_weight"].fillna(0.0)))
         portfolio=PortfolioPositionSizingModel().optimize(returns,exp_inputs,weights,max_weight=args.max_position,risk_aversion=args.risk_aversion)
-    print(f"[ml] {portfolio.name}: {portfolio.status}")
 
-    results=[expected,earnings,anomaly,regime,ai,portfolio]
+    results=gate_results([expected,earnings,anomaly,regime,ai,portfolio])
+    for r in results: print(f"[ml] {r.name}: {r.status} / {r.confidence}")
+
     stamp=datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
     run_dir=ML_RUNS/ticker/stamp; run_dir.mkdir(parents=True,exist_ok=True)
     payload={"ticker":ticker,"generated_at":datetime.now().astimezone().isoformat(timespec="seconds"),"workbook":str(workbook),
