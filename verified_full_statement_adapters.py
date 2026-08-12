@@ -6,6 +6,9 @@ select a narrower accounting definition or GitHub runners cannot reach SEC Compa
 Values are historical audited/public annual figures only. They never create forecasts.
 """
 
+from runtime_data_guards import install_runtime_data_guards
+install_runtime_data_guards()
+
 from openpyxl.styles import Font
 
 FMT_BN='#,##0.0;[Red](#,##0.0);-'; FMT_EPS='$0.00;[Red]($0.00);-'; FMT_SHARES='#,##0.0;[Red](#,##0.0);-'
