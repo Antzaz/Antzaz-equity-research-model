@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable
 import json
+import re
 
 import numpy as np
 import pandas as pd
@@ -26,15 +27,22 @@ def latest_workbook(repo_root: Path, ticker: str) -> Path:
 
 
 def peer_tickers_from_workbook(path: Path, target: str) -> list[str]:
+    """Read only ticker-like symbols; explanatory Peer Comps notes are never market-data inputs."""
     wb = load_workbook(path, data_only=True, read_only=True)
     if "Peer Comps" not in wb.sheetnames:
         return [target]
     ws = wb["Peer Comps"]
     out = []
+    valid = re.compile(r"^[A-Z0-9][A-Z0-9.\-]{0,11}$")
     for r in range(4, min(ws.max_row, 40) + 1):
         sym = str(ws.cell(r, 2).value or "").strip().upper()
-        if sym and sym not in out:
+        if not valid.fullmatch(sym):
+            continue
+        if sym not in out:
             out.append(sym)
+    t = str(target).upper().strip()
+    if valid.fullmatch(t) and t not in out:
+        out.insert(0, t)
     return out or [target]
 
 
@@ -217,109 +225,75 @@ def earnings_model_frame(ticker: str) -> pd.DataFrame:
     rows=[]
     surprises = e["surprise_pct"]
     for i,row in e.iterrows():
-        if i < 4 or pd.isna(row.get("surprise_pct")):
+        if i < 4 or pd.isna(row.get("surprise_pct")): 
             continue
-        dt = row["earnings_date"]
-        pre = prices.loc[:dt].tail(63) if not prices.empty else pd.Series(dtype=float)
+        event=pd.Timestamp(row["earnings_date"])
+        prior=prices.loc[:event].tail(63)
+        mom=float(prior.iloc[-1]/prior.iloc[0]-1) if len(prior)>=30 else None
+        vol=float(prior.pct_change().std()*np.sqrt(252)) if len(prior)>=30 else None
         rows.append({
-            "as_of": dt - pd.Timedelta(days=1),
-            "target_date": dt,
-            "prior_surprise_1q": num(surprises.iloc[i-1]),
-            "prior_surprise_2q_avg": num(surprises.iloc[i-2:i].mean()),
-            "prior_surprise_4q_avg": num(surprises.iloc[i-4:i].mean()),
-            "surprise_vol_4q": num(surprises.iloc[i-4:i].std()),
-            "price_momentum_3m": float(pre.iloc[-1]/pre.iloc[0]-1) if len(pre)>=40 else None,
-            "price_vol_3m": float(pre.pct_change().std()*np.sqrt(252)) if len(pre)>=40 else None,
-            "eps_estimate": num(row.get("eps_estimate")),
-            "target_surprise": num(row.get("surprise_pct")),
+            "earnings_date":event,
+            "prior_surprise_1q":num(surprises.iloc[i-1]),
+            "prior_surprise_2q_avg":num(surprises.iloc[max(0,i-2):i].mean()),
+            "prior_surprise_4q_avg":num(surprises.iloc[max(0,i-4):i].mean()),
+            "surprise_vol_4q":num(surprises.iloc[max(0,i-4):i].std()),
+            "momentum_3m":mom,"volatility_3m":vol,"eps_estimate":num(row.get("eps_estimate")),"target_surprise_pct":num(row.get("surprise_pct")),
         })
     return pd.DataFrame(rows)
 
 
-def historical_financial_anomaly_frame(workbook: Path) -> pd.DataFrame:
-    wb=load_workbook(workbook,data_only=True,read_only=True)
-    if "Historical Financials" not in wb.sheetnames:
-        return pd.DataFrame()
-    h=wb["Historical Financials"]
-    rows=[]
-    for c in range(2,8):
-        year=h.cell(3,c).value; rev=num(h.cell(4,c).value)
-        if not isinstance(year,(int,float)) or not rev:
-            continue
-        prev=num(h.cell(4,c-1).value) if c>2 else None
-        op=num(h.cell(9,c).value); ni=num(h.cell(11,c).value); ocf=num(h.cell(14,c).value); cap=num(h.cell(15,c).value); rd=num(h.cell(19,c).value); sbc=num(h.cell(21,c).value)
-        rows.append({
-            "year":int(year),
-            "revenue_growth":rev/prev-1 if prev else None,
-            "operating_margin":op/rev if op is not None else None,
-            "net_margin":ni/rev if ni is not None else None,
-            "fcf_margin":(ocf-cap)/rev if ocf is not None and cap is not None else None,
-            "capex_to_revenue":cap/rev if cap is not None else None,
-            "rd_to_revenue":rd/rev if rd is not None else None,
-            "sbc_to_revenue":sbc/rev if sbc is not None else None,
-        })
-    return pd.DataFrame(rows)
-
-
-def regime_feature_frame(period: str = "10y") -> pd.DataFrame:
-    symbols=["SPY","TLT","HYG","LQD","DBC","UUP"]
+def regime_feature_frame(period: str = "20y") -> pd.DataFrame:
+    tickers=["SPY","TLT","HYG","LQD","DBC","UUP"]
     try:
-        raw=yf.download(symbols,period=period,auto_adjust=True,progress=False,group_by="column")
-        close=raw["Close"] if isinstance(raw.columns,pd.MultiIndex) else raw
+        data=yf.download(tickers,period=period,auto_adjust=True,progress=False)["Close"].dropna(how="all")
     except Exception:
         return pd.DataFrame()
-    if close.empty:
-        return pd.DataFrame()
-    close=close.ffill().dropna(how="all")
-    monthly=close.resample("ME").last()
-    daily=close.pct_change()
-    out=pd.DataFrame(index=monthly.index)
-    out["equity_6m"]=monthly["SPY"].pct_change(6)
-    out["bond_6m"]=monthly["TLT"].pct_change(6)
-    out["credit_6m"]=monthly["HYG"].pct_change(6)-monthly["LQD"].pct_change(6)
-    out["commodity_6m"]=monthly["DBC"].pct_change(6)
-    out["dollar_6m"]=monthly["UUP"].pct_change(6)
-    vol=daily["SPY"].rolling(63).std()*np.sqrt(252)
-    out["equity_vol_3m"]=vol.resample("ME").last()
-    return out.dropna()
+    monthly=data.resample("ME").last().dropna()
+    r6=monthly.pct_change(6); vol=monthly["SPY"].pct_change().rolling(3).std()*np.sqrt(12)
+    return pd.DataFrame({
+        "equity_6m":r6["SPY"],"duration_6m":r6["TLT"],"credit_6m":r6["HYG"]-r6["LQD"],
+        "commodity_6m":r6["DBC"],"dollar_6m":r6["UUP"],"equity_vol_3m":vol,
+    }).dropna()
+
+
+def historical_financial_anomaly_frame(path: Path) -> pd.DataFrame:
+    wb=load_workbook(path,data_only=True,read_only=True)
+    if "Historical Financials" not in wb.sheetnames: return pd.DataFrame()
+    ws=wb["Historical Financials"]
+    rows=[]; prev_rev=None
+    for c in range(2,8):
+        year=ws.cell(3,c).value
+        if not isinstance(year,(int,float)): continue
+        rev=num(ws.cell(4,c).value); op=num(ws.cell(9,c).value); ni=num(ws.cell(11,c).value); ocf=num(ws.cell(14,c).value); cap=num(ws.cell(15,c).value); rd=num(ws.cell(19,c).value); sbc=num(ws.cell(21,c).value)
+        if rev in (None,0): continue
+        rows.append({"year":int(year),"revenue_growth":rev/prev_rev-1 if prev_rev else None,"operating_margin":op/rev if op is not None else None,"net_margin":ni/rev if ni is not None else None,"fcf_margin":(ocf-cap)/rev if ocf is not None and cap is not None else None,"capex_to_revenue":cap/rev if cap is not None else None,"rd_to_revenue":rd/rev if rd is not None else None,"sbc_to_revenue":sbc/rev if sbc is not None else None})
+        prev_rev=rev
+    return pd.DataFrame(rows)
 
 
 def load_ai_kpi_snapshots(repo_root: Path, ticker: str) -> pd.DataFrame:
     path=repo_root/"research_data"/ticker/"kpi_history.json"
-    if not path.exists():
-        return pd.DataFrame()
-    try:
-        payload=json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return pd.DataFrame()
+    if not path.exists(): return pd.DataFrame()
+    try: data=json.loads(path.read_text(encoding="utf-8"))
+    except Exception: return pd.DataFrame()
     rows=[]
-    for snap in payload.get("snapshots",[]):
-        base={"captured_at":pd.to_datetime(snap.get("captured_at"),errors="coerce")}
-        for k in snap.get("kpis",[]):
-            name=str(k.get("kpi") or "").strip()
-            val=num(k.get("current"))
-            if name and val is not None:
-                base[name]=val
-        rows.append(base)
-    return pd.DataFrame(rows).sort_values("captured_at") if rows else pd.DataFrame()
+    for snap in data.get("snapshots",[]):
+        row={"as_of":pd.to_datetime(snap.get("as_of"),errors="coerce")}
+        for item in snap.get("kpis",[]):
+            val=num(item.get("value"))
+            if val is not None: row[str(item.get("name"))]=val
+        rows.append(row)
+    return pd.DataFrame(rows).sort_values("as_of") if rows else pd.DataFrame()
 
 
 def load_portfolio(repo_root: Path) -> pd.DataFrame:
     path=repo_root/"institutional_research"/"portfolio.csv"
-    if not path.exists():
-        return pd.DataFrame()
+    if not path.exists(): return pd.DataFrame(columns=["ticker","current_weight"])
     try:
-        df=pd.read_csv(path)
-    except Exception:
-        return pd.DataFrame()
-    cols={c.lower():c for c in df.columns}
-    ticker_col=cols.get("ticker")
-    if not ticker_col:
-        return pd.DataFrame()
-    out=pd.DataFrame({"ticker":df[ticker_col].astype(str).str.upper().str.strip()})
-    weight_col=cols.get("weight")
-    if weight_col:
-        out["current_weight"]=pd.to_numeric(df[weight_col],errors="coerce")
-    else:
-        out["current_weight"]=1/len(out) if len(out) else None
-    return out.dropna(subset=["ticker"])
+        df=pd.read_csv(path); df.columns=[str(c).strip().lower() for c in df.columns]
+    except Exception: return pd.DataFrame(columns=["ticker","current_weight"])
+    if "ticker" not in df.columns: return pd.DataFrame(columns=["ticker","current_weight"])
+    if "current_weight" not in df.columns: df["current_weight"]=0.0
+    df["ticker"]=df["ticker"].astype(str).str.upper().str.strip(); df["current_weight"]=pd.to_numeric(df["current_weight"],errors="coerce").fillna(0.0)
+    if df["current_weight"].sum()>1.5: df["current_weight"]/=100.0
+    return df[["ticker","current_weight"]].drop_duplicates("ticker")
