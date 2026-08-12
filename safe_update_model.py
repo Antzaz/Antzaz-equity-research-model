@@ -186,7 +186,19 @@ def _safe_financial_statements(wb,ticker,facts):
     return ws
 update_model.ensure_financial_statements=_safe_financial_statements
 
-advanced_analytics_v2._scorecard=advanced_scorecard
+
+def _advanced_sheet_scorecard(wb,current_price,forward_pe,base_value,severe_value):
+    """Advanced Analytics' legacy renderer expects numeric rows while building.
+
+    Reliability-excluded dimensions get a neutral temporary placeholder solely so chart/table
+    construction cannot crash. The final reconciliation pass replaces those cells with the v3
+    authoritative value (including blank/excluded) and status, so the neutral placeholder is
+    never presented as investment evidence in the saved workbook.
+    """
+    rows=advanced_scorecard(wb,current_price,forward_pe,base_value,severe_value)
+    return [(name,50.0 if score is None else score,note+(" Temporary neutral render placeholder; final score is excluded by reliability gate." if score is None else "")) for name,score,note in rows]
+
+advanced_analytics_v2._scorecard=_advanced_sheet_scorecard
 score_integration_v2.compute_score_bundle=compute_score_bundle
 decision_view_v2.compute_score_bundle=compute_score_bundle
 institutional_lenses._scorecard_dimensions=institutional_dimensions
