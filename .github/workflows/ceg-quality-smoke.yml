@@ -68,9 +68,13 @@ jobs:
           growth=hs.cell(4,hc[2025]).value/hs.cell(4,hc[2024]).value-1
           assert .06<growth<.11, growth
 
-          seg=wb['Segment Analysis']; names={str(seg.cell(r,1).value or '').strip() for r in range(1,seg.max_row+1)}
-          for name in ('Mid-Atlantic','Midwest','New York','ERCOT','Other Power Regions','Calpine'): assert name in names, name
-          assert not any('management' in x.lower() for x in names)
+          seg=wb['Segment Analysis']
+          annual=[str(seg.cell(r,1).value or '').strip() for r in range(7,12)]
+          q1=[str(seg.cell(r,1).value or '').strip() for r in range(16,22)]
+          assert annual==['Mid-Atlantic','Midwest','New York','ERCOT','Other Power Regions'], annual
+          assert q1==['Mid-Atlantic','Midwest','New York','ERCOT','Other Power Regions','Calpine'], q1
+          # Parser-garbage test is restricted to actual segment-name rows; narrative methodology notes are allowed elsewhere.
+          assert not any('management' in x.lower() for x in annual+q1)
 
           audit=wb['Score Audit Trail']; statuses={str(audit.cell(r,1).value or ''):str(audit.cell(r,10).value or '') for r in range(1,audit.max_row+1)}
           assert 'Growth' in statuses and 'Balance Sheet' in statuses
@@ -82,7 +86,6 @@ jobs:
 
           ml=wb['ML & Quantitative Research']
           assert len(ml._charts)>=2, f'Expected ML charts, found {len(ml._charts)}'
-          # A weak supervised walk-forward must not be presented as PASS.
           for r in range(7,13):
               name=str(ml.cell(r,1).value or '')
               status=str(ml.cell(r,2).value or '')
