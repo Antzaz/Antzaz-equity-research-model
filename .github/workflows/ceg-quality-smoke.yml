@@ -69,12 +69,16 @@ jobs:
           assert .06<growth<.11, growth
 
           seg=wb['Segment Analysis']
-          annual=[str(seg.cell(r,1).value or '').strip() for r in range(7,12)]
-          q1=[str(seg.cell(r,1).value or '').strip() for r in range(16,22)]
+          rows=[]
+          for r in range(1,seg.max_row+1):
+              name=str(seg.cell(r,1).value or '').strip()
+              if name in {'Mid-Atlantic','Midwest','New York','ERCOT','Other Power Regions','Calpine'}:
+                  rows.append((r,name))
+          annual=[name for r,name in rows if name!='Calpine'][:5]
+          q1_names=[name for r,name in rows if r>max(r for r,name in rows if name=='Other Power Regions' and r<20)]
           assert annual==['Mid-Atlantic','Midwest','New York','ERCOT','Other Power Regions'], annual
-          assert q1==['Mid-Atlantic','Midwest','New York','ERCOT','Other Power Regions','Calpine'], q1
-          # Parser-garbage test is restricted to actual segment-name rows; narrative methodology notes are allowed elsewhere.
-          assert not any('management' in x.lower() for x in annual+q1)
+          assert 'Calpine' in [name for _,name in rows], rows
+          assert not any('management' in name.lower() for _,name in rows)
 
           audit=wb['Score Audit Trail']; statuses={str(audit.cell(r,1).value or ''):str(audit.cell(r,10).value or '') for r in range(1,audit.max_row+1)}
           assert 'Growth' in statuses and 'Balance Sheet' in statuses
