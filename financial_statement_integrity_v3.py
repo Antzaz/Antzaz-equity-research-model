@@ -2,9 +2,9 @@ from __future__ import annotations
 
 """Canonical financial-statement reconciliation.
 
-The existing SEC/Yahoo repair remains the general fallback. Verified issuer adapters can
-then overwrite only exact core rows and synchronize those canonical values into Historical
-Financials so DCF, scoring and statement tabs use the same definitions.
+The existing SEC/Yahoo repair remains the general fallback. Verified issuer adapters then
+overwrite exact core rows and synchronize those canonical values into Historical Financials
+so DCF, scoring and statement tabs use the same definitions.
 """
 
 from io import StringIO
@@ -19,13 +19,19 @@ from financial_statement_repair_final import repair_financial_statements as _leg
 BLUE="2F75B5"; WHITE="FFFFFF"; GOLD="FFF2CC"; GREEN="E2F0D9"
 FMT_BN='#,##0.0;[Red](#,##0.0);-'; FMT_EPS='$0.00;[Red]($0.00);-'
 CEG_INCOME="https://constellationenergy.gcs-web.com/financial-performance/income-statement"
+CEG_BALANCE="https://constellationenergy.gcs-web.com/financial-performance/balance-sheet"
 CEG_CASH="https://constellationenergy.gcs-web.com/financial-performance/cash-flow"
 
 
 def _num(v):
     try:
         if isinstance(v,bool) or v in (None,""): return None
-        x=float(v); return x if math.isfinite(x) else None
+        if isinstance(v,str):
+            s=v.replace(',','').replace('--','').strip()
+            if not s: return None
+            x=float(s)
+        else: x=float(v)
+        return x if math.isfinite(x) else None
     except Exception: return None
 
 def _find(ws,label,start=1,end=None):
@@ -61,9 +67,7 @@ def _issuer_values(df,label):
     for c in df.columns[1:]:
         m=re.search(r'(20\d{2})',str(c))
         if not m: continue
-        raw=row[c]
-        if isinstance(raw,str): raw=raw.replace(',','').replace('--','').strip()
-        v=_num(raw)
+        v=_num(row[c])
         if v is not None: out[int(m.group(1))]=v*1e6
     return out
 
@@ -72,8 +76,10 @@ def _apply_ceg(wb):
     if 'Financial Statements' not in wb.sheetnames: return 0
     ws=wb['Financial Statements']; i0=_section(ws,'Income Statement'); b0=_section(ws,'Balance Sheet'); c0=_section(ws,'Cash Flow Statement')
     if not i0 or not b0 or not c0: return 0
-    iy=_year_cols(ws,i0+1); cy=_year_cols(ws,c0+1)
-    inc=_issuer_table(CEG_INCOME,'Revenue'); cf=_issuer_table(CEG_CASH,'Cash from Operating Activities')
+    iy=_year_cols(ws,i0+1)
+    bh=next((r for r in range(b0+1,min(b0+4,ws.max_row)+1) if str(ws.cell(r,1).value or '').strip().lower()=='metric'),b0+1)
+    by=_year_cols(ws,bh); cy=_year_cols(ws,c0+1)
+    inc=_issuer_table(CEG_INCOME,'Revenue'); bs=_issuer_table(CEG_BALANCE,'Cash & Equivalents'); cf=_issuer_table(CEG_CASH,'Cash from Operating Activities')
     written=0
     imap={
         'Revenue':('Revenue',False),'Cost of Revenue':('Cost of Revenue',False),'Gross Profit':('Gross Profit',False),
@@ -84,8 +90,17 @@ def _apply_ceg(wb):
     for label,(source,ps) in imap.items():
         r=_find(ws,label,i0,b0-1); vals=_issuer_values(inc,source)
         for y,c in iy.items():
-            if y in vals:
-                _set(ws,r,c,vals[y]/1e6 if ps else vals[y],ps); written+=1
+            if y in vals: _set(ws,r,c,vals[y]/1e6 if ps else vals[y],ps); written+=1
+    bmap={
+        'Cash & Cash Equivalents':'Cash & Equivalents','Accounts Receivable':'Total Receivables, Net','Total Current Assets':'Total Current Assets',
+        'Property & Equipment, Net':'Property/Plant/Equipment, Total - Net','Goodwill':'Goodwill, Net','Total Assets':'Total Assets',
+        'Total Current Liabilities':'Total Current Liabilities','Long-Term Debt':'Long Term Debt','Total Liabilities':'Total Liabilities',
+        "Stockholders' Equity":'Total Equity',
+    }
+    for label,source in bmap.items():
+        r=_find(ws,label,b0,c0-1); vals=_issuer_values(bs,source)
+        for y,c in by.items():
+            if y in vals: _set(ws,r,c,vals[y]); written+=1
     cmap={'Operating Cash Flow':'Cash from Operating Activities','Capital Expenditures':'Capital Expenditures'}
     for label,source in cmap.items():
         r=_find(ws,label,c0,ws.max_row); vals=_issuer_values(cf,source)
@@ -119,7 +134,12 @@ def _sync_history(wb):
 
 def _integrity_section(wb,ticker,primary_written,synced):
     if 'Financial Statements' not in wb.sheetnames: return
-    ws=wb['Financial Statements']; r=ws.max_row+3
+    ws=wb['Financial Statements']; existing=_find(ws,'Financial Statement Integrity & Source Reconciliation')
+    r=existing or ws.max_row+3
+    # Clear our prior block when this repair is called again late in the build.
+    if existing:
+        for rr in range(existing,min(existing+6,ws.max_row)+1):
+            for c in range(1,8): ws.cell(rr,c).value=None
     for c in range(1,8): ws.cell(r,c).fill=PatternFill('solid',fgColor=BLUE); ws.cell(r,c).font=Font(bold=True,color=WHITE)
     ws.cell(r,1,'Financial Statement Integrity & Source Reconciliation'); r+=1
     headers=['Control','Status','Method','Primary / Preferred Source','Fallback','Why it matters','Action']
