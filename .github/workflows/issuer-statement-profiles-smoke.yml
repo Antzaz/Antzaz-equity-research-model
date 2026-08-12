@@ -1,0 +1,138 @@
+name: Issuer-specific statement profiles smoke test
+
+on:
+  push:
+    branches:
+      - agent/issuer-specific-statements
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  profile-unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Compile profile layer
+        run: |
+          python -m py_compile issuer_statement_profiles.py full_financial_statements_v3.py financial_statement_integrity_v4.py safe_update_model.py output_quality_v3.py
+      - name: Validate profile selection and economics
+        run: |
+          python - <<'PY'
+          from issuer_statement_profiles import get_statement_profile
+
+          expected={
+              'GOOGL':'google','GOOG':'google','AMZN':'amazon','NVDA':'nvidia',
+              'JPM':'bank','BRK.B':'berkshire','BRK-B':'berkshire','TSM':'tsm','SIE.DE':'siemens'
+          }
+          for ticker,key in expected.items():
+              p=get_statement_profile(ticker)
+              assert p['key']==key,(ticker,p['key'],key)
+              assert len(p['income'])>=p['min_structure'][0],(ticker,'income',len(p['income']),p['min_structure'])
+              assert len(p['balance'])>=p['min_structure'][1],(ticker,'balance',len(p['balance']),p['min_structure'])
+              assert len(p['cash'])>=p['min_structure'][2],(ticker,'cash',len(p['cash']),p['min_structure'])
+          bank=get_statement_profile('JPM')
+          labels={r[0] for r in bank['income']}|{r[0] for r in bank['balance']}
+          assert {'Total Net Revenue','Provision for Credit Losses','Loans, Net','Deposits'}.issubset(labels)
+          assert not bank['derive_fcf'] and not bank['balance_net_debt']
+          brk=get_statement_profile('BRK.B')
+          labels={r[0] for r in brk['income']}|{r[0] for r in brk['balance']}
+          assert {'Insurance Premiums Earned','Investment Gains / (Losses)','Insurance Losses & Loss Adjustment Liabilities'}.issubset(labels)
+          assert not brk['derive_fcf']
+          tsm=get_statement_profile('TSM')
+          assert any(any(str(tag).startswith('ifrs-full:') for tag in row[2]) for row in tsm['income'])
+          print('profile-unit PASS')
+          PY
+
+  live-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 28
+    strategy:
+      fail-fast: false
+      matrix:
+        ticker: [GOOGL, AMZN, NVDA, JPM, BRK.B, TSM, SIE.DE]
+    env:
+      SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Build workbook
+        run: python safe_update_model.py "${{ matrix.ticker }}"
+      - name: Validate profile, reconciliation and workbook integrity
+        env:
+          TICKER: ${{ matrix.ticker }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          from openpyxl import load_workbook
+          from issuer_statement_profiles import get_statement_profile
+
+          ticker=os.environ['TICKER']
+          path=sorted(Path('updated_models').glob(f'{ticker}_Equity_Research_*.xlsx'))[-1]
+          wb=load_workbook(path,data_only=False,read_only=False)
+          assert {'Company Data','Financial Statements','Historical Financials','Data Quality'}.issubset(wb.sheetnames)
+          fs=wb['Financial Statements']; profile=get_statement_profile(ticker)
+          assert profile['name'] in str(fs['A4'].value or ''),(ticker,fs['A4'].value,profile['name'])
+
+          def find(ws,label):
+              for r in range(1,ws.max_row+1):
+                  if str(ws.cell(r,1).value or '').strip().lower()==label.lower(): return r
+              return None
+          def section_rows(start_label,end_label):
+              s=find(fs,start_label); e=find(fs,end_label) if end_label else fs.max_row+1
+              assert s and e,(ticker,start_label,end_label)
+              h=next(r for r in range(s+1,min(e,s+6)) if str(fs.cell(r,1).value or '').strip().lower()=='metric')
+              derived={'Operating Margin','Net Margin','Net Debt','Working Capital','Free Cash Flow','Efficiency Ratio (simple)','Credit Cost / Revenue','Loans / Deposits'}
+              return [str(fs.cell(r,1).value or '').strip() for r in range(h+1,e) if str(fs.cell(r,1).value or '').strip() and str(fs.cell(r,1).value or '').strip() not in derived]
+
+          counts=(len(section_rows('Income Statement','Balance Sheet')),len(section_rows('Balance Sheet','Cash Flow Statement')),len(section_rows('Cash Flow Statement','Full Statement Coverage')))
+          assert all(a>=b for a,b in zip(counts,profile['min_structure'])),(ticker,counts,profile['min_structure'])
+          assert find(fs,profile['canonical_revenue']) is not None,(ticker,profile['canonical_revenue'])
+
+          if profile['key']=='bank':
+              for label in ('Total Net Revenue','Provision for Credit Losses','Loans, Net','Deposits'):
+                  assert find(fs,label),label
+              fcf=find(fs,'Free Cash Flow'); assert fcf and all(fs.cell(fcf,c).value in (None,'') for c in range(2,min(fs.max_column,9)+1))
+          if profile['key']=='berkshire':
+              for label in ('Insurance Premiums Earned','Investment Gains / (Losses)','Insurance Losses & Loss Adjustment Liabilities'):
+                  assert find(fs,label),label
+          if profile['key']=='tsm':
+              assert 'USD' in str(fs['A3'].value or ''),fs['A3'].value
+
+          dq=wb['Data Quality']; checks={str(dq.cell(r,1).value or ''):str(dq.cell(r,2).value or '') for r in range(1,dq.max_row+1)}
+          assert checks.get('Statement profile suitability')=='PASS',(ticker,checks.get('Statement profile suitability'))
+          assert checks.get('Full financial-statement depth') in {'PASS','REVIEW'},(ticker,checks.get('Full financial-statement depth'))
+          assert checks.get('Canonical financial-statement reconciliation') in {'PASS','REVIEW'},(ticker,checks.get('Canonical financial-statement reconciliation'))
+          if ticker=='TSM':
+              assert checks.get('Currency / ADR normalization')=='PASS',(ticker,checks.get('Currency / ADR normalization'))
+
+          broken=[]
+          for ws in wb.worksheets:
+              for row in ws.iter_rows():
+                  for cell in row:
+                      v=cell.value
+                      if isinstance(v,str) and v.startswith('=') and '#REF!' in v:
+                          broken.append(f'{ws.title}!{cell.coordinate}')
+          assert not broken,broken[:20]
+          print(ticker,'issuer profile smoke PASS',path,'profile',profile['key'],'rows',counts)
+          PY
