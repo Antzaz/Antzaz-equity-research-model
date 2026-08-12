@@ -60,9 +60,6 @@ def _capital_structure_score(wb):
     mc=_market_cap(wb); ev_multiple=_target_peer_value(wb,'EV/EBITDA')
     implied_ebitda=(mc+net)/ev_multiple if mc not in (None,0) and ev_multiple not in (None,0) and mc+net>0 else None
     ebitda_ratio=net/implied_ebitda if implied_ebitda not in (None,0) else None
-
-    # Current/TTM leverage is preferred when available. This is important after major acquisitions,
-    # where current debt should not be divided only by pre-deal annual earnings.
     ebitda_score=clamp(95-10*ebitda_ratio) if ebitda_ratio is not None else None
     op_score=clamp(75-8*(op_ratio-3)) if op_ratio is not None else None
     fcf_score=clamp(70-5*(fcf_ratio-3)) if fcf_ratio is not None else None
@@ -71,11 +68,21 @@ def _capital_structure_score(wb):
     components={"current_net_debt_to_implied_ttm_ebitda":ebitda_score,"market_capital_structure":capital_score,"annual_operating_capacity":op_score,"annual_fcf_capacity":fcf_score}
     return score,{"net_debt":net,"net_debt_to_implied_ebitda":ebitda_ratio,"net_debt_to_operating_income":op_ratio,"net_debt_to_fcf":fcf_ratio,"debt_weight":dw,"ev_to_ebitda":ev_multiple,"components":components,"status":"Complete" if ebitda_score is not None and capital_score is not None else "Partial"}
 
-def _dcf_reliability(wb,base_value):
-    hist=_latest_history(wb); base=num(base_value); reasons=[]
-    if base is None: reasons.append('Base DCF value is missing.')
-    elif base<=0 and (hist.get('operating_income') or 0)>0 and (hist.get('net_income') or 0)>0:
+def _dcf_reliability(wb,base_value,current_price=None,relative_score=None):
+    hist=_latest_history(wb); base=num(base_value); price=num(current_price); reasons=[]
+    profitable=(hist.get('operating_income') or 0)>0 and (hist.get('net_income') or 0)>0
+    if base is None:
+        reasons.append('Base DCF value is missing.')
+    elif base<=0 and profitable:
         reasons.append('DCF produces non-positive equity value despite positive latest operating income and net income; forecast cash-flow/capex assumptions require review.')
+    elif base>0 and price and profitable:
+        ratio=base/price
+        # An extreme DCF/market gap is not automatically an error, but when peer-relative valuation
+        # does not independently show an equally severe signal it is a cross-method conflict.
+        if ratio<.25 and (relative_score is None or relative_score>=20):
+            reasons.append(f'DCF fair value is only {ratio:.0%} of market price while the company is profitable and peer-relative valuation is not comparably extreme; review forecast cash flow, capex, acquisition normalization and terminal assumptions before scoring the DCF.')
+        elif ratio>4.0 and (relative_score is None or relative_score<=80):
+            reasons.append(f'DCF fair value is {ratio:.1f}x market price without equally strong peer-relative support; review forecast/terminal assumptions before treating the apparent upside as evidence.')
     return len(reasons)==0,reasons
 
 def _recompute(bundle):
@@ -105,17 +112,17 @@ def compute_score_bundle(wb,ticker=None,base_value=None,severe_value=None,curren
         'status':detail.get('status','Missing'),
     })
 
-    reliable,reasons=_dcf_reliability(wb,base_value)
+    reliable,reasons=_dcf_reliability(wb,base_value,current_price,dims['Relative Valuation']['score'])
     bundle['valuation_model_reliability']={'status':'PASS' if reliable else 'REVIEW','reasons':reasons}
     if not reliable:
         dims['Absolute Valuation'].update({
             'score':None,'status':'Excluded — DCF reliability review',
-            'components':'Not scored until the deterministic DCF produces economically interpretable equity value.',
-            'formula':'Reliability gate: a non-positive DCF for a currently profitable company is a model-review condition, not automatic 0/100 evidence.',
+            'components':'Not scored until the deterministic DCF produces economically interpretable equity value and reconciles with independent valuation evidence.',
+            'formula':'Reliability gate: non-positive values or extreme cross-method divergence for a profitable company are model-review conditions, not automatic 0/100 evidence.',
         })
         dims['Stress Robustness'].update({
             'score':None,'status':'Excluded — valuation engine review',
-            'components':'Stress/Monte Carlo valuation evidence excluded because it inherits the same failed valuation premise.',
+            'components':'Stress/Monte Carlo valuation evidence excluded because it inherits the same DCF premise under review.',
         })
     if dims['FCF Quality']['score'] is not None and dims['FCF Quality']['score']<50:
         dims['FCF Quality']['status']='Partial — volatile cash conversion; inspect working-capital/hedging effects'
