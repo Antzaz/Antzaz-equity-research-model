@@ -35,17 +35,48 @@ def expanding_walk_forward(
     feature_cols: list[str],
     target_col: str,
     date_col: str = "as_of",
+    target_date_col: str = "target_date",
     min_train: int = 24,
     step: int = 1,
 ) -> WalkForwardResult:
+    """Purged expanding walk-forward validation.
+
+    For forward targets such as next-12-month excess return, a row is trainable only after its
+    target horizon has fully elapsed. This prevents a subtle look-ahead leak where a historical
+    feature row is chronologically earlier than the test row but its realized 12-month return
+    still contains prices from after the test decision date.
+
+    Rows sharing the same as-of date are evaluated together so one company at a date cannot train
+    on another company's outcome from that same decision date.
+    """
     df = frame.copy()
     df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
-    df = df.dropna(subset=[date_col, target_col]).sort_values(date_col).reset_index(drop=True)
+    has_target_date = target_date_col in df.columns
+    if has_target_date:
+        df[target_date_col] = pd.to_datetime(df[target_date_col], errors="coerce")
+    df = df.dropna(subset=[date_col, target_col]).sort_values([date_col]).reset_index(drop=True)
+    if df.empty:
+        return WalkForwardResult(pd.DataFrame(), regression_metrics([], []))
+
+    # Preserve the old `step` concept as a validation-sampling interval, while using complete
+    # date groups to eliminate same-date cross-sectional leakage.
+    candidate_starts = list(range(max(0, min_train), len(df), max(1, int(step))))
+    test_dates=[]
+    seen=set()
+    for start in candidate_starts:
+        dt=df.iloc[start][date_col]
+        if pd.isna(dt) or dt in seen:
+            continue
+        seen.add(dt); test_dates.append(dt)
+
     rows = []
-    for test_start in range(min_train, len(df), step):
-        train = df.iloc[:test_start]
-        test = df.iloc[test_start : test_start + step]
-        if test.empty:
+    for test_date in test_dates:
+        test = df[df[date_col] == test_date]
+        if has_target_date:
+            train = df[(df[date_col] < test_date) & df[target_date_col].notna() & (df[target_date_col] <= test_date)]
+        else:
+            train = df[df[date_col] < test_date]
+        if len(train) < min_train or test.empty:
             continue
         model = clone(estimator)
         model.fit(train[feature_cols], train[target_col])
@@ -55,9 +86,14 @@ def expanding_walk_forward(
                 "as_of": row[date_col],
                 "actual": float(row[target_col]),
                 "prediction": float(pred[i]),
+                "train_rows": int(len(train)),
             })
     out = pd.DataFrame(rows)
     metrics = regression_metrics(out["actual"], out["prediction"]) if not out.empty else regression_metrics([], [])
+    if not out.empty:
+        metrics["min_train_rows"] = int(out["train_rows"].min())
+        metrics["max_train_rows"] = int(out["train_rows"].max())
+        metrics["purged_target_horizons"] = bool(has_target_date)
     return WalkForwardResult(out, metrics)
 
 
