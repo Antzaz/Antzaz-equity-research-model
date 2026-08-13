@@ -7,6 +7,7 @@ from machine_learning.models import (
     ExpectedReturnModel,EarningsSurpriseModel,FinancialAnomalyModel,MarketRegimeModel,
     AIImpactMLModel,PortfolioPositionSizingModel,EXPECTED_FEATURES,EARNINGS_FEATURES,REGIME_FEATURES,
 )
+import segment_source_engine as segment_sources
 
 rng=np.random.default_rng(42)
 
@@ -63,4 +64,20 @@ assert r.status=="PASS"
 weights=(r.details or {}).get("weights",[])
 assert abs(sum(x["suggested_weight"] for x in weights)-1)<1e-6
 
-print("six ML model synthetic smoke test PASS")
+# Source-policy regression: even if a regulatory document has a numerically lower legacy
+# priority, issuer-owned material must stay first. Chevron's fallback must also cite Chevron.
+original_issuer=segment_sources.issuer_segment_documents
+original_sec=segment_sources.sec_segment_documents
+try:
+    segment_sources.issuer_segment_documents=lambda ticker:[{"kind":"issuer","url":"https://issuer.example/report","priority":12,"issuer_owned":True}]
+    segment_sources.sec_segment_documents=lambda ticker,headers:[{"kind":"regulator","url":"https://regulator.example/filing","priority":1,"issuer_owned":False}]
+    docs=segment_sources.collect_segment_documents("TEST",{})
+    assert docs[0]["kind"]=="issuer",docs
+finally:
+    segment_sources.issuer_segment_documents=original_issuer
+    segment_sources.sec_segment_documents=original_sec
+cvx_fallback=segment_sources.verified_fallback("CVX")
+assert cvx_fallback.get("source","").startswith("https://www.chevron.com/")
+assert {"Upstream","Downstream"}.issubset(set(cvx_fallback.get("segments",[])))
+
+print("six ML models + issuer-first segment source synthetic smoke test PASS")
