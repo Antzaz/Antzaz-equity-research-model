@@ -39,3 +39,59 @@ jobs:
         run: |
           python ml_history.py --help
           python ml_history.py status --db /tmp/ml_history_test.sqlite || python ml_history.py --db /tmp/ml_history_test.sqlite status
+
+  live-cvx-ml:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Build fresh Chevron workbook
+        env:
+          SEC_USER_AGENT: ''
+        run: python safe_update_model.py CVX
+      - name: Run ML with a fresh persistent database
+        run: |
+          WB=$(ls -1t updated_models/CVX_Equity_Research_*.xlsx | head -1)
+          python ml_research.py CVX --workbook "$WB" --history-db /tmp/cvx_live_ml.sqlite --auto-history-limit 25 --auto-history-years 10
+      - name: Validate outputs
+        run: |
+          python - <<'PY'
+          import json, sqlite3
+          from pathlib import Path
+          from openpyxl import load_workbook
+          db=Path('/tmp/cvx_live_ml.sqlite')
+          assert db.exists() and db.stat().st_size>0
+          con=sqlite3.connect(db)
+          counts={t:con.execute(f'SELECT COUNT(*) FROM {t}').fetchone()[0] for t in ('symbols','prices','fundamentals','features','predictions')}
+          con.close()
+          assert counts['symbols']>=20, counts
+          assert counts['prices']>=1000, counts
+          assert counts['fundamentals']>=10, counts
+          assert counts['features']>=1, counts
+          files=sorted(Path('ml_runs/CVX').glob('*/ml_results.json'))
+          assert files
+          payload=json.loads(files[-1].read_text(encoding='utf-8'))
+          auto=payload.get('automatic_history') or {}
+          assert auto.get('attempted') is True, auto
+          models={m['name']:m for m in payload.get('models',[])}
+          assert len(models)==6, list(models)
+          expected=models['Expected 12M Excess Return']
+          details=expected.get('details') or {}
+          assert details.get('training_source') in {'persistent point-in-time database','live fallback'}, details
+          wf=(expected.get('metrics') or {}).get('hgb_walk_forward') or {}
+          if wf.get('n',0): assert wf.get('purged_target_horizons') is True, wf
+          wb_path=sorted(Path('updated_models').glob('CVX_Equity_Research_*.xlsx'))[-1]
+          wb=load_workbook(wb_path,data_only=False,read_only=False)
+          assert 'ML & Quantitative Research' in wb.sheetnames
+          assert wb['ML & Quantitative Research'].max_row>20
+          print('LIVE CVX ML PASS',counts,'source',details.get('training_source'),'status',expected.get('status'))
+          PY
