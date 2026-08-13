@@ -18,7 +18,10 @@ df["target_excess_return_12m"]=.15*df["revenue_growth"]+.1*df["fcf_margin"]-.08*
 cur={c:float(df[c].iloc[-1]) for c in EXPECTED_FEATURES}
 r=ExpectedReturnModel().fit_predict(df,cur)
 assert r.status=="PASS" and isinstance(r.prediction,float)
-assert (r.metrics or {}).get("hgb_walk_forward",{}).get("n",0)>0
+wf=(r.metrics or {}).get("hgb_walk_forward",{})
+assert wf.get("n",0)>0
+assert wf.get("purged_target_horizons") is True
+assert wf.get("min_train_rows",0)>=24
 
 n=20
 ed=pd.date_range("2020-01-01",periods=n,freq="90D")
@@ -27,6 +30,7 @@ for c in EARNINGS_FEATURES: e[c]=rng.normal(0,.1,n)
 e["target_surprise"]=.3*e["prior_surprise_1q"]+rng.normal(0,.03,n)
 r=EarningsSurpriseModel().fit_predict(e)
 assert r.status=="PASS"
+assert (r.metrics or {}).get("walk_forward",{}).get("purged_target_horizons") is True
 
 f=pd.DataFrame({"year":range(2018,2026)})
 for c in ["revenue_growth","operating_margin","net_margin","fcf_margin","capex_to_revenue","rd_to_revenue","sbc_to_revenue"]:
