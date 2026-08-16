@@ -34,6 +34,7 @@ from company_profile_v2 import enrich_company_data
 from score_engine_v3 import advanced_scorecard, compute_score_bundle
 from score_integration_v2 import institutional_dimensions, leadership_proxy, finalize_score_transparency
 from wacc_engine import apply_dynamic_wacc
+from commodity_valuation import apply_commodity_normalization
 from costco_segment_analysis import ensure_costco_segment_analysis
 from constellation_segment_analysis import ensure_constellation_segment_analysis
 from decision_view_v2 import ensure_decision_view
@@ -165,6 +166,8 @@ def _safe_update_scenarios(wb,hist,info):
     if ticker:
         try: apply_dynamic_wacc(wb,ticker,getattr(wb,"_wacc_info",{}))
         except Exception as exc: print(f"Warning: initial dynamic WACC failed: {exc}")
+        try: apply_commodity_normalization(wb,ticker,info or {})
+        except Exception as exc: print(f"Warning: commodity valuation normalization failed: {exc}")
     return result
 update_model.update_scenarios=_safe_update_scenarios
 
@@ -267,6 +270,8 @@ def _safe_research_extensions(wb,ticker,info=None):
     wacc_info=info or getattr(wb,"_wacc_info",{})
     try: apply_dynamic_wacc(wb,ticker,wacc_info)
     except Exception as exc: print(f"Warning: final dynamic WACC refresh failed: {exc}")
+    try: apply_commodity_normalization(wb,ticker,info or {})
+    except Exception as exc: print(f"Warning: final commodity valuation refresh failed: {exc}")
     try: _verified_segment(wb,ticker)
     except Exception as exc: print(f"Warning: final verified Segment Analysis refresh failed: {exc}")
     try:
