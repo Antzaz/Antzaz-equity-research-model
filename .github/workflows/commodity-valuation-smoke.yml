@@ -1,0 +1,80 @@
+name: Commodity valuation smoke test
+
+on:
+  push:
+    branches:
+      - main
+      - 'agent/**'
+    paths:
+      - 'commodity_valuation.py'
+      - 'safe_update_model.py'
+      - 'tests/test_commodity_valuation.py'
+      - '.github/workflows/commodity-valuation-smoke.yml'
+  workflow_dispatch:
+
+jobs:
+  deterministic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Compile and run deterministic regression
+        run: |
+          python -m py_compile commodity_valuation.py safe_update_model.py tests/test_commodity_valuation.py
+          PYTHONPATH=. python tests/test_commodity_valuation.py
+
+  live-cvx:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Build live Chevron workbook
+        env:
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+        run: python safe_update_model.py CVX
+      - name: Validate normalized valuation
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from openpyxl import load_workbook
+          from advanced_analytics_v2 import _base_value
+
+          path=sorted(Path('updated_models').glob('CVX_Equity_Research_*.xlsx'))[-1]
+          wb=load_workbook(path,data_only=False,read_only=False)
+          assert 'Commodity Valuation' in wb.sheetnames
+          assert 'Decision View' in wb.sheetnames
+          sc=wb['Three-Case Scenarios']
+          base=float(_base_value(wb))
+          price=float(wb['Company Data']['B8'].value)
+          assert abs(float(sc['C7'].value)-0.02)<1e-8, sc['C7'].value
+          assert float(sc.cell(12,23).value)<=0.03, sc.cell(12,23).value
+          assert float(sc.cell(14,23).value)<0.18, sc.cell(14,23).value
+          assert 100<base<450, base
+          assert base/price-1<1.25, (base,price)
+          broken=[]
+          for ws in wb.worksheets:
+              for row in ws.iter_rows():
+                  for cell in row:
+                      if isinstance(cell.value,str) and cell.value.startswith('=') and '#REF!' in cell.value:
+                          broken.append(f'{ws.title}!{cell.coordinate}')
+          assert not broken, broken[:20]
+          print('LIVE CVX COMMODITY VALUATION PASS',path,'price',price,'base',base,'upside',base/price-1,'wacc',sc['C6'].value)
+          PY
