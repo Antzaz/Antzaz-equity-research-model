@@ -6,11 +6,11 @@ Examples:
     python research.py GOOGL --ai
     python research.py GOOGL --skip-model --ai
 
-The guarded safe_update_model.py entry point runs the existing deterministic model after
-installing cross-border data-integrity checks. Specialist agents inspect the generated
-workbook, maintain KPI history, monitor thesis evidence, check registered data sources,
-and run research QA. LLM reasoning is opt-in. The machine-learning layer is also opt-in
-because it downloads a broader training universe.
+The guarded commodity_safe_runner.py entry point runs the existing deterministic model after
+installing cross-border data-integrity checks and commodity-company valuation normalization.
+Specialist agents inspect the generated workbook, maintain KPI history, monitor thesis evidence,
+check registered data sources, and run research QA. LLM reasoning is opt-in. The machine-learning
+layer is also opt-in because it downloads a broader training universe.
 """
 
 from __future__ import annotations
@@ -58,7 +58,7 @@ def latest_workbook(ticker: str) -> Path:
 
 def run_model(ticker: str) -> None:
     print(f"[model] Building guarded deterministic research workbook for {ticker}...")
-    subprocess.run([sys.executable, str(BASE / "safe_update_model.py"), ticker], cwd=BASE, check=True)
+    subprocess.run([sys.executable, str(BASE / "commodity_safe_runner.py"), ticker], cwd=BASE, check=True)
 
 
 def run_ml(ticker: str, workbook: Path) -> None:
@@ -108,8 +108,9 @@ def render_report(ticker: str, workbook: Path, results: list, ai_model: str | No
         "- Reported facts, calculations, model estimates, and inference remain separate.",
         "- ML walk-forward testing and data-readiness gates are preferred to filling missing outputs with fabricated data.",
         "- Cross-border annual data passes completed-fiscal-year and scale-integrity checks before valuation.",
+        "- Commodity producers use a separate normalization overlay so peak commodity/acquisition years are not extrapolated as secular growth.",
         "- Market-share records preserve their market definition and source.",
-        "- Valuation changes remain analyst-reviewed and are calculated by the existing deterministic model.",
+        "- Valuation changes remain analyst-reviewed and are calculated by the deterministic model.",
         "",
     ])
     return "\n".join(lines)
@@ -167,7 +168,7 @@ def main() -> int:
         "workbook": str(workbook),
         "ai_model": ctx.ai_model,
         "ml_enabled": bool(args.ml),
-        "data_integrity_runner": "safe_update_model.py",
+        "data_integrity_runner": "commodity_safe_runner.py",
         "results": [x.to_dict() for x in results],
     }
     (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False, default=str) + "\n", encoding="utf-8")
