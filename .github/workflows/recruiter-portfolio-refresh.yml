@@ -2,6 +2,14 @@ name: Recruiter portfolio refresh
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/recruiter-portfolio-refresh.yml'
+      - 'automation/sync_portfolio_secret.ps1'
+      - 'automation/sync_portfolio_thesis.py'
+      - 'automation/build_showcase_snapshot.py'
+      - 'automation/validate_showcase.py'
 
 permissions:
   contents: read
