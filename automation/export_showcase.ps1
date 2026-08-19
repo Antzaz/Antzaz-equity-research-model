@@ -1,6 +1,8 @@
 param(
     [string]$Destination = "$HOME\Documents\Antzaz-investment-research-showcase",
-    [switch]$AllowDemo
+    [string]$ShowcaseRepository = "Antzaz/Antzaz-investment-research-showcase",
+    [switch]$AllowDemo,
+    [switch]$NoPublish
 )
 
 $ErrorActionPreference = "Stop"
@@ -63,20 +65,22 @@ else {
     Write-Warning "No local portfolio outputs found. Exporting the illustrative demo version because -AllowDemo was supplied."
 }
 
-if (Test-Path $Destination) {
-    Remove-Item $Destination -Recurse -Force
+# Preserve the local public-repository Git history across refreshes.
+if (-not (Test-Path $Destination)) {
+    New-Item -ItemType Directory -Path $Destination | Out-Null
 }
-New-Item -ItemType Directory -Path $Destination | Out-Null
 
-Copy-Item (Join-Path $Source "app.py") $Destination
-Copy-Item (Join-Path $Source "requirements.txt") $Destination
-Copy-Item (Join-Path $Source "README.md") $Destination
+Copy-Item (Join-Path $Source "app.py") $Destination -Force
+Copy-Item (Join-Path $Source "requirements.txt") $Destination -Force
+Copy-Item (Join-Path $Source "README.md") $Destination -Force
 
 $Snapshot = Join-Path $Source "data\portfolio_snapshot.json"
 if (Test-Path $Snapshot) {
     $DataDest = Join-Path $Destination "data"
-    New-Item -ItemType Directory -Path $DataDest | Out-Null
-    Copy-Item $Snapshot (Join-Path $DataDest "portfolio_snapshot.json")
+    if (-not (Test-Path $DataDest)) {
+        New-Item -ItemType Directory -Path $DataDest | Out-Null
+    }
+    Copy-Item $Snapshot (Join-Path $DataDest "portfolio_snapshot.json") -Force
 }
 
 @"
@@ -95,8 +99,7 @@ try {
         git branch -M main
     }
 
-    # Configure a repository-local Git identity only when one is not already set.
-    # This avoids changing the user's global Git configuration.
+    # Configure a repository-local identity only when one is not already set.
     $gitName = git config user.name 2>$null
     if ([string]::IsNullOrWhiteSpace($gitName)) {
         git config user.name "Antzaz"
@@ -114,6 +117,42 @@ try {
     if ($changes) {
         git commit -m "Refresh investment research showcase" | Out-Null
     }
+
+    if (-not $NoPublish) {
+        if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+            throw "GitHub CLI (gh) is required to publish the public showcase repository."
+        }
+        gh auth status | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "GitHub CLI is not authenticated. Run: gh auth login"
+        }
+
+        gh repo view $ShowcaseRepository --json nameWithOwner *> $null
+        $repoExists = ($LASTEXITCODE -eq 0)
+
+        if (-not $repoExists) {
+            Write-Host "Creating public recruiter showcase repository: $ShowcaseRepository"
+            gh repo create $ShowcaseRepository --public --source . --remote origin --push
+            if ($LASTEXITCODE -ne 0) {
+                throw "Failed to create/push the public recruiter showcase repository."
+            }
+        }
+        else {
+            $origin = git remote get-url origin 2>$null
+            $targetOrigin = "https://github.com/$ShowcaseRepository.git"
+            if ([string]::IsNullOrWhiteSpace($origin)) {
+                git remote add origin $targetOrigin
+            }
+            elseif ($origin -ne $targetOrigin) {
+                git remote set-url origin $targetOrigin
+            }
+            Write-Host "Publishing refreshed recruiter showcase to: $ShowcaseRepository"
+            git push -u origin main
+            if ($LASTEXITCODE -ne 0) {
+                throw "Failed to push the refreshed recruiter showcase repository."
+            }
+        }
+    }
 }
 finally {
     Pop-Location
@@ -127,8 +166,9 @@ else {
     Write-Host "Recruiter portfolio status: DEMO ONLY (no real sanitized snapshot included)."
 }
 Write-Host "Portfolio data policy: real aggregate analytics; holdings anonymized; no tickers/cost basis/portfolio value exported."
+if (-not $NoPublish) {
+    Write-Host "Public GitHub showcase: https://github.com/$ShowcaseRepository"
+    Write-Host "Next step: deploy app.py from this public repository in Streamlit Community Cloud."
+}
 Write-Host "Run locally:"
 Write-Host "  cd `"$Destination`"; python -m pip install -r .\requirements.txt; python -m streamlit run .\app.py"
-Write-Host ""
-Write-Host "Initial public GitHub publish (requires GitHub CLI):"
-Write-Host "  cd `"$Destination`"; gh repo create Antzaz-investment-research-showcase --public --source . --remote origin --push"
