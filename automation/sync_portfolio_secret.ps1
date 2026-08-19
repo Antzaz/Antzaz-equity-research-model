@@ -1,7 +1,8 @@
 param(
     [string]$PortfolioPath = "",
     [string]$Repository = "Antzaz/Antzaz-equity-research-model",
-    [switch]$RunRefresh
+    [switch]$RunRefresh,
+    [switch]$NoRefresh
 )
 
 $ErrorActionPreference = "Stop"
@@ -62,20 +63,28 @@ if ($LASTEXITCODE -ne 0) {
     throw "Failed to update PORTFOLIO_CSV_B64 in $Repository."
 }
 
-Write-Host "Cloud portfolio secret updated successfully."
+Write-Host "Local portfolio synced to the cloud source successfully."
 Write-Host "Repository: $Repository"
 Write-Host "Portfolio file: $PortfolioPath"
 Write-Host "Holdings synced: $($tickers.Count)"
 Write-Host "Tickers are not printed to avoid unnecessary disclosure in shared terminal output."
 
+# Refresh is now the default behavior. -RunRefresh remains accepted for backwards
+# compatibility; use -NoRefresh only when you intentionally want to update the cloud
+# portfolio composition without immediately rebuilding the online analytics.
+$shouldRefresh = -not $NoRefresh
 if ($RunRefresh) {
+    $shouldRefresh = $true
+}
+
+if ($shouldRefresh) {
     Write-Host "Triggering Daily private portfolio refresh..."
     gh workflow run "Daily private portfolio refresh" --repo $Repository
     if ($LASTEXITCODE -ne 0) {
-        throw "Portfolio secret was updated, but workflow dispatch failed. Trigger the workflow manually in GitHub Actions."
+        throw "Portfolio source was updated, but workflow dispatch failed. Trigger the workflow manually in GitHub Actions."
     }
-    Write-Host "Refresh workflow dispatched."
+    Write-Host "Refresh workflow dispatched. GitHub will rebuild and publish the sanitized online portfolio snapshot."
 }
 else {
-    Write-Host "Next: run the 'Daily private portfolio refresh' workflow, or rerun this command with -RunRefresh."
+    Write-Host "Cloud portfolio source updated without triggering an immediate analytics refresh."
 }
