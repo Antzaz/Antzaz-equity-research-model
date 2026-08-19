@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-"""Build a resume-safe public snapshot from the latest private portfolio outputs.
+"""Build the recruiter-safe public portfolio snapshot from the latest private outputs.
 
-The snapshot preserves real aggregate portfolio analytics while removing identifiers and
-sensitive position economics. It never exports tickers, company names, shares, average cost,
-market value, unrealized P&L, transaction history, or private source files.
+The public snapshot intentionally exposes company names, portfolio weights and recruiter-safe
+investment-thesis content while continuing to exclude tickers, share counts, average cost,
+market value, unrealized P&L, transactions, private notes, credentials and private workbooks.
 """
 
 import csv
@@ -14,6 +14,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "institutional_research" / "outputs" / "latest"
+THESIS_PATH = ROOT / "institutional_research" / "portfolio_thesis_public.json"
 DEST = ROOT / "showcase" / "data" / "portfolio_snapshot.json"
 
 
@@ -60,20 +61,98 @@ def _safe_metric_map(portfolio: dict) -> dict:
     return {k: portfolio.get(k) for k in allowed if k in portfolio}
 
 
-def _anonymous_holdings() -> list[dict]:
+def _holding_rows() -> list[dict]:
     rows = _read_csv("holdings_analysis")
-    clean = []
+    clean: list[dict] = []
     for row in rows:
+        ticker = str(row.get("Ticker") or "").strip().upper()
+        company = str(row.get("Company") or "").strip()
+        sector = str(row.get("Sector") or "").strip() or None
         weight = _float(row.get("Weight"))
         risk = _float(row.get("RiskContributionPct"))
         if weight is None:
             continue
-        clean.append({"weight": weight, "risk_contribution": risk})
+        clean.append(
+            {
+                "ticker": ticker or None,
+                "company": company or ticker or "Portfolio holding",
+                "sector": sector,
+                "weight": weight,
+                "risk_contribution": risk,
+            }
+        )
     clean.sort(key=lambda x: x["weight"], reverse=True)
-    out = []
-    for idx, row in enumerate(clean):
-        label = f"Holding {chr(65 + idx)}" if idx < 26 else f"Holding {idx + 1}"
-        out.append({"holding": label, **row})
+    return clean
+
+
+def _public_holdings(holding_rows: list[dict]) -> list[dict]:
+    return [
+        {
+            "company": row["company"],
+            "sector": row.get("sector"),
+            "weight": row["weight"],
+            "risk_contribution": row.get("risk_contribution"),
+        }
+        for row in holding_rows
+    ]
+
+
+def _load_thesis_payload() -> dict:
+    if not THESIS_PATH.exists() or THESIS_PATH.stat().st_size == 0:
+        return {"portfolio_philosophy": {}, "company_theses": []}
+    try:
+        data = json.loads(THESIS_PATH.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {"portfolio_philosophy": {}, "company_theses": []}
+
+
+def _portfolio_philosophy(payload: dict) -> dict:
+    philosophy = payload.get("portfolio_philosophy") or {}
+    if not isinstance(philosophy, dict):
+        return {}
+    return {str(k): v for k, v in philosophy.items() if v not in (None, "")}
+
+
+def _public_theses(payload: dict, holding_rows: list[dict]) -> list[dict]:
+    holding_lookup = {
+        str(row.get("ticker") or "").upper(): row
+        for row in holding_rows
+        if row.get("ticker")
+    }
+    out: list[dict] = []
+    for thesis in payload.get("company_theses") or []:
+        if not isinstance(thesis, dict):
+            continue
+        ticker = str(thesis.get("ticker") or "").strip().upper()
+        holding = holding_lookup.get(ticker)
+        if not holding:
+            continue
+
+        public = {
+            "company": holding["company"],
+            "sector": holding.get("sector"),
+            "weight": holding.get("weight"),
+            "status": thesis.get("status"),
+            "time_horizon": thesis.get("time_horizon"),
+            "conviction": _float(thesis.get("conviction")),
+            "composite_score": _float(thesis.get("composite_score")),
+            "expected_annual_return": _float(thesis.get("expected_annual_return")),
+            "investment_thesis": thesis.get("investment_thesis"),
+            "why_owned": thesis.get("why_owned"),
+            "competitive_advantage": thesis.get("competitive_advantage"),
+            "growth_drivers": thesis.get("growth_drivers"),
+            "valuation_rationale": thesis.get("valuation_rationale"),
+            "catalysts": thesis.get("catalysts"),
+            "key_risks": thesis.get("key_risks"),
+            "sell_condition": thesis.get("sell_condition"),
+            "monitoring_kpi": thesis.get("monitoring_kpi"),
+            "review_date": thesis.get("review_date"),
+            "public_notes": thesis.get("public_notes"),
+            "scores": thesis.get("scores") if isinstance(thesis.get("scores"), dict) else {},
+        }
+        out.append({k: v for k, v in public.items() if v not in (None, "", {})})
+    out.sort(key=lambda x: x.get("weight", 0), reverse=True)
     return out
 
 
@@ -98,7 +177,8 @@ def _alpha() -> list[dict]:
                 "t_stat": _float(row.get("AlphaTStat")),
                 "p_value": _float(row.get("AlphaPValue")),
                 "r2": _float(row.get("R2")),
-                "significant_5pct": str(row.get("Significant5Pct") or "").lower() in {"true", "1", "yes"},
+                "significant_5pct": str(row.get("Significant5Pct") or "").lower()
+                in {"true", "1", "yes"},
                 "interpretation": row.get("Interpretation") or None,
             }
         )
@@ -146,7 +226,6 @@ def _timeseries() -> list[dict]:
         b = _float(row.get("BenchmarkGrowth"))
         if date and p is not None:
             out.append({"date": date, "portfolio_growth": p, "benchmark_growth": b})
-    # Weekly/downsampled public snapshot keeps the repo small while preserving the real path.
     if len(out) > 800:
         step = max(1, len(out) // 500)
         sampled = out[::step]
@@ -162,17 +241,29 @@ def main():
         raise SystemExit(
             "No portfolio outputs found. Run institutional_research/run_research.py first."
         )
+
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     portfolio = summary.get("portfolio", {})
+    holding_rows = _holding_rows()
+    thesis_payload = _load_thesis_payload()
+
     snapshot = {
         "snapshot_type": "sanitized_real_portfolio_analytics",
         "generated_utc": datetime.now(timezone.utc).isoformat(),
         "privacy_note": (
-            "Aggregate analytics are derived from the real portfolio. Holdings are anonymized; "
-            "tickers, company names, shares, cost basis, market value and transaction data are excluded."
+            "Company names, portfolio weights and recruiter-safe investment theses are public. "
+            "Tickers, shares, cost basis, market value, unrealized P&L, transactions, private "
+            "notes, credentials and private workbooks are excluded."
+        ),
+        "data_note": (
+            "Company names, weights and analytics are generated from the latest production "
+            "portfolio run. Investment-thesis text is user-authored and synced from the private "
+            "portfolio thesis workbook."
         ),
         "metrics": _safe_metric_map(portfolio),
-        "holdings": _anonymous_holdings(),
+        "holdings": _public_holdings(holding_rows),
+        "portfolio_philosophy": _portfolio_philosophy(thesis_payload),
+        "theses": _public_theses(thesis_payload, holding_rows),
         "alpha": _alpha(),
         "factors": _factor_exposures(),
         "stress": _stress(),
@@ -180,8 +271,9 @@ def main():
     }
     DEST.parent.mkdir(parents=True, exist_ok=True)
     DEST.write_text(json.dumps(snapshot, indent=2, ensure_ascii=False), encoding="utf-8")
-    print(f"Sanitized real portfolio snapshot written to: {DEST}")
-    print(f"Anonymous holdings exported: {len(snapshot['holdings'])}")
+    print(f"Recruiter-safe real portfolio snapshot written to: {DEST}")
+    print(f"Named holdings exported: {len(snapshot['holdings'])}")
+    print(f"Company theses exported: {len(snapshot['theses'])}")
     print(f"Alpha models exported: {len(snapshot['alpha'])}")
 
 
