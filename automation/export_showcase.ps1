@@ -1,27 +1,37 @@
 param(
-    [string]$Destination = "$HOME\Documents\Antzaz-investment-research-showcase"
+    [string]$Destination = "$HOME\Documents\Antzaz-investment-research-showcase",
+    [switch]$AllowDemo
 )
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 $Source = Join-Path $Root "showcase"
 $SnapshotBuilder = Join-Path $Root "automation\build_showcase_snapshot.py"
+$SnapshotValidator = Join-Path $Root "automation\validate_showcase.py"
 $PortfolioSummary = Join-Path $Root "institutional_research\outputs\latest\summary.json"
 
 if (-not (Test-Path $Source)) {
     throw "Showcase source folder not found: $Source"
 }
 
-# If real portfolio outputs exist, refresh the sanitized public snapshot before export.
+# Recruiter-safe default: require a real sanitized portfolio snapshot before export.
 if (Test-Path $PortfolioSummary) {
     Write-Host "Building sanitized snapshot from real portfolio analytics..."
     python $SnapshotBuilder
     if ($LASTEXITCODE -ne 0) {
         throw "Sanitized portfolio snapshot build failed."
     }
+
+    python $SnapshotValidator
+    if ($LASTEXITCODE -ne 0) {
+        throw "Recruiter showcase validation failed."
+    }
+}
+elseif (-not $AllowDemo) {
+    throw "No local portfolio outputs found. Run institutional_research\run_research.py first. Use -AllowDemo only for a non-recruiter demo export."
 }
 else {
-    Write-Warning "No local portfolio outputs found. Showcase will use its fallback demo portfolio until run_research.py is executed."
+    Write-Warning "No local portfolio outputs found. Exporting the illustrative demo version because -AllowDemo was supplied."
 }
 
 if (Test-Path $Destination) {
@@ -69,9 +79,15 @@ finally {
 }
 
 Write-Host "Public showcase prepared at: $Destination"
+if (Test-Path $Snapshot) {
+    Write-Host "Recruiter portfolio status: VALIDATED sanitized real analytics included."
+}
+else {
+    Write-Host "Recruiter portfolio status: DEMO ONLY (no real sanitized snapshot included)."
+}
 Write-Host "Portfolio data policy: real aggregate analytics; holdings anonymized; no tickers/cost basis/portfolio value exported."
 Write-Host "Run locally:"
 Write-Host "  cd `"$Destination`"; python -m pip install -r .\requirements.txt; python -m streamlit run .\app.py"
 Write-Host ""
-Write-Host "If GitHub CLI is installed and authenticated, publish with:"
+Write-Host "Initial public GitHub publish (requires GitHub CLI):"
 Write-Host "  cd `"$Destination`"; gh repo create Antzaz-investment-research-showcase --public --source . --remote origin --push"
