@@ -61,6 +61,10 @@ def _number(value):
     try:
         if value in (None, ""):
             return None
+        if isinstance(value, str):
+            text = value.strip()
+            if text.endswith("%"):
+                return float(text[:-1].strip()) / 100.0
         return float(value)
     except Exception:
         return None
@@ -189,8 +193,13 @@ def main() -> None:
         text=True,
         check=True,
     )
+    theses = payload["company_theses"]
+    expected_count = sum(1 for item in theses if item.get("expected_annual_return") is not None)
     print("Recruiter-safe investment thesis inputs synced successfully.")
-    print(f"Published company theses: {len(payload['company_theses'])}")
+    print(f"Published company theses: {len(theses)}")
+    print(f"Expected annual returns populated: {expected_count} / {len(theses)}")
+    if expected_count == 0 and theses:
+        print("WARNING: No Expected Annual Return values were read from the workbook. Enter percentages such as 12% in the 'Expected Annual Return %' column and save the workbook before syncing.")
     print(f"Portfolio philosophy fields: {len(payload['portfolio_philosophy'])}")
     print("Private Notes were not included in the GitHub secret.")
 
