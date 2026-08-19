@@ -10,14 +10,21 @@ on:
       - 'automation/sync_portfolio_thesis.py'
       - 'automation/build_showcase_snapshot.py'
       - 'automation/validate_showcase.py'
+      - 'institutional_research/run_research.py'
+      - 'institutional_research/config.json'
+      - 'institutional_research/src/**'
 
 permissions:
   contents: read
 
+concurrency:
+  group: recruiter-portfolio-refresh
+  cancel-in-progress: true
+
 jobs:
   refresh-showcase:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4
