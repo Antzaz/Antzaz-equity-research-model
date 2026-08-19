@@ -46,6 +46,20 @@ jobs:
           print('Private portfolio restored for this runner only.')
           PY
 
+      - name: Restore recruiter-safe investment thesis inputs
+        env:
+          PORTFOLIO_THESIS_JSON: ${{ secrets.PORTFOLIO_THESIS_JSON }}
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          raw = os.environ.get('PORTFOLIO_THESIS_JSON', '').strip()
+          data = json.loads(raw) if raw else {"version": 1, "portfolio_philosophy": {}, "company_theses": []}
+          path = Path('institutional_research/portfolio_thesis_public.json')
+          path.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8')
+          print(f"Recruiter thesis inputs restored: {len(data.get('company_theses', []))} company thesis row(s).")
+          PY
+
       - name: Build and mask private research universe
         run: |
           python automation/portfolio_universe.py institutional_research/portfolio.csv > "$RUNNER_TEMP/portfolio_tickers.txt"
