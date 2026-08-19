@@ -67,10 +67,11 @@ jobs:
             exit 1
           fi
 
-      - name: Build sanitized public portfolio snapshot
+      - name: Build and validate sanitized public portfolio snapshot
         run: |
           python automation/build_showcase_snapshot.py
-          echo "Sanitized public snapshot built from real aggregate portfolio analytics."
+          python automation/validate_showcase.py
+          echo "Sanitized public snapshot built and validated from real aggregate portfolio analytics."
 
       - name: Refresh equity models for portfolio companies only
         id: equity_refresh
