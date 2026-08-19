@@ -2,15 +2,17 @@ from __future__ import annotations
 
 """Resume-safe Streamlit showcase.
 
-Equity-research examples are illustrative. Portfolio analytics load a sanitized snapshot
-built from the real production portfolio when showcase/data/portfolio_snapshot.json exists.
-The snapshot excludes tickers, company names, shares, cost basis, market value, transactions,
-private workbooks and credentials.
+Equity-research examples are illustrative. Portfolio analytics load the newest sanitized
+snapshot from the public showcase GitHub repository whenever a user opens the app. A bundled
+snapshot is retained as a fallback. The snapshot excludes tickers, company names, shares,
+cost basis, market value, transactions, private workbooks and credentials.
 """
 
 import json
+import time
 from datetime import date
 from pathlib import Path
+from urllib.request import Request, urlopen
 
 import pandas as pd
 import plotly.express as px
@@ -18,6 +20,10 @@ import streamlit as st
 
 BASE = Path(__file__).resolve().parent
 SNAPSHOT_PATH = BASE / "data" / "portfolio_snapshot.json"
+LIVE_SNAPSHOT_URL = (
+    "https://raw.githubusercontent.com/Antzaz/"
+    "Antzaz-investment-research-showcase/main/data/portfolio_snapshot.json"
+)
 
 st.set_page_config(page_title="Investment Research & Portfolio Analytics", layout="wide")
 st.title("Investment Research & Portfolio Analytics")
@@ -41,16 +47,45 @@ def num(x, d=2):
     return "—" if x is None or pd.isna(x) else f"{x:.{d}f}"
 
 
+def _valid_snapshot(data):
+    return isinstance(data, dict) and data.get("snapshot_type") == "sanitized_real_portfolio_analytics"
+
+
 def load_snapshot():
-    if not SNAPSHOT_PATH.exists():
-        return None
+    """Fetch the newest public GitHub snapshot for each Streamlit script session.
+
+    A cache-busting query parameter is used so a new browser session/reload asks GitHub for
+    the current file. If GitHub is temporarily unavailable, the bundled validated snapshot
+    is used as a fallback.
+    """
     try:
-        return json.loads(SNAPSHOT_PATH.read_text(encoding="utf-8"))
+        request = Request(
+            f"{LIVE_SNAPSHOT_URL}?v={int(time.time())}",
+            headers={
+                "User-Agent": "Antzaz-investment-research-showcase",
+                "Cache-Control": "no-cache",
+                "Pragma": "no-cache",
+            },
+        )
+        with urlopen(request, timeout=5) as response:
+            remote = json.loads(response.read().decode("utf-8"))
+        if _valid_snapshot(remote):
+            return remote, "Live GitHub snapshot"
     except Exception:
-        return None
+        pass
+
+    if SNAPSHOT_PATH.exists():
+        try:
+            local = json.loads(SNAPSHOT_PATH.read_text(encoding="utf-8"))
+            if _valid_snapshot(local):
+                return local, "Bundled fallback snapshot"
+        except Exception:
+            pass
+
+    return None, "Unavailable"
 
 
-snapshot = load_snapshot()
+snapshot, snapshot_source = load_snapshot()
 
 
 if view == "Equity Research":
@@ -120,60 +155,31 @@ if view == "Equity Research":
 elif view == "Portfolio Analytics":
     st.subheader("Portfolio Analytics Dashboard")
 
-    if snapshot:
-        st.caption(
-            "Real aggregate analytics from the production portfolio. Holdings are anonymized and sensitive position economics are excluded."
+    if not snapshot:
+        st.error(
+            "The validated real portfolio snapshot is temporarily unavailable. "
+            "No demonstration portfolio is shown in its place."
         )
-        generated = snapshot.get("generated_utc")
-        if generated:
-            st.caption(f"Sanitized snapshot generated: {generated}")
-        metrics = snapshot.get("metrics", {})
-        holdings = pd.DataFrame(snapshot.get("holdings", []))
-        alpha = pd.DataFrame(snapshot.get("alpha", []))
-        factors = pd.DataFrame(snapshot.get("factors", []))
-        stress = pd.DataFrame(snapshot.get("stress", []))
-        timeseries = pd.DataFrame(snapshot.get("timeseries", []))
-    else:
-        st.warning(
-            "No sanitized real snapshot is bundled yet. Run the portfolio analysis and then automation/build_showcase_snapshot.py. "
-            "The fallback values below are illustrative."
+        st.info(
+            "The public dashboard only displays validated, sanitized production analytics. "
+            "Reload after the next GitHub portfolio refresh."
         )
-        metrics = {
-            "annualized_return": 0.161,
-            "annualized_volatility": 0.214,
-            "sharpe": 0.66,
-            "tracking_error": 0.132,
-            "information_ratio": 0.43,
-            "max_drawdown": -0.286,
-        }
-        holdings = pd.DataFrame(
-            {
-                "holding": [f"Holding {c}" for c in "ABCDEFGH"],
-                "weight": [0.19, 0.16, 0.15, 0.13, 0.12, 0.10, 0.08, 0.07],
-                "risk_contribution": [0.22, 0.17, 0.16, 0.12, 0.12, 0.09, 0.07, 0.05],
-            }
-        )
-        alpha = pd.DataFrame(
-            {
-                "model": ["CAPM / Jensen", "Fama-French 3", "Carhart 4", "Fama-French 5", "Style Proxy"],
-                "annualized_alpha": [0.041, 0.033, 0.026, 0.030, 0.023],
-                "t_stat": [1.82, 1.55, 1.27, 1.44, 1.10],
-                "r2": [0.74, 0.80, 0.84, 0.83, 0.87],
-            }
-        )
-        factors = pd.DataFrame(
-            {
-                "factor": ["Market", "Size", "Value", "Momentum", "Quality", "Low Volatility"],
-                "exposure": [1.08, -0.12, -0.28, 0.34, 0.29, -0.08],
-            }
-        )
-        stress = pd.DataFrame(
-            {
-                "scenario": ["Broad market -20%", "Rates +150 bps", "Growth selloff", "Credit shock"],
-                "estimated_return": [-0.176, -0.082, -0.142, -0.094],
-            }
-        )
-        timeseries = pd.DataFrame()
+        st.stop()
+
+    st.caption(
+        "Real aggregate analytics from the production portfolio. Holdings are anonymized and sensitive position economics are excluded."
+    )
+    st.caption(f"Data source: {snapshot_source}. The app checks GitHub whenever a new session opens.")
+    generated = snapshot.get("generated_utc")
+    if generated:
+        st.caption(f"Sanitized analytics generated: {generated}")
+
+    metrics = snapshot.get("metrics", {})
+    holdings = pd.DataFrame(snapshot.get("holdings", []))
+    alpha = pd.DataFrame(snapshot.get("alpha", []))
+    factors = pd.DataFrame(snapshot.get("factors", []))
+    stress = pd.DataFrame(snapshot.get("stress", []))
+    timeseries = pd.DataFrame(snapshot.get("timeseries", []))
 
     cols = st.columns(6)
     cols[0].metric("Ann. return", pct(metrics.get("annualized_return")))
@@ -240,7 +246,7 @@ elif view == "Portfolio Analytics":
 
     st.markdown("#### Privacy boundary")
     st.write(
-        "The displayed portfolio analytics can be real, but the public snapshot contains no ticker symbols, company names, "
+        "The displayed portfolio analytics are real, but the public snapshot contains no ticker symbols, company names, "
         "share counts, average costs, portfolio value, unrealized P&L, transaction history, private Excel models or credentials."
     )
 
@@ -259,7 +265,7 @@ else:
                 "Historical financials, segment analysis, peers, DCF, scenarios, news, quality controls",
                 "Risk, alpha, factors, attribution, liquidity, stress, Monte Carlo, optimization",
                 "Scheduled GitHub Actions refresh and encrypted private research bundle",
-                "Private research portal + sanitized public Streamlit showcase",
+                "Public Streamlit app fetches the newest sanitized GitHub snapshot when opened",
             ],
         }
     )
@@ -267,7 +273,7 @@ else:
 
     st.markdown("#### Public showcase data policy")
     st.write(
-        "The public portfolio dashboard may use genuine aggregate model outputs, while all position identifiers and sensitive "
+        "The public portfolio dashboard uses genuine aggregate model outputs while all position identifiers and sensitive "
         "economics are removed before publication. Equity-research demonstration data remains illustrative unless explicitly published as a public case study."
     )
 
