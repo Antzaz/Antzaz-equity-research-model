@@ -98,22 +98,21 @@ else {
     Write-Host "No portfolio_thesis.xlsx found; portfolio analytics will refresh without recruiter thesis content."
 }
 
-# Refresh is the default behavior. -RunRefresh remains accepted for backwards
-# compatibility; use -NoRefresh only when you intentionally want to update the cloud
-# portfolio composition/thesis without immediately rebuilding the online analytics.
+# Refresh is the default behavior. Use the lightweight recruiter workflow so portfolio/thesis
+# changes reach the public URL without waiting for all company models and the private bundle.
 $shouldRefresh = -not $NoRefresh
 if ($RunRefresh) {
     $shouldRefresh = $true
 }
 
 if ($shouldRefresh) {
-    Write-Host "Triggering Daily private portfolio refresh..."
-    gh workflow run "Daily private portfolio refresh" --repo $Repository
+    Write-Host "Triggering fast recruiter portfolio refresh..."
+    gh workflow run "Recruiter portfolio refresh" --repo $Repository
     if ($LASTEXITCODE -ne 0) {
-        throw "Portfolio source was updated, but workflow dispatch failed. Trigger the workflow manually in GitHub Actions."
+        throw "Portfolio source was updated, but recruiter refresh dispatch failed. Trigger 'Recruiter portfolio refresh' manually in GitHub Actions."
     }
-    Write-Host "Refresh workflow dispatched. GitHub will rebuild and publish the sanitized online portfolio snapshot."
+    Write-Host "Recruiter refresh dispatched. The public portfolio snapshot will rebuild independently of the heavier daily company-model refresh."
 }
 else {
-    Write-Host "Cloud portfolio/thesis source updated without triggering an immediate analytics refresh."
+    Write-Host "Cloud portfolio/thesis source updated without triggering an immediate recruiter refresh."
 }
