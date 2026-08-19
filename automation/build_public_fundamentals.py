@@ -9,6 +9,7 @@ credentials, private notes, or private workbooks.
 
 import csv
 import json
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 import sys
@@ -42,6 +43,33 @@ def _num(value):
         return None
 
 
+def _fetch_info(ticker: str, attempts: int = 3) -> dict:
+    last_error = None
+    for attempt in range(attempts):
+        try:
+            info = yf.Ticker(ticker).info or {}
+            if info:
+                return info
+        except Exception as exc:
+            last_error = exc
+        if attempt < attempts - 1:
+            time.sleep(1.5 * (attempt + 1))
+    if last_error:
+        print(f"WARNING: public fundamentals unavailable for one holding after retries: {type(last_error).__name__}")
+    return {}
+
+
+def _forward_pe(info: dict):
+    direct = _num(info.get("forwardPE"))
+    if direct is not None:
+        return direct
+    price = _num(info.get("currentPrice") or info.get("regularMarketPrice"))
+    forward_eps = _num(info.get("forwardEps"))
+    if price is not None and forward_eps is not None and forward_eps > 0:
+        return price / forward_eps
+    return None
+
+
 def main() -> None:
     tickers = _tickers()
     cfg = json.loads(CONFIG.read_text(encoding="utf-8"))
@@ -49,10 +77,8 @@ def main() -> None:
 
     companies: list[dict] = []
     for ticker in tickers:
-        try:
-            info = yf.Ticker(ticker).info or {}
-        except Exception as exc:
-            print(f"WARNING: public fundamentals unavailable for one holding: {type(exc).__name__}")
+        info = _fetch_info(ticker)
+        if not info:
             continue
 
         company = str(info.get("longName") or info.get("shortName") or "").strip()
@@ -80,8 +106,6 @@ def main() -> None:
             implied = _num(implied_raw)
 
         aliases = []
-        # These two aliases only bridge legacy display names already present in the old
-        # public snapshot; no new private position information is exposed.
         if company == "JPMorgan Chase & Co.":
             aliases.append("JPM")
         if company.lower().startswith("sanofi"):
@@ -90,7 +114,7 @@ def main() -> None:
         row = {
             "company": company,
             "aliases": aliases,
-            "forward_pe": _num(info.get("forwardPE")),
+            "forward_pe": _forward_pe(info),
             "revenue_growth": _num(info.get("revenueGrowth")),
             "operating_margin": _num(info.get("operatingMargins")),
             "roe": _num(info.get("returnOnEquity")),
@@ -104,10 +128,16 @@ def main() -> None:
         }
         companies.append(row)
 
+    if len(companies) < max(1, len(tickers) // 2):
+        raise SystemExit(
+            f"Only {len(companies)} of {len(tickers)} holdings returned public fundamentals; refusing to publish a mostly empty refresh."
+        )
+
     payload = {
         "generated_utc": datetime.now(timezone.utc).isoformat(),
         "source_note": (
             "Public market characteristics refreshed independently from the full portfolio run. "
+            "Forward P/E uses the public forward P/E field or price/forward-EPS fallback. "
             "Reverse DCF uses the configured simplified FCF model and is not meaningful for every business model."
         ),
         "companies": companies,
