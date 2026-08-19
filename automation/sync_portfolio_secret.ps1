@@ -26,15 +26,37 @@ if ($LASTEXITCODE -ne 0) {
     throw "GitHub CLI is not authenticated. Run: gh auth login"
 }
 
-# Basic CSV validation before replacing the cloud secret.
-$rows = Import-Csv $PortfolioPath
+# Parse the CSV the same way as institutional_research/src/portfolio.py:
+# ignore blank lines and template/instruction lines beginning with '#'.
+# Plain Import-Csv would otherwise treat the first comment line as the header,
+# making a valid Ticker column on the real header row appear to be missing.
+$csvLines = @(
+    Get-Content -LiteralPath $PortfolioPath -Encoding UTF8 |
+        Where-Object {
+            $line = [string]$_
+            -not [string]::IsNullOrWhiteSpace($line) -and
+            -not $line.TrimStart().StartsWith("#")
+        }
+)
+
+if ($csvLines.Count -lt 2) {
+    throw "Portfolio CSV does not contain a header plus at least one holding after comment lines are ignored."
+}
+
+try {
+    $rows = @($csvLines | ConvertFrom-Csv)
+}
+catch {
+    throw "Portfolio CSV could not be parsed after comment lines were ignored: $($_.Exception.Message)"
+}
+
 if (-not $rows -or $rows.Count -lt 1) {
     throw "Portfolio CSV contains no holdings."
 }
 
-$columns = @($rows[0].PSObject.Properties.Name)
+$columns = @($rows[0].PSObject.Properties.Name | ForEach-Object { ([string]$_).Trim() })
 if ($columns -notcontains "Ticker") {
-    throw "Portfolio CSV must contain a Ticker column."
+    throw "Portfolio CSV must contain a Ticker column. Detected columns: $($columns -join ', ')"
 }
 
 $tickers = @(
@@ -53,11 +75,13 @@ if ($duplicates.Count -gt 0) {
     throw "Duplicate portfolio tickers detected: $($duplicates -join ', ')"
 }
 
-# Encode without printing the base64 value to the terminal.
+# Encode the ORIGINAL file, including its helpful comment lines. The Python portfolio
+# loader intentionally supports those comments via pd.read_csv(..., comment='#').
+# The base64 value is never printed to the terminal.
 $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $PortfolioPath))
 $b64 = [Convert]::ToBase64String($bytes)
 
-# gh secret set reads the value from stdin. We intentionally never Write-Host the value.
+# gh secret set reads the value from stdin.
 $b64 | gh secret set PORTFOLIO_CSV_B64 --repo $Repository
 if ($LASTEXITCODE -ne 0) {
     throw "Failed to update PORTFOLIO_CSV_B64 in $Repository."
@@ -67,9 +91,10 @@ Write-Host "Local portfolio synced to the cloud source successfully."
 Write-Host "Repository: $Repository"
 Write-Host "Portfolio file: $PortfolioPath"
 Write-Host "Holdings synced: $($tickers.Count)"
+Write-Host "Comment/template lines were ignored during validation."
 Write-Host "Tickers are not printed to avoid unnecessary disclosure in shared terminal output."
 
-# Refresh is now the default behavior. -RunRefresh remains accepted for backwards
+# Refresh is the default behavior. -RunRefresh remains accepted for backwards
 # compatibility; use -NoRefresh only when you intentionally want to update the cloud
 # portfolio composition without immediately rebuilding the online analytics.
 $shouldRefresh = -not $NoRefresh
