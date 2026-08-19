@@ -1,5 +1,6 @@
 param(
     [string]$PortfolioPath = "",
+    [string]$ThesisPath = "",
     [string]$Repository = "Antzaz/Antzaz-equity-research-model",
     [switch]$RunRefresh,
     [switch]$NoRefresh
@@ -10,6 +11,9 @@ $Root = Split-Path -Parent $PSScriptRoot
 
 if ([string]::IsNullOrWhiteSpace($PortfolioPath)) {
     $PortfolioPath = Join-Path $Root "institutional_research\portfolio.csv"
+}
+if ([string]::IsNullOrWhiteSpace($ThesisPath)) {
+    $ThesisPath = Join-Path $Root "institutional_research\portfolio_thesis.xlsx"
 }
 
 if (-not (Test-Path $PortfolioPath)) {
@@ -26,35 +30,25 @@ if ($LASTEXITCODE -ne 0) {
     throw "GitHub CLI is not authenticated. Run: gh auth login"
 }
 
-# Parse the CSV the same way as institutional_research/src/portfolio.py:
-# ignore blank lines and template/instruction lines beginning with '#'.
-# Plain Import-Csv would otherwise treat the first comment line as the header,
-# making a valid Ticker column on the real header row appear to be missing.
+# Match the production Python loader: ignore blank lines and template/instruction lines beginning with #.
 $csvLines = @(
-    Get-Content -LiteralPath $PortfolioPath -Encoding UTF8 |
+    Get-Content -Path $PortfolioPath |
         Where-Object {
-            $line = [string]$_
-            -not [string]::IsNullOrWhiteSpace($line) -and
-            -not $line.TrimStart().StartsWith("#")
+            $trimmed = $_.TrimStart()
+            -not [string]::IsNullOrWhiteSpace($_) -and -not $trimmed.StartsWith("#")
         }
 )
 
-if ($csvLines.Count -lt 2) {
-    throw "Portfolio CSV does not contain a header plus at least one holding after comment lines are ignored."
+if (-not $csvLines -or $csvLines.Count -lt 2) {
+    throw "Portfolio CSV contains no holdings after comment/template lines are ignored."
 }
 
-try {
-    $rows = @($csvLines | ConvertFrom-Csv)
-}
-catch {
-    throw "Portfolio CSV could not be parsed after comment lines were ignored: $($_.Exception.Message)"
-}
-
+$rows = @($csvLines | ConvertFrom-Csv)
 if (-not $rows -or $rows.Count -lt 1) {
     throw "Portfolio CSV contains no holdings."
 }
 
-$columns = @($rows[0].PSObject.Properties.Name | ForEach-Object { ([string]$_).Trim() })
+$columns = @($rows[0].PSObject.Properties.Name)
 if ($columns -notcontains "Ticker") {
     throw "Portfolio CSV must contain a Ticker column. Detected columns: $($columns -join ', ')"
 }
@@ -75,13 +69,11 @@ if ($duplicates.Count -gt 0) {
     throw "Duplicate portfolio tickers detected: $($duplicates -join ', ')"
 }
 
-# Encode the ORIGINAL file, including its helpful comment lines. The Python portfolio
-# loader intentionally supports those comments via pd.read_csv(..., comment='#').
-# The base64 value is never printed to the terminal.
+# Encode without printing the base64 value to the terminal.
 $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $PortfolioPath))
 $b64 = [Convert]::ToBase64String($bytes)
 
-# gh secret set reads the value from stdin.
+# gh secret set reads the value from stdin. We intentionally never Write-Host the value.
 $b64 | gh secret set PORTFOLIO_CSV_B64 --repo $Repository
 if ($LASTEXITCODE -ne 0) {
     throw "Failed to update PORTFOLIO_CSV_B64 in $Repository."
@@ -94,9 +86,21 @@ Write-Host "Holdings synced: $($tickers.Count)"
 Write-Host "Comment/template lines were ignored during validation."
 Write-Host "Tickers are not printed to avoid unnecessary disclosure in shared terminal output."
 
+# If the thesis workbook exists, sync only its explicitly recruiter-safe fields.
+if (Test-Path $ThesisPath) {
+    Write-Host "Syncing recruiter-facing investment thesis workbook..."
+    python (Join-Path $Root "automation\sync_portfolio_thesis.py") --file $ThesisPath --repo $Repository
+    if ($LASTEXITCODE -ne 0) {
+        throw "Portfolio was synced, but investment thesis sync failed."
+    }
+}
+else {
+    Write-Host "No portfolio_thesis.xlsx found; portfolio analytics will refresh without recruiter thesis content."
+}
+
 # Refresh is the default behavior. -RunRefresh remains accepted for backwards
 # compatibility; use -NoRefresh only when you intentionally want to update the cloud
-# portfolio composition without immediately rebuilding the online analytics.
+# portfolio composition/thesis without immediately rebuilding the online analytics.
 $shouldRefresh = -not $NoRefresh
 if ($RunRefresh) {
     $shouldRefresh = $true
@@ -111,5 +115,5 @@ if ($shouldRefresh) {
     Write-Host "Refresh workflow dispatched. GitHub will rebuild and publish the sanitized online portfolio snapshot."
 }
 else {
-    Write-Host "Cloud portfolio source updated without triggering an immediate analytics refresh."
+    Write-Host "Cloud portfolio/thesis source updated without triggering an immediate analytics refresh."
 }
