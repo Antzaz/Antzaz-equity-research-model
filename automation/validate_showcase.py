@@ -2,9 +2,8 @@ from __future__ import annotations
 
 """Validate the recruiter-facing sanitized Streamlit portfolio snapshot.
 
-The validator is intentionally strict for public deployment: it fails when the snapshot is
-missing, contains no portfolio visuals, lacks core metrics, or exposes forbidden position-level
-fields. This prevents the public showcase from silently falling back to demo data.
+Company names and recruiter-safe thesis content are intentionally public. The validator still
+blocks sensitive position economics, tickers, transactions, private notes and incomplete data.
 """
 
 import json
@@ -25,9 +24,8 @@ REQUIRED_METRICS = {
 FORBIDDEN_KEYS = {
     "ticker",
     "symbol",
-    "company",
-    "companyname",
     "shares",
+    "sharecount",
     "averagecost",
     "costbasis",
     "marketvalue",
@@ -35,6 +33,8 @@ FORBIDDEN_KEYS = {
     "unrealizedpnlpct",
     "transaction",
     "transactions",
+    "privatenotes",
+    "credentials",
 }
 
 
@@ -58,7 +58,9 @@ def main():
     data = json.loads(SNAPSHOT.read_text(encoding="utf-8"))
 
     if data.get("snapshot_type") != "sanitized_real_portfolio_analytics":
-        raise SystemExit("Recruiter showcase validation failed: snapshot is not marked as real sanitized analytics.")
+        raise SystemExit(
+            "Recruiter showcase validation failed: snapshot is not marked as real sanitized analytics."
+        )
 
     metrics = data.get("metrics") or {}
     missing_metrics = sorted(REQUIRED_METRICS - set(metrics))
@@ -71,13 +73,20 @@ def main():
     holdings = data.get("holdings") or []
     if len(holdings) < 2:
         raise SystemExit(
-            "Recruiter showcase validation failed: fewer than two anonymous holdings were exported."
+            "Recruiter showcase validation failed: fewer than two named holdings were exported."
         )
 
     for idx, holding in enumerate(holdings, start=1):
-        if not holding.get("holding") or holding.get("weight") is None:
+        if not str(holding.get("company") or "").strip() or holding.get("weight") is None:
             raise SystemExit(
-                f"Recruiter showcase validation failed: anonymous holding {idx} is incomplete."
+                f"Recruiter showcase validation failed: named holding {idx} is incomplete."
+            )
+
+    theses = data.get("theses") or []
+    for idx, thesis in enumerate(theses, start=1):
+        if not str(thesis.get("company") or "").strip():
+            raise SystemExit(
+                f"Recruiter showcase validation failed: thesis row {idx} has no company name."
             )
 
     timeseries = data.get("timeseries") or []
@@ -102,11 +111,12 @@ def main():
     total_weight = sum(float(row.get("weight") or 0.0) for row in holdings)
     if not 0.97 <= total_weight <= 1.03:
         raise SystemExit(
-            f"Recruiter showcase validation failed: anonymous portfolio weights sum to {total_weight:.4f}."
+            f"Recruiter showcase validation failed: portfolio weights sum to {total_weight:.4f}."
         )
 
     print("Recruiter showcase validation passed.")
-    print(f"Anonymous holdings: {len(holdings)}")
+    print(f"Named holdings: {len(holdings)}")
+    print(f"Published company theses: {len(theses)}")
     print(f"Growth observations: {len(timeseries)}")
     print(f"Core metrics: {len(REQUIRED_METRICS)} / {len(REQUIRED_METRICS)}")
 
