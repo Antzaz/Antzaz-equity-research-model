@@ -127,8 +127,22 @@ try {
             throw "GitHub CLI is not authenticated. Run: gh auth login"
         }
 
-        gh repo view $ShowcaseRepository --json nameWithOwner *> $null
-        $repoExists = ($LASTEXITCODE -eq 0)
+        # Probe repository existence without allowing gh's expected 404/GraphQL stderr
+        # to become a terminating PowerShell error under ErrorActionPreference=Stop.
+        $probeOut = Join-Path $env:TEMP "showcase-repo-probe-$PID.out"
+        $probeErr = Join-Path $env:TEMP "showcase-repo-probe-$PID.err"
+        try {
+            $probe = Start-Process -FilePath "gh" `
+                -ArgumentList @("repo", "view", $ShowcaseRepository, "--json", "nameWithOwner") `
+                -NoNewWindow -Wait -PassThru `
+                -RedirectStandardOutput $probeOut `
+                -RedirectStandardError $probeErr
+            $repoExists = ($probe.ExitCode -eq 0)
+        }
+        finally {
+            Remove-Item $probeOut -Force -ErrorAction SilentlyContinue
+            Remove-Item $probeErr -Force -ErrorAction SilentlyContinue
+        }
 
         if (-not $repoExists) {
             Write-Host "Creating public recruiter showcase repository: $ShowcaseRepository"
