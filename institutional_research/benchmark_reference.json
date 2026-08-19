@@ -1,0 +1,21 @@
+{
+  "benchmark": "S&P 500",
+  "proxy": "SPY",
+  "as_of": "2026-07-31",
+  "source": "S&P Dow Jones Indices",
+  "source_url": "https://www.spglobal.com/spdji/en/indices/equity/sp-500/",
+  "sector_weights": {
+    "Information Technology": 0.368,
+    "Financials": 0.125,
+    "Communication Services": 0.097,
+    "Consumer Discretionary": 0.094,
+    "Health Care": 0.091,
+    "Industrials": 0.087,
+    "Consumer Staples": 0.047,
+    "Energy": 0.034,
+    "Utilities": 0.021,
+    "Real Estate": 0.019,
+    "Materials": 0.018
+  },
+  "note": "Dated benchmark-sector reference for dashboard positioning analysis. Refresh periodically; not used to calculate portfolio returns."
+}
