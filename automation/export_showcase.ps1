@@ -9,9 +9,38 @@ $Source = Join-Path $Root "showcase"
 $SnapshotBuilder = Join-Path $Root "automation\build_showcase_snapshot.py"
 $SnapshotValidator = Join-Path $Root "automation\validate_showcase.py"
 $PortfolioSummary = Join-Path $Root "institutional_research\outputs\latest\summary.json"
+$ThesisWorkbook = Join-Path $Root "institutional_research\portfolio_thesis.xlsx"
+$PublicThesisJson = Join-Path $Root "institutional_research\portfolio_thesis_public.json"
 
 if (-not (Test-Path $Source)) {
     throw "Showcase source folder not found: $Source"
+}
+
+# Build the recruiter-safe thesis JSON locally whenever the private thesis workbook exists.
+# This keeps local showcase exports consistent with the GitHub Actions publishing path.
+if (Test-Path $ThesisWorkbook) {
+    Write-Host "Building recruiter-safe investment thesis payload from local workbook..."
+    $env:THESIS_WORKBOOK = $ThesisWorkbook
+    $env:THESIS_PUBLIC_JSON = $PublicThesisJson
+    @'
+from pathlib import Path
+import json
+import os
+from automation.sync_portfolio_thesis import build_payload
+
+source = Path(os.environ["THESIS_WORKBOOK"])
+destination = Path(os.environ["THESIS_PUBLIC_JSON"])
+payload = build_payload(source)
+destination.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+print(f"Published company theses prepared locally: {len(payload.get('company_theses', []))}")
+print(f"Portfolio philosophy fields prepared locally: {len(payload.get('portfolio_philosophy', {}))}")
+'@ | python -
+    if ($LASTEXITCODE -ne 0) {
+        throw "Recruiter-safe investment thesis payload build failed."
+    }
+}
+else {
+    Write-Host "No local portfolio_thesis.xlsx found; exporting portfolio analytics without recruiter thesis content."
 }
 
 # Recruiter-safe default: require a real sanitized portfolio snapshot before export.
@@ -65,6 +94,18 @@ try {
         git init | Out-Null
         git branch -M main
     }
+
+    # Configure a repository-local Git identity only when one is not already set.
+    # This avoids changing the user's global Git configuration.
+    $gitName = git config user.name 2>$null
+    if ([string]::IsNullOrWhiteSpace($gitName)) {
+        git config user.name "Antzaz"
+    }
+    $gitEmail = git config user.email 2>$null
+    if ([string]::IsNullOrWhiteSpace($gitEmail)) {
+        git config user.email "31651836+Antzaz@users.noreply.github.com"
+    }
+
     git add app.py requirements.txt README.md .gitignore
     if (Test-Path ".\data\portfolio_snapshot.json") {
         git add .\data\portfolio_snapshot.json
