@@ -1,0 +1,79 @@
+name: Public fundamentals refresh
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '42 5 * * 1-5'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/public-fundamentals-refresh.yml'
+      - 'automation/build_public_fundamentals.py'
+      - 'institutional_research/src/reverse_dcf.py'
+      - 'institutional_research/config.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-fundamentals-refresh
+  cancel-in-progress: true
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install lightweight market-data dependencies
+        run: python -m pip install --disable-pip-version-check yfinance pandas numpy
+
+      - name: Restore private portfolio universe
+        env:
+          PORTFOLIO_CSV_B64: ${{ secrets.PORTFOLIO_CSV_B64 }}
+        run: |
+          python - <<'PY'
+          import base64, os
+          from pathlib import Path
+          raw = os.environ.get('PORTFOLIO_CSV_B64', '').strip()
+          if not raw:
+              raise SystemExit('Missing required Actions secret: PORTFOLIO_CSV_B64')
+          path = Path('institutional_research/portfolio.csv')
+          path.parent.mkdir(parents=True, exist_ok=True)
+          path.write_bytes(base64.b64decode(raw))
+          print('Private portfolio universe restored.')
+          PY
+
+      - name: Build public fundamentals payload
+        run: python automation/build_public_fundamentals.py
+
+      - name: Publish public fundamentals
+        env:
+          SHOWCASE_REPO_TOKEN: ${{ secrets.SHOWCASE_REPO_TOKEN }}
+          SHOWCASE_REPOSITORY: ${{ vars.SHOWCASE_REPOSITORY }}
+        run: |
+          if [ -z "$SHOWCASE_REPO_TOKEN" ]; then
+            echo "Missing SHOWCASE_REPO_TOKEN; cannot publish public fundamentals."
+            exit 1
+          fi
+          repo="${SHOWCASE_REPOSITORY:-Antzaz/Antzaz-investment-research-showcase}"
+          dest="$RUNNER_TEMP/showcase-repo"
+          git clone "https://x-access-token:${SHOWCASE_REPO_TOKEN}@github.com/${repo}.git" "$dest"
+          mkdir -p "$dest/data"
+          cp showcase/data/public_fundamentals.json "$dest/data/public_fundamentals.json"
+          cd "$dest"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/public_fundamentals.json
+          if git diff --cached --quiet; then
+            echo "Public fundamentals already current."
+          else
+            git commit -m "Refresh public company fundamentals"
+            git push origin HEAD:main
+            echo "Public company fundamentals published."
+          fi
