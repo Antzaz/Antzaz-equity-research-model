@@ -74,6 +74,8 @@ def build_holdings(
     df["Company"] = df["Ticker"].map(lambda t: get_info(t, "longName") or t)
     df["Sector"] = df["Ticker"].map(lambda t: get_info(t, "sector"))
     df["Industry"] = df["Ticker"].map(lambda t: get_info(t, "industry"))
+    df["Country"] = df["Ticker"].map(lambda t: get_info(t, "country"))
+    df["Currency"] = df["Ticker"].map(lambda t: get_info(t, "currency"))
     df["MarketCap"] = df["Ticker"].map(lambda t: get_info(t, "marketCap"))
     df["ForwardPE"] = df["Ticker"].map(lambda t: get_info(t, "forwardPE"))
     df["RevenueGrowth"] = df["Ticker"].map(lambda t: get_info(t, "revenueGrowth"))
