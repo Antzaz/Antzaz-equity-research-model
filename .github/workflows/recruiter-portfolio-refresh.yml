@@ -1,0 +1,94 @@
+name: Recruiter portfolio refresh
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  refresh-showcase:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+          cache-dependency-path: institutional_research/requirements.txt
+
+      - name: Install portfolio dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r institutional_research/requirements.txt
+          python -m pip install openpyxl
+
+      - name: Restore private portfolio
+        env:
+          PORTFOLIO_CSV_B64: ${{ secrets.PORTFOLIO_CSV_B64 }}
+        run: |
+          python - <<'PY'
+          import base64, os
+          from pathlib import Path
+          raw = os.environ.get('PORTFOLIO_CSV_B64', '').strip()
+          if not raw:
+              raise SystemExit('Missing required Actions secret: PORTFOLIO_CSV_B64')
+          path = Path('institutional_research/portfolio.csv')
+          path.parent.mkdir(parents=True, exist_ok=True)
+          path.write_bytes(base64.b64decode(raw))
+          print('Private portfolio restored for recruiter refresh.')
+          PY
+
+      - name: Restore recruiter-safe thesis inputs
+        env:
+          PORTFOLIO_THESIS_JSON: ${{ secrets.PORTFOLIO_THESIS_JSON }}
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          raw = os.environ.get('PORTFOLIO_THESIS_JSON', '').strip()
+          data = json.loads(raw) if raw else {"version": 1, "portfolio_philosophy": {}, "company_theses": []}
+          path = Path('institutional_research/portfolio_thesis_public.json')
+          path.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8')
+          theses = data.get('company_theses', [])
+          expected = sum(1 for x in theses if x.get('expected_annual_return') is not None)
+          print(f'Recruiter thesis rows restored: {len(theses)}')
+          print(f'Expected-return values restored: {expected}')
+          PY
+
+      - name: Refresh portfolio analytics
+        run: python institutional_research/run_research.py
+
+      - name: Build and validate recruiter snapshot
+        run: |
+          python automation/build_showcase_snapshot.py
+          python automation/validate_showcase.py
+
+      - name: Publish recruiter snapshot
+        env:
+          SHOWCASE_REPO_TOKEN: ${{ secrets.SHOWCASE_REPO_TOKEN }}
+          SHOWCASE_REPOSITORY: ${{ vars.SHOWCASE_REPOSITORY }}
+        run: |
+          if [ -z "$SHOWCASE_REPO_TOKEN" ]; then
+            echo "Missing SHOWCASE_REPO_TOKEN; cannot publish recruiter snapshot."
+            exit 1
+          fi
+          repo="${SHOWCASE_REPOSITORY:-Antzaz/Antzaz-investment-research-showcase}"
+          dest="$RUNNER_TEMP/showcase-repo"
+          git clone "https://x-access-token:${SHOWCASE_REPO_TOKEN}@github.com/${repo}.git" "$dest"
+          mkdir -p "$dest/data"
+          cp showcase/data/portfolio_snapshot.json "$dest/data/portfolio_snapshot.json"
+          cd "$dest"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/portfolio_snapshot.json
+          if git diff --cached --quiet; then
+            echo "Recruiter snapshot already current."
+          else
+            git commit -m "Refresh recruiter portfolio snapshot"
+            git push origin HEAD:main
+            echo "Recruiter portfolio snapshot published."
+          fi
