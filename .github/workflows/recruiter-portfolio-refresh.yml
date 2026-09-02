@@ -2,6 +2,9 @@ name: Recruiter portfolio refresh
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '37 8 * * *'
+      timezone: 'Europe/Helsinki'
   push:
     branches: [main]
     paths:
