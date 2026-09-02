@@ -61,6 +61,7 @@ jobs:
         env:
           PORTFOLIO_THESIS_JSON: ${{ secrets.PORTFOLIO_THESIS_JSON }}
         run: |
+          python - <<'PY'
           import json, os
           from pathlib import Path
           raw = os.environ.get('PORTFOLIO_THESIS_JSON', '').strip()
