@@ -15,6 +15,17 @@ on:
       - 'tests/test_ai_growth_engine.py'
       - 'requirements.txt'
       - '.github/workflows/ml-smoke.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'machine_learning/**'
+      - 'ml_research.py'
+      - 'ai_growth_research.py'
+      - 'research.py'
+      - 'tests/test_ml_models.py'
+      - 'tests/test_ai_growth_engine.py'
+      - 'requirements.txt'
+      - '.github/workflows/ml-smoke.yml'
   workflow_dispatch:
 
 jobs:
