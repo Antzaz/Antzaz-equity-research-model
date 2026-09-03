@@ -5,6 +5,7 @@ from typing import Iterable
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
 from openpyxl.chart import BarChart, Reference
+from openpyxl.chart.label import DataLabelList
 
 from .common import MLResult
 
@@ -19,18 +20,42 @@ def _header(ws,row,headers):
 def _section(ws,row,title,end=9):
     for c in range(1,end+1): ws.cell(row,c).fill=_fill(NAVY); ws.cell(row,c).font=Font(bold=True,color=WHITE,size=11)
     ws.cell(row,1,title)
-
 def _wf(res):
     m=res.metrics or {}
     return m.get("walk_forward") or m.get("hgb_walk_forward") or {}
-
 def _pct(v):
     try: return float(v)
     except Exception: return None
 
+
+def _validation_summary(res: MLResult) -> str:
+    """Compact validation copy for the dashboard; full diagnostics remain in the detail sections."""
+    wf=_wf(res)
+    parts=[]
+    n=wf.get("n")
+    da=_pct(wf.get("directional_accuracy"))
+    r2=_pct(wf.get("r2"))
+    mae=_pct(wf.get("mae"))
+    if n is not None: parts.append(f"N={int(n):,}")
+    if da is not None: parts.append(f"DA {da:.1%}")
+    if r2 is not None: parts.append(f"R² {r2:.2f}")
+    if mae is not None: parts.append(f"MAE {mae:.1%}")
+    if parts: return " | ".join(parts)
+
+    metrics=res.metrics or {}
+    if res.name=="Financial Anomaly Detection":
+        years=metrics.get("years") or []
+        return f"{len(years)} annual observations" if years else "No robust annual validation sample"
+    if res.name=="Market Regime Classifier":
+        probs=metrics.get("regime_probabilities") or {}
+        top=max([_pct(v) or 0 for v in probs.values()] or [0])
+        rows=int(metrics.get("monthly_rows") or 0)
+        return f"N={rows:,} months | top regime weight {top:.1%}" if rows else f"Top regime weight {top:.1%}"
+    return "See detail section"
+
+
 def _add_ml_charts(ws, result_list):
-    """Add only comparable, decision-useful ML charts. Raw diagnostics stay in tables."""
-    # Validation quality table + chart. Directional accuracy is comparable across supervised models.
+    """Add comparable, decision-useful ML charts with explicit percentage scales."""
     start=7
     ws.cell(start,11,"Model"); ws.cell(start,12,"Directional Accuracy"); ws.cell(start,13,"Walk-forward R²"); ws.cell(start,14,"Validation N")
     for c in range(11,15): ws.cell(start,c).fill=_fill(BLUE); ws.cell(start,c).font=Font(bold=True,color=WHITE)
@@ -41,19 +66,33 @@ def _add_ml_charts(ws, result_list):
         ws.cell(rr,11,res.name); ws.cell(rr,12,da); ws.cell(rr,13,r2); ws.cell(rr,14,n)
         ws.cell(rr,12).number_format='0.0%'; ws.cell(rr,13).number_format='0.00'; rr+=1
     if rr>start+1:
-        ch=BarChart(); ch.type="bar"; ch.style=10; ch.title="Walk-forward directional accuracy"; ch.y_axis.title="Model"; ch.x_axis.title="Accuracy"; ch.height=7; ch.width=12
+        ch=BarChart(); ch.type="bar"; ch.style=10
+        ch.title="Walk-forward directional accuracy (50% = no edge)"
+        ch.y_axis.title="Model"; ch.x_axis.title="Directional accuracy"
+        ch.x_axis.scaling.min=0; ch.x_axis.scaling.max=1; ch.x_axis.numFmt="0%"
+        ch.height=6.5; ch.width=12.5
         data=Reference(ws,min_col=12,min_row=start,max_row=rr-1); cats=Reference(ws,min_col=11,min_row=start+1,max_row=rr-1)
         ch.add_data(data,titles_from_data=True); ch.set_categories(cats); ch.legend=None
+        ch.dLbls=DataLabelList(); ch.dLbls.showVal=True; ch.dLbls.numFmt="0.0%"
         ws.add_chart(ch,"K14")
 
     expected=next((r for r in result_list if r.name=="Expected 12M Excess Return" and r.drivers),None)
     if expected:
-        s=29; ws.cell(s,11,"Feature"); ws.cell(s,12,"Importance")
+        s=29; ws.cell(s,11,"Feature"); ws.cell(s,12,"Relative Importance")
         for c in (11,12): ws.cell(s,c).fill=_fill(BLUE); ws.cell(s,c).font=Font(bold=True,color=WHITE)
         drivers=expected.drivers[:6]
-        for i,d in enumerate(drivers,s+1): ws.cell(i,11,d.get("feature")); ws.cell(i,12,abs(_pct(d.get("importance")) or 0))
-        ch=BarChart(); ch.type="bar"; ch.style=11; ch.title="Expected-return model drivers"; ch.y_axis.title="Feature"; ch.x_axis.title="Permutation importance"; ch.height=7; ch.width=12
-        ch.add_data(Reference(ws,min_col=12,min_row=s,max_row=s+len(drivers)),titles_from_data=True); ch.set_categories(Reference(ws,min_col=11,min_row=s+1,max_row=s+len(drivers))); ch.legend=None
+        raw=[abs(_pct(d.get("importance")) or 0) for d in drivers]
+        total=sum(raw)
+        shares=[v/total if total>0 else 0 for v in raw]
+        for i,(d,share) in enumerate(zip(drivers,shares),s+1):
+            ws.cell(i,11,d.get("feature")); ws.cell(i,12,share); ws.cell(i,12).number_format="0.0%"
+        ch=BarChart(); ch.type="bar"; ch.style=11
+        ch.title="Expected-return drivers — relative importance"
+        ch.y_axis.title="Feature"; ch.x_axis.title="Share of top-driver importance"; ch.x_axis.numFmt="0%"
+        ch.height=6.5; ch.width=12.5
+        ch.add_data(Reference(ws,min_col=12,min_row=s,max_row=s+len(drivers)),titles_from_data=True)
+        ch.set_categories(Reference(ws,min_col=11,min_row=s+1,max_row=s+len(drivers))); ch.legend=None
+        ch.dLbls=DataLabelList(); ch.dLbls.showVal=True; ch.dLbls.numFmt="0.0%"
         ws.add_chart(ch,"K36")
 
     regime=next((r for r in result_list if r.name=="Market Regime Classifier"),None)
@@ -63,8 +102,14 @@ def _add_ml_charts(ws, result_list):
         for c in (11,12): ws.cell(s,c).fill=_fill(BLUE); ws.cell(s,c).font=Font(bold=True,color=WHITE)
         items=sorted(probs.items(),key=lambda x:x[1],reverse=True)
         for i,(name,val) in enumerate(items,s+1): ws.cell(i,11,name); ws.cell(i,12,val); ws.cell(i,12).number_format='0.0%'
-        ch=BarChart(); ch.type="bar"; ch.style=12; ch.title="Current market-regime weights"; ch.y_axis.title="Regime"; ch.x_axis.title="Distance-based weight"; ch.height=7; ch.width=12
-        ch.add_data(Reference(ws,min_col=12,min_row=s,max_row=s+len(items)),titles_from_data=True); ch.set_categories(Reference(ws,min_col=11,min_row=s+1,max_row=s+len(items))); ch.legend=None
+        ch=BarChart(); ch.type="bar"; ch.style=12
+        ch.title="Current market-regime weights"
+        ch.y_axis.title="Regime"; ch.x_axis.title="Distance-based weight"
+        ch.x_axis.scaling.min=0; ch.x_axis.scaling.max=1; ch.x_axis.numFmt="0%"
+        ch.height=6.5; ch.width=12.5
+        ch.add_data(Reference(ws,min_col=12,min_row=s,max_row=s+len(items)),titles_from_data=True)
+        ch.set_categories(Reference(ws,min_col=11,min_row=s+1,max_row=s+len(items))); ch.legend=None
+        ch.dLbls=DataLabelList(); ch.dLbls.showVal=True; ch.dLbls.numFmt="0.0%"
         ws.add_chart(ch,"K58")
 
 
@@ -81,7 +126,6 @@ def write_ml_sheet(workbook_path: Path, ticker: str, results: Iterable[MLResult]
     row=7
     result_list=list(results)
     for res in result_list:
-        metrics=res.metrics or {}; validation=metrics.get("walk_forward") or metrics.get("hgb_walk_forward") or metrics
         drivers=", ".join(str(d.get("feature")) for d in (res.drivers or [])[:4])
         use={
             "Expected 12M Excess Return":"Cross-check valuation only when walk-forward skill is credible.",
@@ -92,7 +136,11 @@ def write_ml_sheet(workbook_path: Path, ticker: str, results: Iterable[MLResult]
             "Portfolio ML / Position Sizing":"Translate validated expected-return evidence into constrained risk-aware sizing.",
         }.get(res.name,"Research cross-check")
         usable=res.status=="PASS"
-        values=[res.name,res.status,res.prediction,res.confidence,str(validation)[:240],drivers,use,"Historical relationships can fail out of sample. Evidence-status gate determines whether output is usable.","USE AS SECOND OPINION" if usable else "DO NOT USE IN SCORE / REVIEW"]
+        values=[
+            res.name,res.status,res.prediction,res.confidence,_validation_summary(res),drivers,use,
+            "Historical relationships can fail out of sample. Evidence-status gate determines whether output is usable.",
+            "USE AS SECOND OPINION" if usable else "DO NOT USE IN SCORE / REVIEW",
+        ]
         for c,v in enumerate(values,1): ws.cell(row,c,v); ws.cell(row,c).alignment=Alignment(wrap_text=True,vertical="top")
         if isinstance(res.prediction,float): ws.cell(row,3).number_format='0.0%;[Red](0.0%);-'
         ws.cell(row,2).fill=_fill(GREEN if res.status=="PASS" else GOLD if res.status in {"REVIEW","WEAK_SIGNAL"} else RED); ws.cell(row,2).font=Font(bold=True)
@@ -117,7 +165,7 @@ def write_ml_sheet(workbook_path: Path, ticker: str, results: Iterable[MLResult]
                 row+=1
 
     _add_ml_charts(ws,result_list)
-    widths={"A":32,"B":24,"C":22,"D":15,"E":42,"F":36,"G":45,"H":45,"I":26,"J":3,"K":34,"L":20,"M":18,"N":14}
+    widths={"A":32,"B":24,"C":22,"D":15,"E":28,"F":32,"G":42,"H":42,"I":26,"J":3,"K":34,"L":20,"M":18,"N":14}
     for col,w in widths.items(): ws.column_dimensions[col].width=w
     wb.save(workbook_path)
     return workbook_path
