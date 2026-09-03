@@ -1,7 +1,18 @@
 from __future__ import annotations
 
+from pathlib import Path
+import sys
+
 import numpy as np
 import pandas as pd
+
+# institutional_research can be launched from its own directory. Keep the project-level business
+# model registry importable without duplicating sector logic in the portfolio engine.
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from business_model_registry import get_business_model_policy, reverse_dcf_applicability_message
 
 
 def equity_value_from_fcf(
@@ -70,10 +81,33 @@ def reverse_dcf_table(
     rows = []
     for ticker in tickers:
         d = info.get(ticker) or {}
+        policy = get_business_model_policy(
+            ticker,
+            d.get("sector"),
+            d.get("industry"),
+            d.get("longName") or d.get("shortName"),
+        )
         market_cap = d.get("marketCap")
         fcf = d.get("freeCashflow")
         cash = d.get("totalCash") or 0.0
         debt = d.get("totalDebt") or 0.0
+
+        if not policy.reverse_dcf_allowed:
+            rows.append({
+                "Ticker": ticker,
+                "MarketCap": market_cap,
+                "CurrentFCF": fcf,
+                "Cash": cash,
+                "Debt": debt,
+                "WACC": np.nan,
+                "TerminalGrowth": np.nan,
+                "ForecastYears": assumptions.get("years"),
+                "ImpliedAnnualFCFGrowth": np.nan,
+                "BusinessModel": policy.key,
+                "PrimaryValuation": policy.primary_valuation,
+                "Status": reverse_dcf_applicability_message(policy),
+            })
+            continue
 
         implied = solve_implied_growth(
             target_market_cap=float(market_cap) if market_cap else np.nan,
@@ -97,6 +131,8 @@ def reverse_dcf_table(
             "TerminalGrowth": assumptions["terminal_growth"],
             "ForecastYears": assumptions["years"],
             "ImpliedAnnualFCFGrowth": implied,
+            "BusinessModel": policy.key,
+            "PrimaryValuation": policy.primary_valuation,
             "Status": "Solved" if np.isfinite(implied) else "Insufficient data / outside search range",
         })
 
