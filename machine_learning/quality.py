@@ -38,7 +38,13 @@ def gate_ml_result(result: MLResult) -> MLResult:
     elif result.name=="Consensus / Earnings Surprise":
         wf=metrics.get("walk_forward") or {}
         r2=_num(wf.get("r2")); da=_num(wf.get("directional_accuracy")); n=int(wf.get("n") or metrics.get("training_rows") or 0)
-        if n<12 or (r2 is not None and r2<0):
+        pred=abs(_num(result.prediction) or 0.0)
+        if pred>.50:
+            result.status="WEAK_SIGNAL"; result.confidence="Low"
+            notes.append(
+                "Absolute predicted EPS surprise exceeds 50%; the point estimate is outlier-sensitive and should not be used as a numeric anchor."
+            )
+        elif n<12 or (r2 is not None and r2<0):
             result.status="WEAK_SIGNAL"; result.confidence="Low"
             notes.append("Earnings-history sample or walk-forward fit is too weak to treat the forecast as a reliable signal.")
         elif n<24 or (da is not None and da<.58):
@@ -61,7 +67,8 @@ def gate_ml_result(result: MLResult) -> MLResult:
 
     if notes:
         result.details=dict(result.details or {})
-        result.details["quality_gate_notes"]=notes
+        existing=list(result.details.get("quality_gate_notes") or [])
+        result.details["quality_gate_notes"]=existing+notes
         result.summary=result.summary+" Quality gate: "+" ".join(notes)
     return result
 
