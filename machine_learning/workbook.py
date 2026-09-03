@@ -55,7 +55,7 @@ def _validation_summary(res: MLResult) -> str:
 
 
 def _add_ml_charts(ws, result_list):
-    """Add comparable, decision-useful ML charts with explicit percentage scales."""
+    """Add comparable, decision-useful ML charts with explicit percentage-point scales."""
     start=7
     ws.cell(start,11,"Model"); ws.cell(start,12,"Directional Accuracy"); ws.cell(start,13,"Walk-forward R²"); ws.cell(start,14,"Validation N")
     for c in range(11,15): ws.cell(start,c).fill=_fill(BLUE); ws.cell(start,c).font=Font(bold=True,color=WHITE)
@@ -63,17 +63,17 @@ def _add_ml_charts(ws, result_list):
     for res in result_list:
         wf=_wf(res); da=_pct(wf.get("directional_accuracy")); r2=_pct(wf.get("r2")); n=wf.get("n")
         if da is None and r2 is None: continue
-        ws.cell(rr,11,res.name); ws.cell(rr,12,da); ws.cell(rr,13,r2); ws.cell(rr,14,n)
-        ws.cell(rr,12).number_format='0.0%'; ws.cell(rr,13).number_format='0.00'; rr+=1
+        ws.cell(rr,11,res.name); ws.cell(rr,12,da*100 if da is not None else None); ws.cell(rr,13,r2); ws.cell(rr,14,n)
+        ws.cell(rr,12).number_format='0.0'; ws.cell(rr,13).number_format='0.00'; rr+=1
     if rr>start+1:
         ch=BarChart(); ch.type="bar"; ch.style=10
         ch.title="Walk-forward directional accuracy (50% = no edge)"
-        ch.y_axis.title="Model"; ch.x_axis.title="Directional accuracy"
-        ch.x_axis.scaling.min=0; ch.x_axis.scaling.max=1; ch.x_axis.numFmt="0%"
+        ch.y_axis.title="Model"; ch.x_axis.title="Directional accuracy (%)"
+        ch.x_axis.scaling.min=0; ch.x_axis.scaling.max=100; ch.x_axis.numFmt="0.0"
         ch.height=6.5; ch.width=12.5
         data=Reference(ws,min_col=12,min_row=start,max_row=rr-1); cats=Reference(ws,min_col=11,min_row=start+1,max_row=rr-1)
         ch.add_data(data,titles_from_data=True); ch.set_categories(cats); ch.legend=None
-        ch.dLbls=DataLabelList(); ch.dLbls.showVal=True; ch.dLbls.numFmt="0.0%"
+        ch.dLbls=DataLabelList(); ch.dLbls.showVal=True; ch.dLbls.numFmt="0.0"
         ws.add_chart(ch,"K14")
 
     expected=next((r for r in result_list if r.name=="Expected 12M Excess Return" and r.drivers),None)
@@ -85,14 +85,14 @@ def _add_ml_charts(ws, result_list):
         total=sum(raw)
         shares=[v/total if total>0 else 0 for v in raw]
         for i,(d,share) in enumerate(zip(drivers,shares),s+1):
-            ws.cell(i,11,d.get("feature")); ws.cell(i,12,share); ws.cell(i,12).number_format="0.0%"
+            ws.cell(i,11,d.get("feature")); ws.cell(i,12,share*100); ws.cell(i,12).number_format="0.0"
         ch=BarChart(); ch.type="bar"; ch.style=11
         ch.title="Expected-return drivers — relative importance"
-        ch.y_axis.title="Feature"; ch.x_axis.title="Share of top-driver importance"; ch.x_axis.numFmt="0%"
+        ch.y_axis.title="Feature"; ch.x_axis.title="Share of top-driver importance (%)"; ch.x_axis.numFmt="0.0"
         ch.height=6.5; ch.width=12.5
         ch.add_data(Reference(ws,min_col=12,min_row=s,max_row=s+len(drivers)),titles_from_data=True)
         ch.set_categories(Reference(ws,min_col=11,min_row=s+1,max_row=s+len(drivers))); ch.legend=None
-        ch.dLbls=DataLabelList(); ch.dLbls.showVal=True; ch.dLbls.numFmt="0.0%"
+        ch.dLbls=DataLabelList(); ch.dLbls.showVal=True; ch.dLbls.numFmt="0.0"
         ws.add_chart(ch,"K36")
 
     regime=next((r for r in result_list if r.name=="Market Regime Classifier"),None)
@@ -101,15 +101,15 @@ def _add_ml_charts(ws, result_list):
         s=51; ws.cell(s,11,"Regime"); ws.cell(s,12,"Weight")
         for c in (11,12): ws.cell(s,c).fill=_fill(BLUE); ws.cell(s,c).font=Font(bold=True,color=WHITE)
         items=sorted(probs.items(),key=lambda x:x[1],reverse=True)
-        for i,(name,val) in enumerate(items,s+1): ws.cell(i,11,name); ws.cell(i,12,val); ws.cell(i,12).number_format='0.0%'
+        for i,(name,val) in enumerate(items,s+1): ws.cell(i,11,name); ws.cell(i,12,val*100); ws.cell(i,12).number_format='0.0'
         ch=BarChart(); ch.type="bar"; ch.style=12
         ch.title="Current market-regime weights"
-        ch.y_axis.title="Regime"; ch.x_axis.title="Distance-based weight"
-        ch.x_axis.scaling.min=0; ch.x_axis.scaling.max=1; ch.x_axis.numFmt="0%"
+        ch.y_axis.title="Regime"; ch.x_axis.title="Distance-based weight (%)"
+        ch.x_axis.scaling.min=0; ch.x_axis.scaling.max=100; ch.x_axis.numFmt="0.0"
         ch.height=6.5; ch.width=12.5
         ch.add_data(Reference(ws,min_col=12,min_row=s,max_row=s+len(items)),titles_from_data=True)
         ch.set_categories(Reference(ws,min_col=11,min_row=s+1,max_row=s+len(items))); ch.legend=None
-        ch.dLbls=DataLabelList(); ch.dLbls.showVal=True; ch.dLbls.numFmt="0.0%"
+        ch.dLbls=DataLabelList(); ch.dLbls.showVal=True; ch.dLbls.numFmt="0.0"
         ws.add_chart(ch,"K58")
 
 
