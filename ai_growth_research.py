@@ -28,8 +28,8 @@ from machine_learning.ai_growth import (
     load_kpi_evidence,
     reverse_dcf_from_workbook,
     workbook_current_growth_features,
-    write_ai_growth_sheet,
 )
+from machine_learning.ai_growth_output import write_ai_growth_sheet
 from machine_learning.data import latest_workbook
 
 BASE = Path(__file__).resolve().parent
