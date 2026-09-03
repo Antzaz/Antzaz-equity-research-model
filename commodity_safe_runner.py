@@ -2,7 +2,12 @@ from __future__ import annotations
 
 """Production runner extending safe_update_model with commodity valuation v3.
 
-The guarded core model remains unchanged for non-commodity issuers. Commodity producers receive:
+The guarded core model remains unchanged for ordinary corporate issuers.  Before the build starts,
+the cross-sector runtime installs business-model routing so banks, insurers, REITs, commodity
+producers and other sectors either use an appropriate framework or explicitly gate unsuitable
+industrial FCF/DCF outputs.
+
+Commodity producers receive:
 - v2 mid-cycle operating normalization,
 - v3 independent equity-FCF cross-check,
 - triangulated primary fair value,
@@ -17,6 +22,7 @@ import advanced_analytics_v2
 import decision_view_v2
 import safe_update_model as safe
 
+from cross_sector_runtime import install_cross_sector_runtime
 from commodity_valuation_v3 import (
     apply_commodity_normalization,
     commodity_base_value,
@@ -24,6 +30,12 @@ from commodity_valuation_v3 import (
     decorate_decision_and_quality,
 )
 from google_segment_analysis import ensure_google_segment_analysis
+
+
+# Install business-model routing after safe_update_model has installed its guarded wrappers, but
+# before we capture/extend those wrappers below.  update_model.main resolves these module globals
+# at execution time, so the production research.py path receives the cross-sector behavior.
+install_cross_sector_runtime(safe_module=safe, update_model_module=safe.update_model)
 
 _ORIGINAL_DYNAMIC = safe.apply_dynamic_wacc
 _ORIGINAL_DECISION = safe.ensure_decision_view
