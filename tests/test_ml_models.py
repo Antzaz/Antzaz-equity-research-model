@@ -7,6 +7,8 @@ from machine_learning.models import (
     ExpectedReturnModel,EarningsSurpriseModel,FinancialAnomalyModel,MarketRegimeModel,
     AIImpactMLModel,PortfolioPositionSizingModel,EXPECTED_FEATURES,EARNINGS_FEATURES,REGIME_FEATURES,
 )
+from machine_learning.common import MLResult
+from machine_learning.quality import gate_ml_result
 import segment_source_engine as segment_sources
 
 rng=np.random.default_rng(42)
@@ -32,6 +34,17 @@ e["target_surprise"]=.3*e["prior_surprise_1q"]+rng.normal(0,.03,n)
 r=EarningsSurpriseModel().fit_predict(e)
 assert r.status=="PASS"
 assert (r.metrics or {}).get("walk_forward",{}).get("purged_target_horizons") is True
+
+# An extreme point estimate must not be presented as a normal PASS even if backtest metrics look acceptable.
+extreme=MLResult(
+    "Consensus / Earnings Surprise","PASS","Synthetic extreme surprise",
+    prediction=1.07,confidence="High",
+    metrics={"walk_forward":{"n":72,"r2":.16,"directional_accuracy":.68}},
+)
+gated=gate_ml_result(extreme)
+assert gated.status=="WEAK_SIGNAL"
+assert gated.confidence=="Low"
+assert "exceeds 50%" in " ".join((gated.details or {}).get("quality_gate_notes",[]))
 
 f=pd.DataFrame({"year":range(2018,2026)})
 for c in ["revenue_growth","operating_margin","net_margin","fcf_margin","capex_to_revenue","rd_to_revenue","sbc_to_revenue"]:
@@ -80,4 +93,4 @@ cvx_fallback=segment_sources.verified_fallback("CVX")
 assert cvx_fallback.get("source","").startswith("https://www.chevron.com/")
 assert {"Upstream","Downstream"}.issubset(set(cvx_fallback.get("segments",[])))
 
-print("six ML models + issuer-first segment source synthetic smoke test PASS")
+print("six ML models + quality gates + issuer-first segment source synthetic smoke test PASS")
