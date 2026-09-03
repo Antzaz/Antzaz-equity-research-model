@@ -4,11 +4,15 @@ Personal Python/Excel/Streamlit research framework for repeatable company and po
 
 ## Equity-research workflow
 
-Run a company model with:
+Run the **guarded production company model** with:
 
 ```powershell
-python .\update_model.py TSM
+python .\commodity_safe_runner.py TSM
 ```
+
+Or use the agent orchestrator below, which builds the same guarded workbook first.
+
+`update_model.py` is the low-level deterministic generator used internally by the guarded runtime. For new cross-sector investment work, use `commodity_safe_runner.py` or `research.py` so business-model routing, statement-profile selection, valuation/score gates, commodity normalization, verified segment adapters and final Data Quality controls are installed. See `CROSS_SECTOR_MODELING.md`.
 
 The generated workbook includes:
 
@@ -16,7 +20,7 @@ The generated workbook includes:
 - normalized historical financials and full financial statements;
 - segment / business-mix analysis;
 - DCF and three-case scenarios;
-- advanced valuation, reverse-DCF and Monte Carlo analytics;
+- advanced valuation, reverse-DCF and Monte Carlo analytics where economically appropriate;
 - expanded peer comps with target + up to nine peers;
 - direct/exact/strategic peer labels and per-company data-coverage percentages;
 - calculated fallback peer metrics when live summary fields are missing and statement data can support the calculation;
@@ -30,6 +34,10 @@ The generated workbook includes:
 - same-sector alternative-company screening;
 - a 10-lens institutional investment-style comparison;
 - a consolidated research workbench and data-quality controls.
+
+### Cross-sector modeling contract
+
+The production runner classifies the issuer by business model rather than forcing every ticker through an industrial-company template. Banks, insurers, REITs, commodity producers, utilities, software/cloud, semiconductors, pharma/biotech, industrials, consumer businesses, payments networks and digital platforms receive explicit modeling policy. Inappropriate metrics are marked `REVIEW`, `N/M` or excluded from scoring rather than being silently treated as valid. Full details and the test matrix are in `CROSS_SECTOR_MODELING.md`.
 
 ## Agent-assisted research
 
@@ -114,9 +122,6 @@ Each row shows the public investment lens, a transparent fit score, data coverag
 
 ## Quality checks
 
-GitHub Actions runs:
-
-- a Python syntax check on the core research modules and agent framework; and
-- end-to-end TSM and Alphabet smoke tests that build real workbooks and validate consolidated tabs, expanded peer sets, fallback-data coverage, market-share data, leadership/workforce sections, all ten institutional lenses, agent output and broken formula references.
+GitHub Actions runs syntax/policy tests plus representative live workbook builds. In addition to issuer-specific tests, the cross-sector contract validates software, semiconductors, banks, insurance, REITs, energy, utilities, pharma, industrials and consumer companies for core-sheet presence, statement-profile suitability, valuation gates, final Data Quality state and broken formula references.
 
 Generated workbooks, agent run reports, private portfolio files, local Streamlit secrets and runtime caches are excluded from Git tracking. Durable public KPI history under `research_data/` is retained for longitudinal thesis monitoring.
