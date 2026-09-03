@@ -8,7 +8,8 @@ Examples:
     python ai_growth_research.py GOOGL --llm --model gpt-5.6-terra
 
 The engine never changes the authoritative DCF assumptions. It writes a separate
-"AI Growth Forecast" research sheet and a JSON audit artifact.
+"AI Growth Forecast" research sheet and a JSON audit artifact. Business-model policy gates
+industrial FCF/reverse-DCF outputs for banks, insurers, broker/dealers and REITs.
 """
 
 import argparse
@@ -17,6 +18,9 @@ import json
 from pathlib import Path
 import re
 
+from openpyxl import load_workbook
+
+from business_model_registry import workbook_policy, reverse_dcf_applicability_message
 from machine_learning.ai_growth import (
     LightGBMGrowthForecaster,
     ai_adjustments,
@@ -46,7 +50,7 @@ def ticker_type(raw: str) -> str:
 
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        description="LLM evidence extraction + LightGBM fundamental growth + reverse-DCF expectations gap"
+        description="LLM evidence extraction + LightGBM fundamental growth + sector-safe valuation expectations"
     )
     p.add_argument("ticker", type=ticker_type)
     p.add_argument("--workbook", help="Workbook path; defaults to the newest generated model")
@@ -57,11 +61,21 @@ def parser() -> argparse.ArgumentParser:
     return p
 
 
+def _policy_for_workbook(path: Path, ticker: str):
+    try:
+        wb = load_workbook(path, data_only=True, read_only=True)
+        return workbook_policy(wb, ticker)
+    except Exception:
+        from business_model_registry import get_business_model_policy
+        return get_business_model_policy(ticker)
+
+
 def main() -> int:
     args = parser().parse_args()
     ticker = args.ticker
     workbook = Path(args.workbook).resolve() if args.workbook else latest_workbook(BASE, ticker)
     history_db = Path(args.history_db).resolve()
+    policy = _policy_for_workbook(workbook, ticker)
 
     rows, corpus = load_kpi_evidence(BASE, ticker)
     signals = (
@@ -73,6 +87,7 @@ def main() -> int:
         f"[ai-growth] evidence: {signals.evidence_count} KPI row(s); "
         f"extraction={signals.extraction_mode}; confidence={signals.confidence:.0%}"
     )
+    print(f"[ai-growth] business model: {policy.label}; primary valuation={policy.primary_valuation}")
 
     frame = growth_training_frame_from_history(history_db)
     current = workbook_current_growth_features(workbook, ticker)
@@ -92,24 +107,55 @@ def main() -> int:
 
     adjustments = ai_adjustments(signals)
     ai_revenue = apply_ai_overlay(revenue, adjustments["revenue_growth_adjustment"])
-    ai_fcf = apply_ai_overlay(fcf, adjustments["fcf_growth_adjustment"])
-    reverse_dcf = reverse_dcf_from_workbook(workbook)
-    gap = expectations_gap(ai_fcf, reverse_dcf)
+
+    if policy.industrial_fcf_primary:
+        ai_fcf = apply_ai_overlay(fcf, adjustments["fcf_growth_adjustment"])
+    else:
+        fcf.status = "NOT_APPLICABLE"
+        fcf.prediction = None
+        fcf.confidence = "N/M"
+        fcf.metrics = {
+            "business_model_gate": True,
+            "reason": f"Industrial FCF growth is not a primary research target for {policy.label}.",
+            "primary_valuation": policy.primary_valuation,
+        }
+        fcf.drivers = []
+        ai_fcf = None
+        adjustments["fcf_growth_adjustment"] = 0.0
+
+    if policy.reverse_dcf_allowed:
+        reverse_dcf = reverse_dcf_from_workbook(workbook)
+        gap = expectations_gap(ai_fcf, reverse_dcf)
+    else:
+        reverse_dcf = {
+            "status": "NOT_APPLICABLE",
+            "implied_annual_fcf_growth": None,
+            "business_model": policy.key,
+            "primary_valuation": policy.primary_valuation,
+            "reason": reverse_dcf_applicability_message(policy),
+        }
+        gap = {
+            "status": "NOT_APPLICABLE",
+            "fcf_growth_gap": None,
+            "interpretation": reverse_dcf_applicability_message(policy),
+        }
 
     payload = {
         "ticker": ticker,
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "workbook": str(workbook),
         "history_db": str(history_db),
+        "business_model_policy": policy.to_dict(),
         "architecture": {
             "evidence_layer": signals.extraction_mode,
             "forecast_model": "LightGBM",
             "baseline_model": "ElasticNet",
             "explainability": "SHAP with LightGBM feature-importance fallback",
-            "valuation_bridge": "reverse DCF implied FCF growth",
+            "valuation_bridge": "reverse DCF implied FCF growth" if policy.reverse_dcf_allowed else policy.primary_valuation,
             "governance": (
                 "AI evidence is a bounded overlay until sufficient dated AI KPI history exists "
-                "to train AI features directly. This layer does not overwrite DCF assumptions."
+                "to train AI features directly. This layer does not overwrite DCF assumptions. "
+                "Business-model policy disables industrial FCF/reverse-DCF where that framework is not economically appropriate."
             ),
         },
         "ai_signals": signals.to_dict(),
@@ -144,8 +190,8 @@ def main() -> int:
     if not args.no_workbook_write:
         print(f"[ai-growth] workbook sheet updated: {workbook} -> AI Growth Forecast")
 
-    # Forecast insufficiency is not treated as a hard pipeline failure: the evidence
-    # extraction and reverse-DCF diagnostics remain useful while history accumulates.
+    # Forecast insufficiency / non-applicability is not a hard pipeline failure. The evidence layer
+    # and revenue forecast remain useful while the valuation bridge follows the issuer's economics.
     return 0
 
 
