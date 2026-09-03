@@ -9,6 +9,7 @@ on:
     paths:
       - '.github/workflows/public-fundamentals-refresh.yml'
       - 'automation/build_public_fundamentals.py'
+      - 'business_model_registry.py'
       - 'institutional_research/src/reverse_dcf.py'
       - 'institutional_research/config.json'
 
