@@ -46,15 +46,15 @@ def _add_ai_growth_charts(ws, signals: dict[str, Any], revenue: dict[str, Any], 
     ]
     ws["P2"]="Signal"; ws["Q2"]="Score"
     for i,(name,val) in enumerate(signal_rows,3):
-        ws.cell(i,16,name); ws.cell(i,17,val); ws.cell(i,17).number_format="0%"
+        ws.cell(i,16,name); ws.cell(i,17,val*100 if val is not None else None); ws.cell(i,17).number_format="0.0"
     ch=BarChart(); ch.type="bar"; ch.style=10
     ch.title="AI evidence scores (burden/risk are adverse)"
-    ch.y_axis.title="Signal"; ch.x_axis.title="Score"
-    ch.x_axis.scaling.min=0; ch.x_axis.scaling.max=1; ch.x_axis.numFmt="0%"
+    ch.y_axis.title="Signal"; ch.x_axis.title="Score (%)"
+    ch.x_axis.scaling.min=0; ch.x_axis.scaling.max=100; ch.x_axis.numFmt="0.0"
     ch.height=6.7; ch.width=12.5; ch.legend=None
     ch.add_data(Reference(ws,min_col=17,min_row=2,max_row=8),titles_from_data=True)
     ch.set_categories(Reference(ws,min_col=16,min_row=3,max_row=8))
-    ch.dLbls=DataLabelList(); ch.dLbls.showVal=True; ch.dLbls.numFmt="0%"
+    ch.dLbls=DataLabelList(); ch.dLbls.showVal=True; ch.dLbls.numFmt="0.0"
     ws.add_chart(ch,"H5")
 
     ws["P11"]="FCF growth"; ws["Q11"]="Value"
@@ -66,17 +66,17 @@ def _add_ai_growth_charts(ws, signals: dict[str, Any], revenue: dict[str, Any], 
     end=11
     for i,(name,val) in enumerate(fcf_rows,12):
         if val is None: continue
-        ws.cell(i,16,name); ws.cell(i,17,val); ws.cell(i,17).number_format="0.0%"; end=max(end,i)
+        ws.cell(i,16,name); ws.cell(i,17,val*100); ws.cell(i,17).number_format="0.0"; end=max(end,i)
     if end>=12:
         ch=BarChart(); ch.type="col"; ch.style=11
         ch.title="FCF growth forecast vs market hurdle"
-        ch.y_axis.title="Annual growth"; ch.y_axis.numFmt="0%"
+        ch.y_axis.title="Annual growth (%)"; ch.y_axis.numFmt="0.0"
         vals=[v for _,v in fcf_rows if v is not None]
         if vals and min(vals)>=0: ch.y_axis.scaling.min=0
         ch.height=6.7; ch.width=12.5; ch.legend=None
         ch.add_data(Reference(ws,min_col=17,min_row=11,max_row=end),titles_from_data=True)
         ch.set_categories(Reference(ws,min_col=16,min_row=12,max_row=end))
-        ch.dLbls=DataLabelList(); ch.dLbls.showVal=True; ch.dLbls.numFmt="0.0%"
+        ch.dLbls=DataLabelList(); ch.dLbls.showVal=True; ch.dLbls.numFmt="0.0"
         ws.add_chart(ch,"H20")
 
     driver_rows=[]
@@ -89,14 +89,14 @@ def _add_ai_growth_charts(ws, signals: dict[str, Any], revenue: dict[str, Any], 
     if driver_rows:
         ws["P17"]="Driver"; ws["Q17"]="Contribution"
         for i,(name,val) in enumerate(driver_rows,18):
-            ws.cell(i,16,name); ws.cell(i,17,val); ws.cell(i,17).number_format="0.0%"
+            ws.cell(i,16,name); ws.cell(i,17,val*100); ws.cell(i,17).number_format="0.0"
         ch=BarChart(); ch.type="bar"; ch.style=12
         ch.title="Largest LightGBM forecast drivers"
-        ch.y_axis.title="Driver"; ch.x_axis.title="Signed forecast contribution"; ch.x_axis.numFmt="0.0%"
+        ch.y_axis.title="Driver"; ch.x_axis.title="Signed forecast contribution (pp)"; ch.x_axis.numFmt="0.0"
         ch.height=7.5; ch.width=12.5; ch.legend=None
         ch.add_data(Reference(ws,min_col=17,min_row=17,max_row=17+len(driver_rows)),titles_from_data=True)
         ch.set_categories(Reference(ws,min_col=16,min_row=18,max_row=17+len(driver_rows)))
-        ch.dLbls=DataLabelList(); ch.dLbls.showVal=True; ch.dLbls.numFmt="0.0%"
+        ch.dLbls=DataLabelList(); ch.dLbls.showVal=True; ch.dLbls.numFmt="0.0"
         ws.add_chart(ch,"H35")
 
 
