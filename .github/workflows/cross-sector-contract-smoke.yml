@@ -1,0 +1,115 @@
+name: Cross-sector equity research contract
+
+on:
+  push:
+    branches:
+      - main
+      - 'feature/**'
+      - 'agent/**'
+    paths:
+      - 'business_model_registry.py'
+      - 'cross_sector_runtime.py'
+      - 'sector_score_policy.py'
+      - 'commodity_safe_runner.py'
+      - 'ai_growth_research.py'
+      - 'issuer_statement_profiles.py'
+      - 'full_financial_statements_v3.py'
+      - 'output_quality_v3.py'
+      - 'segment_analysis_v2.py'
+      - 'institutional_research/src/reverse_dcf.py'
+      - 'automation/build_public_fundamentals.py'
+      - 'tests/test_cross_sector_contracts.py'
+      - '.github/workflows/cross-sector-contract-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  policy-unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pytest
+      - name: Compile cross-sector layer
+        run: |
+          python -m py_compile business_model_registry.py cross_sector_runtime.py sector_score_policy.py commodity_safe_runner.py ai_growth_research.py institutional_research/src/reverse_dcf.py automation/build_public_fundamentals.py
+      - name: Run cross-sector contracts
+        run: PYTHONPATH=. python -m pytest -q tests/test_cross_sector_contracts.py
+
+  representative-live-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    needs: policy-unit
+    strategy:
+      fail-fast: false
+      matrix:
+        ticker: [MSFT, AMD, BAC, PGR, PLD, CVX, NEE, LLY, CAT, WMT]
+    env:
+      SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Build production workbook
+        run: python commodity_safe_runner.py "${{ matrix.ticker }}"
+      - name: Validate saved workbook contract
+        env:
+          TICKER: ${{ matrix.ticker }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          from openpyxl import load_workbook
+          from business_model_registry import workbook_policy
+
+          ticker=os.environ['TICKER']
+          path=sorted(Path('updated_models').glob(f'{ticker}_Equity_Research_*.xlsx'))[-1]
+          wb=load_workbook(path,data_only=False,read_only=False)
+          required={'Company Data','Historical Financials','Financial Statements','Segment Analysis','Data Quality','Investment Summary','Decision View'}
+          assert required.issubset(wb.sheetnames),(ticker,sorted(required-set(wb.sheetnames)))
+          policy=workbook_policy(wb,ticker)
+
+          dq=wb['Data Quality']
+          checks={str(dq.cell(r,1).value or '').strip():(str(dq.cell(r,2).value or '').strip(),str(dq.cell(r,3).value or '').strip()) for r in range(1,dq.max_row+1)}
+          assert checks.get('Business-model / valuation suitability',('',''))[0]=='PASS',(ticker,checks.get('Business-model / valuation suitability'))
+          assert checks.get('Statement profile suitability',('',''))[0]=='PASS',(ticker,checks.get('Statement profile suitability'))
+          assert checks.get('Company classification freshness',('',''))[0] in {'PASS','REVIEW'},(ticker,checks.get('Company classification freshness'))
+          assert checks.get('Company product/profile coverage',('',''))[0] in {'PASS','REVIEW'},(ticker,checks.get('Company product/profile coverage'))
+          assert checks.get('Segment Analysis public-data coverage',('',''))[0] in {'PASS','REVIEW'},(ticker,checks.get('Segment Analysis public-data coverage'))
+          if not policy.reverse_dcf_allowed:
+              assert checks.get('Valuation-model reliability gate',('',''))[0]=='REVIEW',(ticker,policy.key,checks.get('Valuation-model reliability gate'))
+
+          fs=wb['Financial Statements']
+          marker=str(fs['A4'].value or '')
+          if policy.key=='bank': assert 'Bank / capital-markets' in marker,(ticker,marker)
+          if policy.key=='insurance': assert 'Insurance / reinsurance' in marker,(ticker,marker)
+          if policy.key=='reit': assert 'REIT / real-estate' in marker,(ticker,marker)
+
+          broken=[]
+          for ws in wb.worksheets:
+              for row in ws.iter_rows():
+                  for cell in row:
+                      value=cell.value
+                      if isinstance(value,str) and value.startswith('=') and '#REF!' in value:
+                          broken.append(f'{ws.title}!{cell.coordinate}')
+          assert not broken,(ticker,broken[:20])
+          print(ticker,'cross-sector live contract PASS',path,'policy',policy.key)
+          PY
