@@ -4,13 +4,16 @@ Examples:
     python research.py GOOGL
     python research.py GOOGL --ml
     python research.py GOOGL --ai
+    python research.py GOOGL --ml --ai
     python research.py GOOGL --skip-model --ai
 
 The guarded commodity_safe_runner.py entry point runs the existing deterministic model after
 installing cross-border data-integrity checks and commodity-company valuation normalization.
 Specialist agents inspect the generated workbook, maintain KPI history, monitor thesis evidence,
 check registered data sources, and run research QA. LLM reasoning is opt-in. The machine-learning
-layer is also opt-in because it downloads a broader training universe.
+layer is also opt-in because it downloads a broader training universe. When ML is enabled, the
+AI Growth Forecast layer adds LightGBM fundamental growth, bounded AI evidence extraction,
+SHAP explainability and a reverse-DCF expectations-gap cross-check.
 """
 
 from __future__ import annotations
@@ -61,22 +64,33 @@ def run_model(ticker: str) -> None:
     subprocess.run([sys.executable, str(BASE / "commodity_safe_runner.py"), ticker], cwd=BASE, check=True)
 
 
-def run_ml(ticker: str, workbook: Path) -> None:
-    print(f"[ml] Running six-model machine-learning research layer for {ticker}...")
+def run_ml(ticker: str, workbook: Path, *, use_llm: bool = False) -> None:
+    print(f"[ml] Running core machine-learning research layer for {ticker}...")
     subprocess.run(
         [sys.executable, str(BASE / "ml_research.py"), ticker, "--workbook", str(workbook)],
         cwd=BASE,
         check=True,
     )
+    print(f"[ml] Running AI Growth Forecast layer for {ticker}...")
+    cmd = [
+        sys.executable,
+        str(BASE / "ai_growth_research.py"),
+        ticker,
+        "--workbook",
+        str(workbook),
+    ]
+    if use_llm:
+        cmd.append("--llm")
+    subprocess.run(cmd, cwd=BASE, check=True)
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Agent-assisted equity research orchestrator")
     parser.add_argument("ticker", type=valid_ticker)
     parser.add_argument("--skip-model", action="store_true", help="Reuse the newest existing workbook instead of running the guarded deterministic model")
-    parser.add_argument("--ai", action="store_true", help="Enable evidence-bound OpenAI reasoning. Requires OPENAI_API_KEY.")
-    parser.add_argument("--ml", action="store_true", help="Run the six-model scikit-learn research layer and write ML & Quantitative Research into the workbook. Uses no OpenAI tokens.")
-    parser.add_argument("--model", help="OpenAI model override. Otherwise uses OPENAI_RESEARCH_MODEL or the project default.")
+    parser.add_argument("--ai", action="store_true", help="Enable evidence-bound OpenAI reasoning. Requires OPENAI_API_KEY. With --ml this also enables structured AI-growth evidence extraction.")
+    parser.add_argument("--ml", action="store_true", help="Run the quantitative ML layer plus LightGBM AI Growth Forecast and write both research sheets into the workbook. Without --ai, AI evidence extraction remains deterministic and uses no OpenAI tokens.")
+    parser.add_argument("--model", help="OpenAI model override for the research agents. The AI-growth extractor uses its cost-efficient structured-extraction default unless run directly with ai_growth_research.py --model.")
     parser.add_argument("--strict", action="store_true", help="Return a non-zero exit code when Research QA fails.")
     return parser
 
@@ -88,7 +102,7 @@ def render_report(ticker: str, workbook: Path, results: list, ai_model: str | No
         f"Generated: {datetime.now().astimezone().isoformat(timespec='seconds')}",
         f"Workbook: `{workbook}`",
         f"AI reasoning: {'enabled (' + ai_model + ')' if ai_model else 'disabled; deterministic agent checks only'}",
-        f"Machine learning: {'enabled; see ML & Quantitative Research' if ml_enabled else 'not run'}",
+        f"Machine learning: {'enabled; see ML & Quantitative Research and AI Growth Forecast' if ml_enabled else 'not run'}",
         "",
         "## Agent results",
         "",
@@ -105,6 +119,9 @@ def render_report(ticker: str, workbook: Path, results: list, ai_model: str | No
         "",
         "- The agents and ML models do not execute trades.",
         "- AI narrative and ML output do not overwrite financial inputs or DCF assumptions.",
+        "- The AI Growth Forecast uses the LLM only for evidence extraction; LightGBM produces the fundamental growth forecast.",
+        "- The AI evidence adjustment is bounded until enough dated AI KPI history exists for supervised training.",
+        "- LightGBM is checked against an Elastic Net baseline on a chronological holdout and confidence is downgraded when it fails to match the baseline.",
         "- Reported facts, calculations, model estimates, and inference remain separate.",
         "- ML walk-forward testing and data-readiness gates are preferred to filling missing outputs with fabricated data.",
         "- Cross-border annual data passes completed-fiscal-year and scale-integrity checks before valuation.",
@@ -157,9 +174,9 @@ def main() -> int:
 
     if args.ml:
         try:
-            run_ml(ticker, workbook)
+            run_ml(ticker, workbook, use_llm=bool(ai_client))
         except Exception as exc:
-            print(f"[ml] WARNING: six-model ML layer failed without changing the deterministic valuation model: {exc}")
+            print(f"[ml] WARNING: ML / AI Growth layer failed without changing the deterministic valuation model: {exc}")
             if args.strict:
                 return 3
 
@@ -168,6 +185,8 @@ def main() -> int:
         "workbook": str(workbook),
         "ai_model": ctx.ai_model,
         "ml_enabled": bool(args.ml),
+        "ai_growth_enabled": bool(args.ml),
+        "ai_growth_llm_extraction": bool(args.ml and ai_client),
         "data_integrity_runner": "commodity_safe_runner.py",
         "results": [x.to_dict() for x in results],
     }
