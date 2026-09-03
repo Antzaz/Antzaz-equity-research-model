@@ -81,11 +81,12 @@ def _add_ai_growth_charts(ws, signals: dict[str, Any], revenue: dict[str, Any], 
 
     driver_rows=[]
     for label,forecast in (("Revenue",revenue),("FCF",fcf)):
+        candidates=[]
         for d in (forecast.get("drivers") or [])[:6]:
             val=_finite(d.get("shap_value",d.get("importance")))
             if val is None: continue
-            driver_rows.append((f"{label}: {d.get('feature')}",val))
-    driver_rows=sorted(driver_rows,key=lambda x:abs(x[1]),reverse=True)[:8]
+            candidates.append((f"{label}: {d.get('feature')}",val))
+        driver_rows.extend(sorted(candidates,key=lambda x:abs(x[1]),reverse=True)[:3])
     if driver_rows:
         ws["P17"]="Driver"; ws["Q17"]="Contribution"
         for i,(name,val) in enumerate(driver_rows,18):
@@ -93,7 +94,7 @@ def _add_ai_growth_charts(ws, signals: dict[str, Any], revenue: dict[str, Any], 
         ch=BarChart(); ch.type="bar"; ch.style=12
         ch.title="Largest LightGBM forecast drivers"
         ch.y_axis.title="Driver"; ch.x_axis.title="Signed forecast contribution (pp)"; ch.x_axis.numFmt="0.0"
-        ch.height=7.5; ch.width=12.5; ch.legend=None
+        ch.height=7.5; ch.width=13.5; ch.legend=None
         ch.add_data(Reference(ws,min_col=17,min_row=17,max_row=17+len(driver_rows)),titles_from_data=True)
         ch.set_categories(Reference(ws,min_col=16,min_row=18,max_row=17+len(driver_rows)))
         ch.dLbls=DataLabelList(); ch.dLbls.showVal=True; ch.dLbls.numFmt="0.0"
