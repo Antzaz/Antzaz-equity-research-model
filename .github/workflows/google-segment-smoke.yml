@@ -1,0 +1,30 @@
+name: Alphabet segment analysis smoke test
+
+on:
+  push:
+    branches:
+      - main
+      - 'feature/**'
+    paths:
+      - 'google_segment_analysis.py'
+      - 'commodity_safe_runner.py'
+      - 'segment_analysis_v2.py'
+      - 'tests/test_google_segment_analysis.py'
+      - '.github/workflows/google-segment-smoke.yml'
+  workflow_dispatch:
+
+jobs:
+  google-segment-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install minimal dependencies
+        run: python -m pip install openpyxl requests pytest
+      - name: Compile segment modules
+        run: python -m compileall -q google_segment_analysis.py commodity_safe_runner.py segment_analysis_v2.py tests/test_google_segment_analysis.py
+      - name: Run Alphabet segment regression tests
+        run: PYTHONPATH=. python -m pytest -q tests/test_google_segment_analysis.py
