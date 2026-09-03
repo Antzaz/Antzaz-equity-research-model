@@ -46,7 +46,7 @@ def _context_for_ticker(ticker: str) -> dict[str, Any]:
     t = str(ticker or "").upper().strip()
     if t in _CONTEXT:
         return _CONTEXT[t]
-    # Runtime market-data lookup is only a fallback.  Normal production builds register Company
+    # Runtime market-data lookup is only a fallback. Normal production builds register Company
     # Data context before the profile renderer is called.
     try:
         import yfinance as yf
@@ -75,14 +75,16 @@ def contextual_statement_profile(ticker: str):
 
     if policy.key in {"bank", "capital_markets"}:
         profile = deepcopy(statement_profiles.PROFILES["bank"])
+        profile["key"] = "bank"
         profile["name"] = "Bank / capital-markets financial institution"
         return profile
 
     if policy.key == "insurance":
         # Berkshire's profile contains a conservative insurance-oriented taxonomy and deliberately
-        # disables industrial FCF/net-debt treatment.  Generic insurers reuse those insurance rows;
+        # disables industrial FCF/net-debt treatment. Generic insurers reuse those insurance rows;
         # non-applicable conglomerate lines remain blank rather than being fabricated.
         profile = deepcopy(statement_profiles.PROFILES["berkshire"])
+        profile["key"] = "berkshire"
         profile["name"] = "Insurance / reinsurance financial institution"
         profile["min_structure"] = (20, 24, 22)
         profile["min_mapped"] = (8, 11, 8)
@@ -90,6 +92,7 @@ def contextual_statement_profile(ticker: str):
 
     if policy.key == "reit":
         profile = deepcopy(statement_profiles.PROFILES["default"])
+        profile["key"] = "default"
         profile["name"] = "REIT / real-estate operating company"
         profile["derive_fcf"] = False
         profile["min_mapped"] = (10, 15, 10)
@@ -162,7 +165,7 @@ def _company_data_business_names(wb) -> tuple[list[str], str]:
 def ensure_descriptive_segment_contract(wb, ticker: str):
     """Guarantee a coherent Segment Analysis without inventing undisclosed economics.
 
-    Numeric official segment data always wins.  If the parser could not even retain useful names,
+    Numeric official segment data always wins. If the parser could not even retain useful names,
     the final Company Data taxonomy is used as a descriptive-only fallback with blank financials.
     """
     if _numeric_segment_rows(wb) >= 3 or len(_meaningful_segment_names(wb)) >= 2:
@@ -208,7 +211,7 @@ def append_business_model_quality(wb, ticker: str) -> None:
     ws.cell(row, 3).alignment = Alignment(wrap_text=True)
 
     # If an industrial DCF is not suitable, never leave the generic reliability row looking like
-    # an unconditional PASS.  The workbook may still retain the DCF sheet for diagnostics/template
+    # an unconditional PASS. The workbook may still retain the DCF sheet for diagnostics/template
     # compatibility, but it is explicitly gated out of the score engine.
     if not policy.reverse_dcf_allowed:
         for r in range(1, ws.max_row + 1):
