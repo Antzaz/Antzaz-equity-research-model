@@ -133,18 +133,31 @@ def test_reverse_dcf_and_workbook_sheet(tmp_path: Path):
     gap = expectations_gap(0.18, reverse)
     assert gap["status"] == "PASS"
 
+    signals = deterministic_ai_signals(
+        [{"kpi":"AI revenue","signal":"Very strong","investment_read_through":"Demand and monetization are improving.","data_type":"Company reported"}],
+        "AI backlog and adoption are rising.",
+    )
     payload = {
         "generated_at": "2026-09-03T00:00:00+00:00",
-        "ai_signals": deterministic_ai_signals([], "").to_dict(),
-        "revenue_forecast": {"status": "INSUFFICIENT_DATA"},
-        "fcf_forecast": {"status": "INSUFFICIENT_DATA"},
-        "ai_adjustments": {"revenue_growth_adjustment": 0.0, "fcf_growth_adjustment": 0.0},
-        "ai_adjusted_revenue_growth": None,
-        "ai_adjusted_fcf_growth": None,
+        "ai_signals": signals.to_dict(),
+        "revenue_forecast": {
+            "status":"PASS","prediction":0.20,"confidence":"Moderate",
+            "metrics":{"time_purged_holdout_mae":0.08,"elastic_net_holdout_mae":0.09},
+            "drivers":[{"feature":"revenue_growth","shap_value":0.03,"current_value":0.15,"direction":"positive"}],
+        },
+        "fcf_forecast": {
+            "status":"PASS","prediction":0.14,"confidence":"Moderate",
+            "drivers":[{"feature":"fcf_margin","shap_value":0.04,"current_value":0.18,"direction":"positive"}],
+        },
+        "ai_adjustments": {"revenue_growth_adjustment": 0.02, "fcf_growth_adjustment": 0.03},
+        "ai_adjusted_revenue_growth": 0.22,
+        "ai_adjusted_fcf_growth": 0.17,
         "reverse_dcf": reverse,
-        "expectations_gap": gap,
+        "expectations_gap": expectations_gap(0.17, reverse),
     }
     write_ai_growth_sheet(path, "TEST", payload)
     reopened = load_workbook(path, data_only=False)
-    assert "AI Growth Forecast" in reopened.sheetnames
-    assert reopened["AI Growth Forecast"]["A1"].value == "TEST — AI Growth Forecast"
+    sheet = reopened["AI Growth Forecast"]
+    assert sheet["A1"].value == "TEST — AI Growth Forecast"
+    assert len(sheet._charts) >= 3
+    assert sheet["D23"].number_format.startswith("0.0%")
