@@ -13,6 +13,8 @@ import math
 
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.chart import BarChart, Reference
+from openpyxl.chart.label import DataLabelList
 
 
 def _finite(value: Any) -> float | None:
@@ -26,6 +28,76 @@ def _finite(value: Any) -> float | None:
 def _fmt_pct(value: Any) -> str:
     x = _finite(value)
     return "N/M" if x is None else f"{x:.1%}"
+
+
+def _add_ai_growth_charts(ws, signals: dict[str, Any], revenue: dict[str, Any], fcf: dict[str, Any],
+                          payload: dict[str, Any], reverse: dict[str, Any]) -> None:
+    """Create decision-oriented charts using hidden helper tables to keep the visible sheet clean."""
+    ws.column_dimensions["P"].hidden=True
+    ws.column_dimensions["Q"].hidden=True
+
+    signal_rows=[
+        ("Demand",_finite(signals.get("demand_score"))),
+        ("Monetization",_finite(signals.get("monetization_score"))),
+        ("Adoption",_finite(signals.get("adoption_score"))),
+        ("Efficiency",_finite(signals.get("efficiency_score"))),
+        ("Capex burden",_finite(signals.get("capex_burden_score"))),
+        ("Risk",_finite(signals.get("risk_score"))),
+    ]
+    ws["P2"]="Signal"; ws["Q2"]="Score"
+    for i,(name,val) in enumerate(signal_rows,3):
+        ws.cell(i,16,name); ws.cell(i,17,val); ws.cell(i,17).number_format="0%"
+    ch=BarChart(); ch.type="bar"; ch.style=10
+    ch.title="AI evidence scores (burden/risk are adverse)"
+    ch.y_axis.title="Signal"; ch.x_axis.title="Score"
+    ch.x_axis.scaling.min=0; ch.x_axis.scaling.max=1; ch.x_axis.numFmt="0%"
+    ch.height=6.7; ch.width=12.5; ch.legend=None
+    ch.add_data(Reference(ws,min_col=17,min_row=2,max_row=8),titles_from_data=True)
+    ch.set_categories(Reference(ws,min_col=16,min_row=3,max_row=8))
+    ch.dLbls=DataLabelList(); ch.dLbls.showVal=True; ch.dLbls.numFmt="0%"
+    ws.add_chart(ch,"H5")
+
+    ws["P11"]="FCF growth"; ws["Q11"]="Value"
+    fcf_rows=[
+        ("Fundamental ML",_finite(fcf.get("prediction"))),
+        ("AI-adjusted",_finite(payload.get("ai_adjusted_fcf_growth"))),
+        ("Market implied",_finite(reverse.get("implied_annual_fcf_growth"))),
+    ]
+    end=11
+    for i,(name,val) in enumerate(fcf_rows,12):
+        if val is None: continue
+        ws.cell(i,16,name); ws.cell(i,17,val); ws.cell(i,17).number_format="0.0%"; end=max(end,i)
+    if end>=12:
+        ch=BarChart(); ch.type="col"; ch.style=11
+        ch.title="FCF growth forecast vs market hurdle"
+        ch.y_axis.title="Annual growth"; ch.y_axis.numFmt="0%"
+        vals=[v for _,v in fcf_rows if v is not None]
+        if vals and min(vals)>=0: ch.y_axis.scaling.min=0
+        ch.height=6.7; ch.width=12.5; ch.legend=None
+        ch.add_data(Reference(ws,min_col=17,min_row=11,max_row=end),titles_from_data=True)
+        ch.set_categories(Reference(ws,min_col=16,min_row=12,max_row=end))
+        ch.dLbls=DataLabelList(); ch.dLbls.showVal=True; ch.dLbls.numFmt="0.0%"
+        ws.add_chart(ch,"H20")
+
+    driver_rows=[]
+    for label,forecast in (("Revenue",revenue),("FCF",fcf)):
+        for d in (forecast.get("drivers") or [])[:6]:
+            val=_finite(d.get("shap_value",d.get("importance")))
+            if val is None: continue
+            driver_rows.append((f"{label}: {d.get('feature')}",val))
+    driver_rows=sorted(driver_rows,key=lambda x:abs(x[1]),reverse=True)[:8]
+    if driver_rows:
+        ws["P17"]="Driver"; ws["Q17"]="Contribution"
+        for i,(name,val) in enumerate(driver_rows,18):
+            ws.cell(i,16,name); ws.cell(i,17,val); ws.cell(i,17).number_format="0.0%"
+        ch=BarChart(); ch.type="bar"; ch.style=12
+        ch.title="Largest LightGBM forecast drivers"
+        ch.y_axis.title="Driver"; ch.x_axis.title="Signed forecast contribution"; ch.x_axis.numFmt="0.0%"
+        ch.height=7.5; ch.width=12.5; ch.legend=None
+        ch.add_data(Reference(ws,min_col=17,min_row=17,max_row=17+len(driver_rows)),titles_from_data=True)
+        ch.set_categories(Reference(ws,min_col=16,min_row=18,max_row=17+len(driver_rows)))
+        ch.dLbls=DataLabelList(); ch.dLbls.showVal=True; ch.dLbls.numFmt="0.0%"
+        ws.add_chart(ch,"H35")
 
 
 def write_ai_growth_sheet(
@@ -42,18 +114,21 @@ def write_ai_growth_sheet(
     ws = wb.create_sheet(sheet_name)
     ws.sheet_view.showGridLines = False
     ws.freeze_panes = "A5"
-    for col, width in {"A": 31, "B": 18, "C": 20, "D": 18, "E": 50, "F": 24}.items():
+    for col, width in {
+        "A":31,"B":18,"C":20,"D":18,"E":50,"F":24,"G":3,
+        "H":15,"I":15,"J":15,"K":15,"L":15,"M":15,"N":15
+    }.items():
         ws.column_dimensions[col].width = width
 
     navy = "17365D"; blue = "2F75B5"; white = "FFFFFF"; gold = "FFF2CC"
-    green = "008000"; red = "C00000"; grey = "666666"
+    green = "008000"; red = "C00000"; grey = "666666"; pale_red="FCE4D6"; pale_green="E2F0D9"
 
-    ws.merge_cells("A1:F2")
+    ws.merge_cells("A1:N2")
     ws["A1"] = f"{ticker} — AI Growth Forecast"
     ws["A1"].fill = PatternFill("solid", fgColor=navy)
     ws["A1"].font = Font(bold=True, color=white, size=18)
     ws["A1"].alignment = Alignment(vertical="center")
-    ws.merge_cells("A3:F3")
+    ws.merge_cells("A3:N3")
     ws["A3"] = (
         "LLM/deterministic AI evidence extraction + LightGBM fundamental growth + "
         "reverse-DCF expectations gap. AI is a bounded evidence overlay until enough "
@@ -62,8 +137,8 @@ def write_ai_growth_sheet(
     ws["A3"].font = Font(italic=True, color=grey)
     ws["A3"].alignment = Alignment(wrap_text=True)
     ws.row_dimensions[3].height = 34
-    ws["F4"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    ws["F4"].font = Font(color=grey, italic=True, size=9)
+    ws["N4"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    ws["N4"].font = Font(color=grey, italic=True, size=9)
 
     def section(row: int, title: str) -> None:
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=6)
@@ -112,8 +187,9 @@ def write_ai_growth_sheet(
         (
             "Next FY revenue growth", revenue.get("prediction"), adj.get("revenue_growth_adjustment"),
             payload.get("ai_adjusted_revenue_growth"), None,
-            f"LightGBM holdout MAE {_fmt_pct((revenue.get('metrics') or {}).get('time_purged_holdout_mae'))}; "
-            f"Elastic Net {_fmt_pct((revenue.get('metrics') or {}).get('elastic_net_holdout_mae'))}",
+            f"LightGBM MAE {_fmt_pct((revenue.get('metrics') or {}).get('time_purged_holdout_mae'))}; "
+            f"Elastic Net {_fmt_pct((revenue.get('metrics') or {}).get('elastic_net_holdout_mae'))}; "
+            f"confidence {revenue.get('confidence') or 'N/M'}",
         ),
         (
             "Next FY FCF growth", fcf.get("prediction"), adj.get("fcf_growth_adjustment"),
@@ -148,6 +224,12 @@ def write_ai_growth_sheet(
             ws.cell(rr, 4, driver.get("shap_value", driver.get("importance")))
             ws.cell(rr, 5, driver.get("current_value"))
             ws.cell(rr, 6, forecast.get("confidence"))
+            ws.cell(rr,4).number_format='0.0%;[Red](0.0%);-'
+            ws.cell(rr,5).number_format='0.0%;[Red](0.0%);-'
+            if str(forecast.get("confidence") or "").lower()=="low":
+                ws.cell(rr,6).fill=PatternFill("solid",fgColor=pale_red)
+            elif str(forecast.get("confidence") or "").lower()=="high":
+                ws.cell(rr,6).fill=PatternFill("solid",fgColor=pale_green)
             rr += 1
     if rr == 23:
         ws.cell(rr, 1, "No explainability output; growth history may still be insufficient.")
@@ -175,4 +257,5 @@ def write_ai_growth_sheet(
         ws.cell(cursor, 1).alignment = Alignment(wrap_text=True)
         cursor += 1
 
+    _add_ai_growth_charts(ws,signals,revenue,fcf,payload,reverse)
     wb.save(path)
