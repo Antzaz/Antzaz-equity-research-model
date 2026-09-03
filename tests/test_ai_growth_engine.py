@@ -15,8 +15,8 @@ from machine_learning.ai_growth import (
     expectations_gap,
     growth_training_frame_from_history,
     reverse_dcf_from_workbook,
-    write_ai_growth_sheet,
 )
+from machine_learning.ai_growth_output import write_ai_growth_sheet
 
 
 def test_deterministic_ai_signal_extraction_is_bounded():
