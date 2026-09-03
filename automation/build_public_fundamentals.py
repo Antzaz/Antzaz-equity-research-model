@@ -4,7 +4,8 @@ from __future__ import annotations
 
 This deliberately publishes only company names and public market/research characteristics.
 It never serializes tickers, share counts, cost basis, market values, P&L, transactions,
-credentials, private notes, or private workbooks.
+credentials, private notes, or private workbooks. Reverse DCF is business-model gated so a
+bank/insurer/REIT is never presented with an industrial FCF hurdle as if it were meaningful.
 """
 
 import csv
@@ -22,7 +23,9 @@ PORTFOLIO = ROOT / "institutional_research" / "portfolio.csv"
 CONFIG = ROOT / "institutional_research" / "config.json"
 DEST = ROOT / "showcase" / "data" / "public_fundamentals.json"
 
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "institutional_research"))
+from business_model_registry import get_business_model_policy, reverse_dcf_applicability_message  # noqa: E402
 from src.reverse_dcf import solve_implied_growth  # noqa: E402
 
 
@@ -86,12 +89,16 @@ def main() -> None:
             print("WARNING: skipping one holding because no public company name was returned")
             continue
 
+        policy = get_business_model_policy(
+            ticker, info.get("sector"), info.get("industry"), company
+        )
         market_cap = _num(info.get("marketCap"))
         fcf = _num(info.get("freeCashflow"))
         cash = _num(info.get("totalCash")) or 0.0
         debt = _num(info.get("totalDebt")) or 0.0
         implied = None
-        if market_cap is not None and fcf is not None:
+        reverse_status = reverse_dcf_applicability_message(policy)
+        if policy.reverse_dcf_allowed and market_cap is not None and fcf is not None:
             implied_raw = solve_implied_growth(
                 target_market_cap=market_cap,
                 fcf0=fcf,
@@ -104,6 +111,7 @@ def main() -> None:
                 max_growth=float(dcf.get("max_growth", 0.50)),
             )
             implied = _num(implied_raw)
+            reverse_status = "Solved" if implied is not None else "Not meaningful / insufficient public FCF data"
 
         aliases = []
         if company == "JPMorgan Chase & Co.":
@@ -120,10 +128,11 @@ def main() -> None:
             "roe": _num(info.get("returnOnEquity")),
             "reverse_dcf": {
                 "implied_annual_fcf_growth": implied,
-                "wacc": _num(dcf.get("wacc")),
-                "terminal_growth": _num(dcf.get("terminal_growth")),
+                "wacc": _num(dcf.get("wacc")) if policy.reverse_dcf_allowed else None,
+                "terminal_growth": _num(dcf.get("terminal_growth")) if policy.reverse_dcf_allowed else None,
                 "forecast_years": int(dcf.get("years", 10)),
-                "status": "Solved" if implied is not None else "Not meaningful / insufficient public FCF data",
+                "status": reverse_status,
+                "primary_valuation": policy.primary_valuation,
             },
         }
         companies.append(row)
@@ -138,7 +147,7 @@ def main() -> None:
         "source_note": (
             "Public market characteristics refreshed independently from the full portfolio run. "
             "Forward P/E uses the public forward P/E field or price/forward-EPS fallback. "
-            "Reverse DCF uses the configured simplified FCF model and is not meaningful for every business model."
+            "Reverse DCF uses the configured simplified FCF model only for business models where industrial FCF is economically appropriate; otherwise it is explicitly N/M."
         ),
         "companies": companies,
     }
