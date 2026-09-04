@@ -91,7 +91,6 @@ def _add_ai_growth_charts(ws, signals: dict[str, Any], revenue: dict[str, Any], 
     ws.column_dimensions["Q"].hidden=True
     _add_read_me(ws,signals)
 
-    # Higher is always better in this chart. Burden and risk are inverted deliberately.
     signal_rows=[
         ("Demand",_finite(signals.get("demand_score"))),
         ("Monetization",_finite(signals.get("monetization_score"))),
@@ -134,7 +133,6 @@ def _add_ai_growth_charts(ws, signals: dict[str, Any], revenue: dict[str, Any], 
         ch.dLbls=DataLabelList(); ch.dLbls.showVal=True; ch.dLbls.numFmt="0.0"
         ws.add_chart(ch,"H20")
 
-    # Normalize SHAP magnitudes into a 100% influence share. Direction is retained in the label.
     driver_rows=[]
     for label,forecast in (("Revenue",revenue),("FCF",fcf)):
         candidates=[]
@@ -182,12 +180,13 @@ def write_ai_growth_sheet(
     navy = "17365D"; blue = "2F75B5"; white = "FFFFFF"; gold = "FFF2CC"
     green = "008000"; red = "C00000"; grey = "666666"; pale_red="FCE4D6"; pale_green="E2F0D9"
 
-    ws.merge_cells("A1:N2")
+    # Keep the title/subtitle in the left analysis pane so the right pane is available for guidance/charts.
+    ws.merge_cells("A1:F2")
     ws["A1"] = f"{ticker} — AI Growth Forecast"
     ws["A1"].fill = PatternFill("solid", fgColor=navy)
     ws["A1"].font = Font(bold=True, color=white, size=18)
     ws["A1"].alignment = Alignment(vertical="center")
-    ws.merge_cells("A3:N3")
+    ws.merge_cells("A3:F3")
     ws["A3"] = (
         "AI evidence extraction + LightGBM fundamental growth + a reverse-DCF expectations check. "
         "AI remains a bounded second-opinion overlay until the company has enough dated AI evidence for supervised training."
@@ -195,8 +194,8 @@ def write_ai_growth_sheet(
     ws["A3"].font = Font(italic=True, color=grey)
     ws["A3"].alignment = Alignment(wrap_text=True)
     ws.row_dimensions[3].height = 34
-    ws["N4"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    ws["N4"].font = Font(color=grey, italic=True, size=9)
+    ws["F4"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    ws["F4"].font = Font(color=grey, italic=True, size=9)
 
     def section(row: int, title: str) -> None:
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=6)
