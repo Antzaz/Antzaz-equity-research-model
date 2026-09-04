@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 from sklearn.linear_model import Ridge
 
+from ai_growth_research import _clean_ai_evidence
 from machine_learning.common import MLResult
 from machine_learning.models import MarketRegimeModel, REGIME_FEATURES
 from machine_learning.quality import gate_ml_result
@@ -70,3 +71,26 @@ def test_market_regime_human_labels_preserve_all_cluster_probability():
     probs=(result.metrics or {}).get("regime_probabilities") or {}
     assert abs(sum(probs.values())-1.0)<1e-10
     assert len((result.metrics or {}).get("cluster_probabilities") or [])==5
+
+
+def test_ai_template_rows_do_not_create_false_company_specific_signal():
+    rows=[
+        {"kpi":"AI-attributed revenue","current":"Analyst input"},
+        {"kpi":"AI product users / seats","current":"To be updated"},
+        {
+            "kpi":"AI-related payment fraud detection",
+            "current":"Company reported: AI risk models reduced fraud losses 12%",
+            "signal":"Positive",
+            "investment_read_through":"AI is improving transaction risk controls.",
+        },
+    ]
+    corpus="\n".join([
+        "AI-attributed revenue | Analyst input",
+        "AI product users / seats | To be updated",
+        "AI-related payment fraud detection | Company reported: AI risk models reduced fraud losses 12%",
+    ])
+    clean_rows,clean_corpus,stats=_clean_ai_evidence(rows,corpus)
+    assert len(clean_rows)==1
+    assert stats["filtered_placeholder_rows"]==2
+    assert "Analyst input" not in clean_corpus
+    assert "12%" in clean_corpus
