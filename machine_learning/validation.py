@@ -29,6 +29,17 @@ def regression_metrics(y_true, y_pred) -> dict[str, float | int | None]:
     }
 
 
+def _safe_improvement(baseline: float | None, model: float | None) -> float | None:
+    try:
+        b = float(baseline)
+        m = float(model)
+        if not np.isfinite(b) or not np.isfinite(m) or b <= 0:
+            return None
+        return float((b - m) / b)
+    except Exception:
+        return None
+
+
 def expanding_walk_forward(
     estimator,
     frame: pd.DataFrame,
@@ -39,7 +50,7 @@ def expanding_walk_forward(
     min_train: int = 24,
     step: int = 1,
 ) -> WalkForwardResult:
-    """Purged expanding walk-forward validation.
+    """Purged expanding walk-forward validation with a leakage-safe naive baseline.
 
     For forward targets such as next-12-month excess return, a row is trainable only after its
     target horizon has fully elapsed. This prevents a subtle look-ahead leak where a historical
@@ -48,6 +59,10 @@ def expanding_walk_forward(
 
     Rows sharing the same as-of date are evaluated together so one company at a date cannot train
     on another company's outcome from that same decision date.
+
+    Each test prediction is also compared with a deliberately simple baseline: the mean target
+    known in the training set at that date. This is important because a high directional accuracy
+    can be misleading when the target itself has a strong positive or negative historical bias.
     """
     df = frame.copy()
     df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
@@ -58,22 +73,25 @@ def expanding_walk_forward(
     if df.empty:
         return WalkForwardResult(pd.DataFrame(), regression_metrics([], []))
 
-    # Preserve the old `step` concept as a validation-sampling interval, while using complete
-    # date groups to eliminate same-date cross-sectional leakage.
     candidate_starts = list(range(max(0, min_train), len(df), max(1, int(step))))
-    test_dates=[]
-    seen=set()
+    test_dates = []
+    seen = set()
     for start in candidate_starts:
-        dt=df.iloc[start][date_col]
+        dt = df.iloc[start][date_col]
         if pd.isna(dt) or dt in seen:
             continue
-        seen.add(dt); test_dates.append(dt)
+        seen.add(dt)
+        test_dates.append(dt)
 
     rows = []
     for test_date in test_dates:
         test = df[df[date_col] == test_date]
         if has_target_date:
-            train = df[(df[date_col] < test_date) & df[target_date_col].notna() & (df[target_date_col] <= test_date)]
+            train = df[
+                (df[date_col] < test_date)
+                & df[target_date_col].notna()
+                & (df[target_date_col] <= test_date)
+            ]
         else:
             train = df[df[date_col] < test_date]
         if len(train) < min_train or test.empty:
@@ -81,16 +99,33 @@ def expanding_walk_forward(
         model = clone(estimator)
         model.fit(train[feature_cols], train[target_col])
         pred = model.predict(test[feature_cols])
+        baseline_prediction = float(pd.to_numeric(train[target_col], errors="coerce").mean())
         for i, (_, row) in enumerate(test.iterrows()):
             rows.append({
                 "as_of": row[date_col],
                 "actual": float(row[target_col]),
                 "prediction": float(pred[i]),
+                "baseline_prediction": baseline_prediction,
                 "train_rows": int(len(train)),
             })
+
     out = pd.DataFrame(rows)
     metrics = regression_metrics(out["actual"], out["prediction"]) if not out.empty else regression_metrics([], [])
     if not out.empty:
+        baseline = regression_metrics(out["actual"], out["baseline_prediction"])
+        metrics["baseline_mae"] = baseline.get("mae")
+        metrics["baseline_rmse"] = baseline.get("rmse")
+        metrics["baseline_r2"] = baseline.get("r2")
+        metrics["baseline_directional_accuracy"] = baseline.get("directional_accuracy")
+        metrics["mae_improvement_vs_baseline"] = _safe_improvement(baseline.get("mae"), metrics.get("mae"))
+        model_da = metrics.get("directional_accuracy")
+        baseline_da = baseline.get("directional_accuracy")
+        metrics["directional_accuracy_edge_vs_baseline"] = (
+            float(model_da - baseline_da)
+            if model_da is not None and baseline_da is not None
+            else None
+        )
+        metrics["baseline_method"] = "expanding training-set mean"
         metrics["min_train_rows"] = int(out["train_rows"].min())
         metrics["max_train_rows"] = int(out["train_rows"].max())
         metrics["purged_target_horizons"] = bool(has_target_date)
