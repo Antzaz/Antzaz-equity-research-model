@@ -32,4 +32,6 @@ jobs:
       - name: Compile deal integration
         run: python -m py_compile deal_analysis.py commodity_safe_runner.py equity_live_dashboard.py
       - name: Run deterministic deal tests
+        env:
+          PYTHONPATH: .
         run: pytest -q tests/test_deal_analysis.py
