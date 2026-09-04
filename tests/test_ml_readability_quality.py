@@ -5,6 +5,7 @@ import pandas as pd
 from sklearn.linear_model import Ridge
 
 from machine_learning.common import MLResult
+from machine_learning.models import MarketRegimeModel, REGIME_FEATURES
 from machine_learning.quality import gate_ml_result
 from machine_learning.validation import expanding_walk_forward
 
@@ -56,3 +57,16 @@ def test_incomplete_regime_weights_are_review_gated():
     assert gated.status=="REVIEW"
     assert gated.confidence=="Low"
     assert "sum to" in " ".join((gated.details or {}).get("quality_gate_notes",[]))
+
+
+def test_market_regime_human_labels_preserve_all_cluster_probability():
+    rng=np.random.default_rng(42)
+    frame=pd.DataFrame(index=pd.date_range("2008-01-31",periods=180,freq="ME"))
+    for c in REGIME_FEATURES:
+        frame[c]=rng.normal(0,.12,len(frame))
+    frame["equity_vol_3m"]=np.abs(frame["equity_vol_3m"])+.08
+    result=MarketRegimeModel().fit_predict(frame)
+    assert result.status=="PASS"
+    probs=(result.metrics or {}).get("regime_probabilities") or {}
+    assert abs(sum(probs.values())-1.0)<1e-10
+    assert len((result.metrics or {}).get("cluster_probabilities") or [])==5
