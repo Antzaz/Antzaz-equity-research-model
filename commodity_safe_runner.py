@@ -16,6 +16,8 @@ Commodity producers receive:
 
 The runner also installs narrow verified issuer adapters when generic parsers are known to be
 brittle. Alphabet's segment adapter is one such case: it uses only company-reported 10-K values.
+Every issuer also receives a source-backed Deals & Transactions sheet after the guarded research
+extensions finish, so the deal monitor cannot be removed by the low-value-tab pruning pass.
 """
 
 import advanced_analytics_v2
@@ -29,6 +31,7 @@ from commodity_valuation_v3 import (
     commodity_monte_carlo,
     decorate_decision_and_quality,
 )
+from deal_analysis import ensure_deal_analysis
 from google_segment_analysis import ensure_google_segment_analysis
 
 
@@ -40,6 +43,7 @@ install_cross_sector_runtime(safe_module=safe, update_model_module=safe.update_m
 _ORIGINAL_DYNAMIC = safe.apply_dynamic_wacc
 _ORIGINAL_DECISION = safe.ensure_decision_view
 _ORIGINAL_VERIFIED_SEGMENT = safe._verified_segment
+_ORIGINAL_RESEARCH_EXTENSIONS = safe.update_model.ensure_research_extensions
 
 
 def _commodity_aware_dynamic_wacc(wb, ticker, info=None):
@@ -66,6 +70,18 @@ def _verified_segment_with_alphabet(wb, ticker):
     return _ORIGINAL_VERIFIED_SEGMENT(wb, ticker)
 
 
+def _research_extensions_with_deals(wb, ticker, info=None):
+    """Run all guarded extensions, then append the transaction monitor as a final research tab."""
+    result = _ORIGINAL_RESEARCH_EXTENSIONS(wb, ticker, info)
+    try:
+        ensure_deal_analysis(wb, ticker, info or {})
+    except Exception as exc:
+        # A temporary news / EDGAR outage must never prevent the deterministic valuation model
+        # from being produced.  The deal sheet itself also degrades to an explicit no-data state.
+        print(f"Warning: Deals & Transactions refresh failed: {exc}")
+    return result
+
+
 # Patch valuation consumers before the build starts. Their functions resolve module globals at
 # execution time, so the unshocked commodity base case and Monte Carlo use v3 while explicit
 # stress shocks continue to use the normalized operating FCFF engine.
@@ -80,6 +96,7 @@ safe._verified_segment = _verified_segment_with_alphabet
 safe.apply_dynamic_wacc = _commodity_aware_dynamic_wacc
 safe.apply_commodity_normalization = apply_commodity_normalization
 safe.ensure_decision_view = _commodity_aware_decision
+safe.update_model.ensure_research_extensions = _research_extensions_with_deals
 
 
 def main():
