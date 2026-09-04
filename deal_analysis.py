@@ -3,8 +3,8 @@ from __future__ import annotations
 """Source-backed recent material deals and transactions research.
 
 The module is conservative by design: it scans ticker-specific public news / press releases and,
-for SEC registrants, a small set of recent EDGAR filings.  Transaction facts remain separate from
-rule-based analyst lenses.  Missing deal economics are left blank rather than inferred.
+for SEC registrants, a small set of recent EDGAR filings. Transaction facts remain separate from
+rule-based analyst lenses. Missing deal economics are left blank rather than inferred.
 """
 
 from datetime import date, datetime, timezone, timedelta
@@ -92,7 +92,7 @@ def _yahoo_items(ticker,count=100):
     for tab in ("press releases","all"):
         try: raw=obj.get_news(count=count,tab=tab) or []
         except Exception:
-            try: raw=getattr(obj,"news",[]) or [] if tab=="all" else []
+            try: raw=(getattr(obj,"news",[]) or []) if tab=="all" else []
             except Exception: raw=[]
         for item in raw:
             x=_normalize_news(item,tab)
@@ -106,7 +106,8 @@ def _yahoo_items(ticker,count=100):
 @lru_cache(maxsize=1)
 def _sec_map():
     try:
-        r=requests.get("https://www.sec.gov/files/company_tickers.json",headers={"User-Agent":SEC_USER_AGENT},timeout=15); r.raise_for_status(); data=r.json()
+        r=requests.get("https://www.sec.gov/files/company_tickers.json",headers={"User-Agent":SEC_USER_AGENT},timeout=15)
+        r.raise_for_status(); data=r.json()
     except Exception: return {}
     out={}
     for row in (data or {}).values():
@@ -119,7 +120,8 @@ def _sec_filings(ticker,horizon_days=DEFAULT_HORIZON_DAYS,max_filings=6):
     cik=_sec_map().get(str(ticker or "").upper().split(".")[0])
     if not cik: return []
     try:
-        r=requests.get(f"https://data.sec.gov/submissions/CIK{cik:010d}.json",headers={"User-Agent":SEC_USER_AGENT},timeout=15); r.raise_for_status(); recent=(r.json().get("filings") or {}).get("recent") or {}
+        r=requests.get(f"https://data.sec.gov/submissions/CIK{cik:010d}.json",headers={"User-Agent":SEC_USER_AGENT},timeout=15)
+        r.raise_for_status(); recent=(r.json().get("filings") or {}).get("recent") or {}
     except Exception: return []
     cutoff=date.today()-timedelta(days=horizon_days); events=[]; periodic=[]
     for form,fd,acc,doc in zip(recent.get("form") or [],recent.get("filingDate") or [],recent.get("accessionNumber") or [],recent.get("primaryDocument") or []):
@@ -164,7 +166,8 @@ def _sec_items(ticker,horizon_days=DEFAULT_HORIZON_DAYS):
     out=[]
     for filing in _sec_filings(ticker,horizon_days):
         try:
-            r=requests.get(filing["url"],headers={"User-Agent":SEC_USER_AGENT},timeout=18); r.raise_for_status(); text=_html_text(r.text)
+            r=requests.get(filing["url"],headers={"User-Agent":SEC_USER_AGENT},timeout=18)
+            r.raise_for_status(); text=_html_text(r.text)
         except Exception: continue
         for i,snip in enumerate(_transaction_windows(text),1):
             out.append({"title":f"SEC {filing['form']} transaction disclosure {i}","summary":snip,"date":filing["date"],"publisher":"SEC / EDGAR","url":filing["url"],"source_kind":"sec_filing"})
@@ -200,7 +203,8 @@ def _amount(text):
     if not vals: return None
     contexts=[m.span() for m in _VALUE_CONTEXT.finditer(s)]
     def rank(v):
-        mid=(v["start"]+v["end"])/2; dist=min((0 if a<=mid<=b else min(abs(mid-a),abs(mid-b)) for a,b in contexts),default=9999)
+        mid=(v["start"]+v["end"])/2
+        dist=min((0 if a<=mid<=b else min(abs(mid-a),abs(mid-b)) for a,b in contexts),default=9999)
         return (1 if dist<=160 else 0,1 if v.get("currency") else 0,-dist,v["value"])
     best=max(vals,key=rank); return {k:v for k,v in best.items() if k not in {"start","end"}}
 
@@ -238,8 +242,20 @@ def _counterparty(title,ticker,info):
     return "Review source / headline"
 
 def _area(text):
-    low=_clean(text).lower(); specs=[(("ai","artificial intelligence","machine learning"),"AI / Machine Learning"),(("cloud","cybersecurity","security platform"),"Cloud / Cybersecurity"),(("data center","datacenter","compute","gpu","chip","semiconductor"),"Data Center / Compute"),(("power","energy","electricity","renewable","geothermal","solar","wind","battery"),"Power / Energy Infrastructure"),(("payment","payments","fintech"),"Payments / Fintech"),(("health","drug","pharma","biotech","clinical"),"Healthcare / Life Sciences"),(("advertising","ads","media","content","streaming"),"Advertising / Media"),(("logistics","warehouse","delivery","supply chain"),"Logistics / Supply Chain"),(("manufacturing","factory","industrial","automation"),"Industrial / Manufacturing"))]
-    labels=[label for phrases,label in specs if any(x in low for x in phrases)]; return "; ".join(labels[:2]) if labels else "Corporate / Other"
+    low=_clean(text).lower()
+    specs=[
+        (("ai","artificial intelligence","machine learning"),"AI / Machine Learning"),
+        (("cloud","cybersecurity","security platform"),"Cloud / Cybersecurity"),
+        (("data center","datacenter","compute","gpu","chip","semiconductor"),"Data Center / Compute"),
+        (("power","energy","electricity","renewable","geothermal","solar","wind","battery"),"Power / Energy Infrastructure"),
+        (("payment","payments","fintech"),"Payments / Fintech"),
+        (("health","drug","pharma","biotech","clinical"),"Healthcare / Life Sciences"),
+        (("advertising","ads","media","content","streaming"),"Advertising / Media"),
+        (("logistics","warehouse","delivery","supply chain"),"Logistics / Supply Chain"),
+        (("manufacturing","factory","industrial","automation"),"Industrial / Manufacturing"),
+    ]
+    labels=[label for phrases,label in specs if any(x in low for x in phrases)]
+    return "; ".join(labels[:2]) if labels else "Corporate / Other"
 
 def _materiality(amount,info,text):
     ratio=None; mc=(info or {}).get("marketCap"); quote=str((info or {}).get("currency") or "").upper()
@@ -298,7 +314,6 @@ def _milestone(kind,status,text):
     if kind=="Strategic Investment": return "Track funding milestones, ownership changes, strategic deliverables and accounting effects"
     if kind=="Divestiture / Asset Sale": return "Track close, proceeds, stranded costs, retained stake and capital redeployment"
     return "Track execution milestones and the next filing / earnings disclosure"
-
 def _tokens(text): return {w for w in re.findall(r"[a-z0-9]{3,}",_clean(text).lower()) if w not in STOP}
 def _similar(a,b):
     if a.get("type")!=b.get("type"): return False
