@@ -40,6 +40,16 @@ BASE = Path(__file__).resolve().parent
 DEFAULT_DB = BASE / "ml_data" / "ml_history.sqlite"
 RUNS = BASE / "ml_runs"
 
+PLACEHOLDER_TERMS=(
+    "analyst input","to be updated","placeholder","not available","not disclosed",
+    "tbd","n/a","n/m","unknown",
+)
+AI_CONTEXT_TERMS=(
+    " ai ","artificial intelligence","generative ai","genai","machine learning","llm",
+    "large language model","inference","training compute","gpu","accelerator","agentic",
+    "copilot","foundation model","ai-","ai ",
+)
+
 
 def ticker_type(raw: str) -> str:
     ticker = str(raw or "").upper().strip()
@@ -70,6 +80,62 @@ def _policy_for_workbook(path: Path, ticker: str):
         return get_business_model_policy(ticker)
 
 
+def _row_text(row: dict) -> str:
+    return " | ".join(
+        str(row.get(k) or "")
+        for k in ("kpi","name","current","value","unit_comparison","signal","investment_read_through","data_type")
+    ).strip()
+
+
+def _is_substantive_ai_row(row: dict) -> bool:
+    """Keep real AI evidence; reject analyst-input/template rows that create false precision."""
+    text=_row_text(row)
+    low=f" {text.lower()} "
+    if not any(term in low for term in AI_CONTEXT_TERMS):
+        return False
+    value_text=" | ".join(
+        str(row.get(k) or "")
+        for k in ("current","value","unit_comparison","signal","investment_read_through","data_type")
+    ).strip()
+    value_low=value_text.lower().strip()
+    if not value_low:
+        return False
+    numeric=bool(re.search(r"[-+]?\d+(?:\.\d+)?",value_text))
+    substantive_words=any(
+        word in value_low for word in (
+            "company reported","management","guidance","grew","growth","revenue","customer",
+            "user","backlog","bookings","margin","capex","contract","deployment","usage","paid",
+        )
+    )
+    placeholder_only=any(term in value_low for term in PLACEHOLDER_TERMS) and not numeric and not substantive_words
+    return not placeholder_only
+
+
+def _clean_ai_evidence(rows: list[dict], corpus: str) -> tuple[list[dict],str,dict]:
+    """Remove template placeholders before deterministic or LLM scoring.
+
+    Source-file evidence remains available, but placeholder lines from KPI templates are removed.
+    This prevents labels such as 'AI revenue — Analyst input' from nudging neutral scores upward.
+    """
+    clean_rows=[dict(r) for r in rows if isinstance(r,dict) and _is_substantive_ai_row(r)]
+    clean_lines=[]
+    removed_lines=0
+    for line in str(corpus or "").splitlines():
+        low=line.lower().strip()
+        if low and any(term in low for term in PLACEHOLDER_TERMS) and not re.search(r"[-+]?\d+(?:\.\d+)?",line):
+            removed_lines+=1
+            continue
+        clean_lines.append(line)
+    clean_corpus="\n".join(clean_lines)
+    stats={
+        "raw_kpi_rows":len(rows),
+        "substantive_ai_rows":len(clean_rows),
+        "filtered_placeholder_rows":max(0,len(rows)-len(clean_rows)),
+        "filtered_placeholder_lines":removed_lines,
+    }
+    return clean_rows,clean_corpus,stats
+
+
 def main() -> int:
     args = parser().parse_args()
     ticker = args.ticker
@@ -77,14 +143,18 @@ def main() -> int:
     history_db = Path(args.history_db).resolve()
     policy = _policy_for_workbook(workbook, ticker)
 
-    rows, corpus = load_kpi_evidence(BASE, ticker)
+    raw_rows, raw_corpus = load_kpi_evidence(BASE, ticker)
+    rows, corpus, evidence_quality = _clean_ai_evidence(raw_rows, raw_corpus)
     signals = (
         llm_ai_signals(rows, corpus, model=args.model)
         if args.llm
         else deterministic_ai_signals(rows, corpus)
     )
+    if evidence_quality["substantive_ai_rows"]==0 and not corpus.strip():
+        signals.summary="No substantive company-specific AI evidence was available after placeholder filtering; scores remain neutral."
     print(
-        f"[ai-growth] evidence: {signals.evidence_count} KPI row(s); "
+        f"[ai-growth] evidence: {signals.evidence_count} substantive KPI row(s) "
+        f"({evidence_quality['filtered_placeholder_rows']} filtered); "
         f"extraction={signals.extraction_mode}; confidence={signals.confidence:.0%}"
     )
     print(f"[ai-growth] business model: {policy.label}; primary valuation={policy.primary_valuation}")
@@ -146,6 +216,7 @@ def main() -> int:
         "workbook": str(workbook),
         "history_db": str(history_db),
         "business_model_policy": policy.to_dict(),
+        "evidence_quality": evidence_quality,
         "architecture": {
             "evidence_layer": signals.extraction_mode,
             "forecast_model": "LightGBM",
@@ -154,8 +225,9 @@ def main() -> int:
             "valuation_bridge": "reverse DCF implied FCF growth" if policy.reverse_dcf_allowed else policy.primary_valuation,
             "governance": (
                 "AI evidence is a bounded overlay until sufficient dated AI KPI history exists "
-                "to train AI features directly. This layer does not overwrite DCF assumptions. "
-                "Business-model policy disables industrial FCF/reverse-DCF where that framework is not economically appropriate."
+                "to train AI features directly. Template/analyst-input rows are filtered before scoring. "
+                "This layer does not overwrite DCF assumptions. Business-model policy disables industrial "
+                "FCF/reverse-DCF where that framework is not economically appropriate."
             ),
         },
         "ai_signals": signals.to_dict(),
@@ -190,8 +262,6 @@ def main() -> int:
     if not args.no_workbook_write:
         print(f"[ai-growth] workbook sheet updated: {workbook} -> AI Growth Forecast")
 
-    # Forecast insufficiency / non-applicability is not a hard pipeline failure. The evidence layer
-    # and revenue forecast remain useful while the valuation bridge follows the issuer's economics.
     return 0
 
 
