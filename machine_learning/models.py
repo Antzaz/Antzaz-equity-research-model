@@ -137,8 +137,14 @@ class MarketRegimeModel:
         names={i:label(centers.iloc[i]) for i in range(5)}
         current=X[-1]; d=np.linalg.norm(model.cluster_centers_-current,axis=1); probs=np.exp(-d); probs=probs/probs.sum()
         cluster=int(model.predict([current])[0]); current_name=names[cluster]
-        prob_map={names[i]:float(probs[i]) for i in range(5)}
-        return MLResult(self.name,"PASS",f"Current market regime is classified as {current_name} with distance-based confidence {probs[cluster]:.0%}.",prediction=current_name,confidence=_confidence_from_n(len(df),96,60),metrics={"monthly_rows":len(df),"regime_probabilities":prob_map,"cluster_centers":centers.to_dict(orient="records")})
+        # Multiple KMeans clusters can legitimately map to the same human-readable regime label.
+        # Aggregate them rather than letting a dict comprehension overwrite one probability.
+        prob_map={}
+        for i in range(5):
+            name=names[i]
+            prob_map[name]=prob_map.get(name,0.0)+float(probs[i])
+        current_weight=float(prob_map.get(current_name,float(probs[cluster])))
+        return MLResult(self.name,"PASS",f"Current market regime is classified as {current_name} with distance-based weight {current_weight:.0%}.",prediction=current_name,confidence=_confidence_from_n(len(df),96,60),metrics={"monthly_rows":len(df),"regime_probabilities":prob_map,"cluster_probabilities":[float(x) for x in probs],"cluster_labels":[names[i] for i in range(5)],"cluster_centers":centers.to_dict(orient="records")})
 
 
 class AIImpactMLModel:
