@@ -35,6 +35,7 @@ from agent_research import (
     SourceHealthAgent,
     ThesisMonitorAgent,
 )
+from workbook_integrity_postprocess import finalize_workbook_integrity
 
 BASE = Path(__file__).resolve().parent
 UPDATED_MODELS = BASE / "updated_models"
@@ -128,6 +129,7 @@ def render_report(ticker: str, workbook: Path, results: list, ai_model: str | No
         "- Commodity producers use a separate normalization overlay so peak commodity/acquisition years are not extrapolated as secular growth.",
         "- Market-share records preserve their market definition and source.",
         "- Valuation changes remain analyst-reviewed and are calculated by the deterministic model.",
+        "- A final workbook-integrity pass forces Excel charts to include hidden helper data and makes decision-facing N/M states explicit.",
         "",
     ])
     return "\n".join(lines)
@@ -180,6 +182,19 @@ def main() -> int:
             if args.strict:
                 return 3
 
+    integrity = {}
+    try:
+        integrity = finalize_workbook_integrity(workbook)
+        print(
+            f"[integrity] charts={integrity.get('charts', 0)}; "
+            f"zero-series={integrity.get('empty_series', 0)}; "
+            f"visible blanks clarified={integrity.get('visible_cells_filled', 0)}"
+        )
+    except Exception as exc:
+        print(f"[integrity] WARNING: final workbook integrity pass failed: {exc}")
+        if args.strict:
+            return 4
+
     manifest = {
         "ticker": ticker,
         "workbook": str(workbook),
@@ -188,6 +203,7 @@ def main() -> int:
         "ai_growth_enabled": bool(args.ml),
         "ai_growth_llm_extraction": bool(args.ml and ai_client),
         "data_integrity_runner": "commodity_safe_runner.py",
+        "workbook_integrity": integrity,
         "results": [x.to_dict() for x in results],
     }
     (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False, default=str) + "\n", encoding="utf-8")
