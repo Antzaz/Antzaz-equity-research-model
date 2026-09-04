@@ -31,6 +31,16 @@ ML_RUNS=BASE/"ml_runs"
 HISTORY_DB=BASE/"ml_data"/"ml_history.sqlite"
 VALUATION_FEATURES=["price_to_sales","earnings_yield","fcf_yield","book_to_market","ev_to_sales"]
 
+# Deep shared-history policy. Every normal --ml search reuses the same SQLite store and, while
+# coverage is still sparse, incrementally expands it toward a broad 500-name / 20-year universe.
+# A per-run batch cap keeps ordinary research usable instead of turning the first search into a
+# full-database bootstrap. The target ticker and its workbook peers are always prioritized.
+AUTO_HISTORY_DEFAULT_LIMIT=500
+AUTO_HISTORY_DEFAULT_YEARS=20
+AUTO_HISTORY_DEFAULT_BATCH=100
+AUTO_HISTORY_MAX_LIMIT=500
+AUTO_HISTORY_MAX_YEARS=20
+
 
 def ticker_type(raw:str)->str:
     t=raw.upper().strip()
@@ -43,14 +53,15 @@ def parser():
     p.add_argument("ticker",type=ticker_type)
     p.add_argument("--workbook",help="Optional workbook path; defaults to newest generated model")
     p.add_argument("--benchmark",default="SPY")
-    p.add_argument("--max-universe",type=int,default=25,help="Maximum symbols used by the legacy live-data fallback when persistent history is not ready")
+    p.add_argument("--max-universe",type=int,default=50,help="Maximum symbols used by the legacy live-data fallback when persistent history is not ready")
     p.add_argument("--max-position",type=float,default=.25)
     p.add_argument("--risk-aversion",type=float,default=4.0)
     p.add_argument("--history-db",default=str(HISTORY_DB),help="Persistent SQLite training database")
     p.add_argument("--no-history-db",action="store_true",help="Ignore the persistent database and use legacy live-data construction")
-    p.add_argument("--no-auto-history",action="store_true",help="Do not automatically seed a sparse/missing persistent history database")
-    p.add_argument("--auto-history-limit",type=int,default=80,help="Maximum names in the bounded one-time automatic history seed")
-    p.add_argument("--auto-history-years",type=int,default=12,help="Price-history years used by the bounded automatic history seed")
+    p.add_argument("--no-auto-history",action="store_true",help="Do not automatically deepen a sparse/missing persistent history database")
+    p.add_argument("--auto-history-limit",type=int,default=AUTO_HISTORY_DEFAULT_LIMIT,help="Target number of tracked names for the shared automatic history database")
+    p.add_argument("--auto-history-years",type=int,default=AUTO_HISTORY_DEFAULT_YEARS,help="Price-history years targeted by the automatic history database")
+    p.add_argument("--auto-history-batch-size",type=int,default=AUTO_HISTORY_DEFAULT_BATCH,help="Maximum incomplete symbols deepened in one normal ML search; repeated searches continue toward the target universe")
     p.add_argument("--no-workbook-write",action="store_true")
     return p
 
@@ -125,6 +136,25 @@ def _symbol_count(store:HistoryStore,table:str,symbol:str)->int:
     return 0
 
 
+def _coverage_counts(store:HistoryStore,symbols:list[str])->tuple[int,int]:
+    """Return symbols with usable price history and >=2 annual fundamental observations."""
+    symbols=list(dict.fromkeys(_provider_ticker(s) for s in symbols if _provider_ticker(s)))
+    if not symbols: return 0,0
+    placeholders=",".join(["?"]*len(symbols))
+    with store.connect() as con:
+        price_rows=con.execute(
+            f"SELECT symbol,COUNT(DISTINCT date) FROM prices WHERE symbol IN ({placeholders}) GROUP BY symbol",
+            tuple(symbols),
+        ).fetchall()
+        fundamental_rows=con.execute(
+            f"SELECT symbol,COUNT(DISTINCT fiscal_year) FROM fundamentals WHERE period='annual' AND symbol IN ({placeholders}) GROUP BY symbol",
+            tuple(symbols),
+        ).fetchall()
+    price_ready=sum(int(n)>=126 for _,n in price_rows)
+    fundamental_ready=sum(int(n)>=2 for _,n in fundamental_rows)
+    return int(price_ready),int(fundamental_ready)
+
+
 def _starter_universe(ticker:str,peers:list[str],benchmark:str,limit:int)->list[dict]:
     requested=[]
     for raw in [ticker,*peers,benchmark]:
@@ -148,37 +178,73 @@ def _starter_universe(ticker:str,peers:list[str],benchmark:str,limit:int)->list[
     return rows
 
 
-def _auto_seed_history(store:HistoryStore,ticker:str,peers:list[str],benchmark:str,limit:int=80,years:int=12)->dict:
-    """Bounded, resumable seed so --ml uses persistent point-in-time data by default.
+def _auto_seed_history(
+    store:HistoryStore,
+    ticker:str,
+    peers:list[str],
+    benchmark:str,
+    limit:int=AUTO_HISTORY_DEFAULT_LIMIT,
+    years:int=AUTO_HISTORY_DEFAULT_YEARS,
+    batch_size:int=AUTO_HISTORY_DEFAULT_BATCH,
+)->dict:
+    """Incrementally deepen the shared point-in-time history behind every normal --ml search.
 
-    The full ml_history.py workflow remains the preferred path for a deep 500-name / 20-year
-    research database. This helper only prevents a normal --ml run from silently reverting to a
-    tiny ephemeral dataset when the local SQLite store has not yet been prepared.
+    The target state is a broad 500-name / 20-year market-history universe. Only a bounded number
+    of incomplete symbols are downloaded per ordinary research run, so repeated searches improve
+    the common training set without making a single company search unreasonably slow. The target
+    ticker and its same-industry peers are inserted first and therefore receive priority.
     """
+    desired_limit=max(20,min(int(limit),AUTO_HISTORY_MAX_LIMIT))
+    desired_years=max(3,min(int(years),AUTO_HISTORY_MAX_YEARS))
+    per_run=max(10,min(int(batch_size),150))
+    rows=_starter_universe(ticker,peers,benchmark,desired_limit)
+    store.upsert_symbols(rows)
+    symbols=[r["symbol"] for r in rows]
+    desired_symbols=len(symbols)
+    benchmark_symbol=_provider_ticker(benchmark)
+
     status={
-        "attempted":False,"ready":False,"symbols":_db_count(store,"symbols"),
-        "prices":_db_count(store,"prices"),"fundamentals":_db_count(store,"fundamentals"),
-        "features":_db_count(store,"features"),"added_prices":0,"added_fundamentals":0,"built_features":0,
+        "attempted":False,"ready":False,"desired_symbols":desired_symbols,
+        "target_years":desired_years,"batch_size":per_run,
+        "symbols":_db_count(store,"symbols"),"prices":_db_count(store,"prices"),
+        "fundamentals":_db_count(store,"fundamentals"),"features":_db_count(store,"features"),
+        "added_prices":0,"added_fundamentals":0,"built_features":0,
     }
+    price_ready,fundamental_ready=_coverage_counts(store,symbols)
+    status["price_ready_symbols"]=price_ready
+    status["fundamental_ready_symbols"]=fundamental_ready
     target_ready=_symbol_count(store,"prices",ticker)>=126 and _symbol_count(store,"fundamentals",ticker)>=2
-    if status["features"]>=150 and target_ready:
-        status["ready"]=True; status["note"]="Persistent history already meets the automatic readiness threshold."
+    minimum_feature_rows=max(600,min(1500,desired_symbols*2))
+    status["minimum_feature_rows"]=minimum_feature_rows
+
+    # Do not declare a shallow old database finished merely because it has 150 rows. A broad
+    # database is ready only when most of the requested universe has usable price/fundamental
+    # coverage and enough realized point-in-time targets exist for meaningful cross-sectional ML.
+    coverage_ready=(
+        price_ready>=max(1,int(desired_symbols*.85)) and
+        fundamental_ready>=max(1,int((desired_symbols-(1 if benchmark_symbol in symbols else 0))*.65))
+    )
+    if status["features"]>=minimum_feature_rows and target_ready and coverage_ready:
+        status["ready"]=True
+        status["note"]=(
+            f"Deep persistent history ready: {status['features']:,} realized point-in-time feature rows; "
+            f"prices ready for {price_ready}/{desired_symbols} symbols and fundamentals ready for "
+            f"{fundamental_ready}/{desired_symbols}."
+        )
         return status
 
     status["attempted"]=True
-    rows=_starter_universe(ticker,peers,benchmark,max(20,min(int(limit),150)))
-    store.upsert_symbols(rows); symbols=[r["symbol"] for r in rows]
-
-    needed=[s for s in symbols if _symbol_count(store,"prices",s)<126]
+    needed=[s for s in symbols if _symbol_count(store,"prices",s)<126][:per_run]
+    status["price_symbols_attempted"]=len(needed)
     buf=[]
-    for row in yahoo_price_rows(needed,years=max(3,min(int(years),20)),batch_size=30):
+    for row in yahoo_price_rows(needed,years=desired_years,batch_size=30):
         buf.append(row)
         if len(buf)>=10000:
             status["added_prices"]+=store.upsert_prices(buf); buf=[]
     if buf: status["added_prices"]+=store.upsert_prices(buf)
 
-    benchmark_symbol=_provider_ticker(benchmark)
-    needed_f=[s for s in symbols if s!=benchmark_symbol and _symbol_count(store,"fundamentals",s)<2]
+    needed_f=[s for s in symbols if s!=benchmark_symbol and _symbol_count(store,"fundamentals",s)<2][:per_run]
+    status["fundamental_symbols_attempted"]=len(needed_f)
     if needed_f:
         with ThreadPoolExecutor(max_workers=min(8,max(1,len(needed_f)))) as pool:
             futures={pool.submit(yahoo_fundamental_rows,s):s for s in needed_f}
@@ -193,11 +259,21 @@ def _auto_seed_history(store:HistoryStore,ticker:str,peers:list[str],benchmark:s
         "symbols":_db_count(store,"symbols"),"prices":_db_count(store,"prices"),
         "fundamentals":_db_count(store,"fundamentals"),"features":_db_count(store,"features"),
     })
-    status["ready"]=status["features"]>=30
+    price_ready,fundamental_ready=_coverage_counts(store,symbols)
+    status["price_ready_symbols"]=price_ready
+    status["fundamental_ready_symbols"]=fundamental_ready
+    target_ready=_symbol_count(store,"prices",ticker)>=126 and _symbol_count(store,"fundamentals",ticker)>=2
+    coverage_ready=(
+        price_ready>=max(1,int(desired_symbols*.85)) and
+        fundamental_ready>=max(1,int((desired_symbols-(1 if benchmark_symbol in symbols else 0))*.65))
+    )
+    status["ready"]=bool(status["features"]>=minimum_feature_rows and target_ready and coverage_ready)
     status["note"]=(
-        f"Automatic persistent history {'ready' if status['ready'] else 'sparse'}: {status['features']} realized "
-        f"point-in-time feature rows across {status['symbols']} tracked symbols. For deeper training use "
-        "`python ml_history.py bootstrap --universe sp500 --limit 500 --years 20` and optional provider enrichments."
+        f"Automatic deep history {'ready' if status['ready'] else 'deepening'}: {status['features']:,} realized "
+        f"point-in-time feature rows; price coverage {price_ready}/{desired_symbols}, fundamental coverage "
+        f"{fundamental_ready}/{desired_symbols}. Up to {per_run} incomplete names are added per ML search "
+        f"until the shared database approaches {desired_limit} names / {desired_years} years. For an immediate "
+        "one-shot build use `python ml_history.py bootstrap --universe sp500 --limit 500 --years 20`."
     )
     return status
 
@@ -230,7 +306,10 @@ def main()->int:
         try:
             store=HistoryStore(db_path); print(f"[ml] persistent history: {db_path}")
             if not args.no_auto_history:
-                auto_history=_auto_seed_history(store,ticker,peers,args.benchmark,args.auto_history_limit,args.auto_history_years)
+                auto_history=_auto_seed_history(
+                    store,ticker,peers,args.benchmark,args.auto_history_limit,args.auto_history_years,
+                    args.auto_history_batch_size,
+                )
                 print(f"[ml] history readiness: {auto_history.get('note','')}")
         except Exception as exc:
             store=None; auto_history={"attempted":True,"ready":False,"error":repr(exc)}
