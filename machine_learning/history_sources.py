@@ -13,6 +13,8 @@ Provider responses are never silently treated as equivalent. Every stored row ca
 """
 
 from datetime import datetime, timezone
+from pathlib import Path
+import base64
 import io
 import os
 import time
@@ -29,6 +31,11 @@ from .data import DEFAULT_UNIVERSE
 AV_URL="https://www.alphavantage.co/query"
 FMP_URL="https://financialmodelingprep.com/stable"
 FRED_CSV="https://fred.stlouisfed.org/graph/fredgraph.csv"
+SP500_WIKI_URL="https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+SP500_GITHUB_RAW_URL="https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv"
+SP500_GITHUB_API_URL="https://api.github.com/repos/datasets/s-and-p-500-companies/contents/data/constituents.csv?ref=main"
+SP500_CACHE=Path(__file__).resolve().parents[1]/"ml_data"/"sp500_universe_cache.csv"
+SP500_HEADERS={"User-Agent":"Antzaz-equity-research-model/1.0 (research universe loader)"}
 
 FRED_SERIES={
     "DGS10":"10Y Treasury yield",
@@ -50,23 +57,134 @@ def _num(v):
     except Exception: return None
 
 
-def current_sp500_universe(limit=500):
-    """Current S&P 500 constituents. This is a current-universe convenience, not survivorship-free history."""
+def _clean_cik(value):
+    if value is None or (isinstance(value,float) and np.isnan(value)): return None
+    try: return str(int(float(value)))
+    except Exception:
+        text=str(value).strip()
+        return text.split(".")[0] if text and text.lower()!="nan" else None
+
+
+def _sp500_rows_from_frame(df:pd.DataFrame,source:str,limit:int)->list[dict]:
+    if df is None or df.empty or "Symbol" not in df.columns:
+        raise ValueError(f"{source} did not contain an S&P 500 Symbol column")
+    rows=[]; seen=set()
+    for _,r in df.iterrows():
+        raw=r.get("Symbol")
+        if raw is None or pd.isna(raw): continue
+        symbol=str(raw).replace(".","-").strip().upper()
+        if not symbol or symbol in seen: continue
+        seen.add(symbol)
+        rows.append({
+            "symbol":symbol,
+            "name":None if pd.isna(r.get("Security")) else r.get("Security"),
+            "sector":None if pd.isna(r.get("GICS Sector")) else r.get("GICS Sector"),
+            "industry":None if pd.isna(r.get("GICS Sub-Industry")) else r.get("GICS Sub-Industry"),
+            "cik":_clean_cik(r.get("CIK")),
+            "universe_source":source,
+        })
+        if len(rows)>=int(limit): break
+    return rows
+
+
+def _sp500_coverage_ok(rows:list[dict],limit:int)->bool:
+    requested=max(1,int(limit))
+    minimum=requested if requested<=50 else max(50,int(requested*.90))
+    return len(rows)>=minimum
+
+
+def _write_sp500_cache(rows:list[dict]):
+    if not rows: return
     try:
-        tables=pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
-        df=tables[0]
+        SP500_CACHE.parent.mkdir(parents=True,exist_ok=True)
+        pd.DataFrame(rows).to_csv(SP500_CACHE,index=False)
+    except Exception:
+        pass
+
+
+def _read_sp500_cache(limit:int)->list[dict]:
+    try:
+        if not SP500_CACHE.exists(): return []
+        df=pd.read_csv(SP500_CACHE)
         rows=[]
         for _,r in df.iterrows():
-            symbol=str(r.get("Symbol") or "").replace(".","-").strip().upper()
-            if not symbol: continue
+            symbol=str(r.get("symbol") or "").strip().upper()
+            if not symbol or symbol.lower()=="nan": continue
             rows.append({
-                "symbol":symbol,"name":r.get("Security"),"sector":r.get("GICS Sector"),
-                "industry":r.get("GICS Sub-Industry"),"cik":str(r.get("CIK") or "").split(".")[0] or None,
-                "universe_source":"Current S&P 500 constituent snapshot",
+                "symbol":symbol,
+                "name":None if pd.isna(r.get("name")) else r.get("name"),
+                "sector":None if pd.isna(r.get("sector")) else r.get("sector"),
+                "industry":None if pd.isna(r.get("industry")) else r.get("industry"),
+                "cik":_clean_cik(r.get("cik")),
+                "universe_source":"Cached S&P 500 constituent snapshot",
             })
-        return rows[:limit]
+            if len(rows)>=int(limit): break
+        return rows
     except Exception:
+        return []
+
+
+def current_sp500_universe(limit=500):
+    """Return a broad current S&P 500 constituent snapshot without silently shrinking to 25 names.
+
+    Source order is Wikipedia HTML, a maintained public GitHub CSV, GitHub's contents API, then a
+    previously successful local cache. Large requests fail loudly if none of those sources can
+    provide broad coverage. That prevents a requested 500-name ML bootstrap from appearing to
+    succeed while actually training on the small built-in fallback universe.
+    """
+    limit=max(1,int(limit)); errors=[]
+
+    try:
+        r=requests.get(SP500_WIKI_URL,headers=SP500_HEADERS,timeout=30)
+        r.raise_for_status()
+        tables=pd.read_html(io.StringIO(r.text))
+        rows=_sp500_rows_from_frame(tables[0],"Wikipedia current S&P 500 snapshot",limit)
+        if _sp500_coverage_ok(rows,limit):
+            _write_sp500_cache(rows); return rows
+        errors.append(f"Wikipedia returned only {len(rows)} names")
+    except Exception as exc:
+        errors.append(f"Wikipedia: {type(exc).__name__}: {exc}")
+
+    try:
+        r=requests.get(SP500_GITHUB_RAW_URL,headers=SP500_HEADERS,timeout=30)
+        r.raise_for_status()
+        rows=_sp500_rows_from_frame(pd.read_csv(io.StringIO(r.text)),"GitHub datasets S&P 500 snapshot",limit)
+        if _sp500_coverage_ok(rows,limit):
+            _write_sp500_cache(rows); return rows
+        errors.append(f"GitHub raw CSV returned only {len(rows)} names")
+    except Exception as exc:
+        errors.append(f"GitHub raw CSV: {type(exc).__name__}: {exc}")
+
+    try:
+        headers={**SP500_HEADERS,"Accept":"application/vnd.github.raw+json"}
+        r=requests.get(SP500_GITHUB_API_URL,headers=headers,timeout=30)
+        r.raise_for_status()
+        text=r.text
+        if "application/json" in str(r.headers.get("Content-Type") or "").lower():
+            payload=r.json()
+            encoded=payload.get("content") if isinstance(payload,dict) else None
+            if encoded: text=base64.b64decode(encoded).decode("utf-8")
+        rows=_sp500_rows_from_frame(pd.read_csv(io.StringIO(text)),"GitHub API S&P 500 snapshot",limit)
+        if _sp500_coverage_ok(rows,limit):
+            _write_sp500_cache(rows); return rows
+        errors.append(f"GitHub API returned only {len(rows)} names")
+    except Exception as exc:
+        errors.append(f"GitHub API: {type(exc).__name__}: {exc}")
+
+    cached=_read_sp500_cache(limit)
+    if _sp500_coverage_ok(cached,limit): return cached
+
+    # The tiny built-in universe is still useful for deliberate small/offline tests, but it must
+    # never masquerade as a successful 500-name bootstrap.
+    if limit<=len(DEFAULT_UNIVERSE):
         return [{"symbol":s,"universe_source":"Built-in fallback universe"} for s in DEFAULT_UNIVERSE[:limit]]
+
+    detail=" | ".join(errors[-3:])
+    raise RuntimeError(
+        f"Unable to load a broad S&P 500 universe (requested {limit}; cache has {len(cached)}). "
+        "Refusing to silently fall back to the small built-in universe. Check internet access to "
+        f"Wikipedia/GitHub and retry. Details: {detail}"
+    )
 
 
 def yahoo_price_rows(symbols,years=20,batch_size=40):
