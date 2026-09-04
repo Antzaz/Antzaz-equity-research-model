@@ -156,8 +156,8 @@ with open(model_path, "rb") as f:
     )
 
 
-tab_hist, tab_segments, tab_people, tab_news, tab_sources = st.tabs(
-    ["Historical Financials", "Segments", "Leadership & Culture", "Recent News", "Workbook Sources"]
+tab_hist, tab_segments, tab_people, tab_deals, tab_news, tab_sources = st.tabs(
+    ["Historical Financials", "Segments", "Leadership & Culture", "Deals & Transactions", "Recent News", "Workbook Sources"]
 )
 
 with tab_hist:
@@ -260,6 +260,51 @@ with tab_people:
             st.success(f"Candidate for deeper research: {candidate}")
         elif best_peer:
             st.caption(f"Best current peer-screen score: {best_peer}; threshold for a clear alternative was not met.")
+
+with tab_deals:
+    if "Deals & Transactions" not in wb.sheetnames:
+        st.info("No Deals & Transactions sheet is available in this workbook yet.")
+    else:
+        ws = wb["Deals & Transactions"]
+        deals = []
+        known_types = {
+            "Acquisition / M&A", "Divestiture / Asset Sale", "Strategic Investment", "Joint Venture",
+            "Major Commercial Contract", "Strategic Partnership", "Financing / Funding",
+        }
+        for r in range(15, ws.max_row + 1):
+            deal_type = str(ws.cell(r, 3).value or "").strip()
+            headline = ws.cell(r, 5).value
+            if deal_type not in known_types or not headline:
+                continue
+            deals.append({
+                "Date": ws.cell(r, 1).value,
+                "Status": ws.cell(r, 2).value,
+                "Type": deal_type,
+                "Counterparty / Asset": ws.cell(r, 4).value,
+                "Deal / Headline": headline,
+                "Disclosed Value": ws.cell(r, 6).value,
+                "Materiality": ws.cell(r, 7).value,
+                "Strategic Area": ws.cell(r, 8).value,
+                "Structure / Terms": ws.cell(r, 9).value,
+                "Strategic Rationale — Analyst Lens": ws.cell(r, 10).value,
+                "Financial / Valuation Impact — Analyst Lens": ws.cell(r, 11).value,
+                "Key Risks — Analyst Lens": ws.cell(r, 12).value,
+                "Regulatory / Closing": ws.cell(r, 13).value,
+                "Next Milestone": ws.cell(r, 14).value,
+                "Source Quality": ws.cell(r, 16).value,
+                "Publisher": ws.cell(r, 17).value,
+                "Source Link": ws.cell(r, 18).value,
+            })
+        if deals:
+            df = pd.DataFrame(deals)
+            st.caption("Material transaction monitor. Analyst-lens columns are inference; source-backed facts and links remain separate.")
+            st.dataframe(df, use_container_width=True, hide_index=True)
+            active = df[df["Status"].isin(["Announced / Pending", "Approved / Clearing", "Signed / Active"])]
+            if not active.empty:
+                st.markdown("#### Pending / active deal watch")
+                st.dataframe(active[["Deal / Headline", "Status", "Disclosed Value", "Next Milestone", "Key Risks — Analyst Lens", "Source Link"]], use_container_width=True, hide_index=True)
+        else:
+            st.info("No sufficiently material recent deal was verified in the latest refresh.")
 
 with tab_news:
     if "Recent News & Impact" not in wb.sheetnames:
