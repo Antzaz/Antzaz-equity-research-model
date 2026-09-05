@@ -11,12 +11,14 @@ on:
       - 'public_data_backfill.py'
       - 'public_data_orchestrator.py'
       - 'ai_public_evidence.py'
+      - 'ai_growth_research.py'
       - 'scenario_integrity.py'
       - 'workbook_presentation.py'
       - 'workbook_integrity_postprocess.py'
       - 'commodity_safe_runner.py'
       - 'research.py'
       - 'tests/test_integrity_presentation_backfill.py'
+      - 'tests/test_ml_readability_quality.py'
       - '.github/workflows/integrity-presentation-smoke.yml'
   pull_request:
     branches: [main]
@@ -39,9 +41,9 @@ jobs:
           python -m pip install -r requirements.txt pytest
       - name: Compile new integrity layers
         run: |
-          python -m py_compile canonical_statement_guard.py public_data_backfill.py public_data_orchestrator.py ai_public_evidence.py scenario_integrity.py workbook_presentation.py workbook_integrity_postprocess.py commodity_safe_runner.py research.py
+          python -m py_compile canonical_statement_guard.py public_data_backfill.py public_data_orchestrator.py ai_public_evidence.py ai_growth_research.py scenario_integrity.py workbook_presentation.py workbook_integrity_postprocess.py commodity_safe_runner.py research.py
       - name: Run focused regression tests
-        run: pytest -q tests/test_integrity_presentation_backfill.py
+        run: pytest -q tests/test_integrity_presentation_backfill.py tests/test_ml_readability_quality.py
 
   cross-sector-workbook:
     strategy:
