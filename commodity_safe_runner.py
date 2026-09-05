@@ -4,13 +4,15 @@ from __future__ import annotations
 
 The guarded core model remains stable while this entry point installs business-model routing,
 canonical accounting guards, conservative public-data recovery, scenario-assumption sanity checks,
-commodity normalization, verified segment adapters, and a final decision-first workbook layout.
+commodity normalization, public AI-evidence enrichment, verified segment adapters, and a final
+decision-first workbook layout.
 """
 
 import advanced_analytics_v2
 import decision_view_v2
 import safe_update_model as safe
 
+from ai_public_evidence import seed_public_ai_evidence
 from canonical_statement_guard import apply_canonical_statement_guard, decorate_data_quality
 from cross_sector_runtime import install_cross_sector_runtime
 from commodity_valuation_v3 import (
@@ -175,6 +177,19 @@ safe.update_model.ensure_research_extensions = _research_extensions_with_deals
 
 
 def main():
+    # Seed uncoded companies with conservative qualitative public AI evidence before any workbook
+    # module builds the AI Impact Analysis sheet. Curated issuer packs remain authoritative.
+    try:
+        ticker = safe.update_model.get_ticker()
+        # update_model.main() will call get_ticker() again; normalize argv so both calls agree.
+        import sys
+        if len(sys.argv) > 1:
+            sys.argv[1] = ticker
+        seeded = seed_public_ai_evidence(ticker)
+        if seeded.get("seeded"):
+            print(f"Public AI evidence: seeded {seeded['seeded']} qualitative row(s) for {ticker}")
+    except Exception as exc:
+        print(f"Warning: public AI evidence seeding failed: {exc}")
     safe.main()
 
 
