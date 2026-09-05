@@ -3,8 +3,8 @@ from __future__ import annotations
 """Production runner extending safe_update_model with cross-sector integrity controls.
 
 The guarded core model remains stable while this entry point installs business-model routing,
-canonical accounting guards, scenario-assumption sanity checks, commodity normalization,
-verified segment adapters, and the source-backed transaction monitor.
+canonical accounting guards, conservative public-data recovery, scenario-assumption sanity checks,
+commodity normalization, verified segment adapters, and the source-backed transaction monitor.
 """
 
 import advanced_analytics_v2
@@ -21,6 +21,7 @@ from commodity_valuation_v3 import (
 )
 from deal_analysis import ensure_deal_analysis
 from google_segment_analysis import ensure_google_segment_analysis
+from public_data_orchestrator import run_public_data_recovery
 from scenario_integrity import repair_default_scenario_margin_paths
 
 
@@ -77,7 +78,7 @@ def _scenarios_with_integrity(wb, hist, info):
 
 
 def _financial_statements_with_canonical_guard(wb, ticker, facts):
-    """Run all existing statement repairs, then let exact SEC canonical lines win."""
+    """Run existing statement repairs, exact SEC guards, then exhaust safe public fallbacks."""
     result = _ORIGINAL_FINANCIAL_STATEMENTS(wb, ticker, facts)
     try:
         guard = apply_canonical_statement_guard(wb, ticker, facts)
@@ -90,6 +91,22 @@ def _financial_statements_with_canonical_guard(wb, ticker, facts):
             )
     except Exception as exc:
         print(f"Warning: SEC-first canonical statement guard failed: {exc}")
+
+    # Only blanks are eligible here. Exact SEC/issuer values written above are protected.
+    try:
+        info = getattr(wb, "_wacc_info", {}) or {}
+        recovery = run_public_data_recovery(wb, ticker, info)
+        setattr(wb, "_public_data_recovery", recovery)
+        if recovery.get("provider_cells_filled") or recovery.get("derived_cells_filled") or recovery.get("profile_rows_filled"):
+            print(
+                "Public-data recovery: "
+                f"provider={recovery.get('provider_cells_filled', 0)} cells; "
+                f"derived={recovery.get('derived_cells_filled', 0)}; "
+                f"profile rows={recovery.get('profile_rows_filled', 0)}; "
+                f"history sync={recovery.get('history_sync', 0)}"
+            )
+    except Exception as exc:
+        print(f"Warning: conservative public-data recovery failed: {exc}")
     return result
 
 
