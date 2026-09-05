@@ -5,7 +5,10 @@ from typing import Iterable
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
 from openpyxl.chart import BarChart, Reference
+from openpyxl.chart.data_source import AxDataSource, StrRef
 from openpyxl.chart.label import DataLabelList
+from openpyxl.chart.series import SeriesLabel
+from openpyxl.utils import get_column_letter
 
 from .common import MLResult
 
@@ -56,6 +59,23 @@ def _wf(res):
 def _pct(v):
     try: return float(v)
     except Exception: return None
+
+
+def _set_chart_text_categories(chart, ws, category_col, first_row, last_row, series_titles=None):
+    """Force text-category refs and literal series names for Excel/renderer compatibility.
+
+    openpyxl's generic set_categories() can serialize a text helper range as numRef. Excel often
+    repairs that silently, but other renderers can show generic Series 1/2 names or broken labels.
+    Writing an explicit strRef and literal SeriesLabel keeps the OOXML unambiguous.
+    """
+    sheet_name=ws.title.replace("'","''")
+    col=get_column_letter(category_col)
+    category_formula=f"'{sheet_name}'!${col}${first_row}:${col}${last_row}"
+    titles=list(series_titles or [])
+    for idx,series in enumerate(chart.series):
+        series.cat=AxDataSource(strRef=StrRef(f=category_formula))
+        if idx<len(titles):
+            series.tx=SeriesLabel(v=str(titles[idx]))
 
 
 def _validation_summary(res: MLResult) -> str:
@@ -124,8 +144,8 @@ def _add_ml_charts(ws, result_list):
         ch.title="Forecast size vs typical historical error"
         ch.y_axis.title="Percent (%)"; ch.y_axis.numFmt="0.0"
         ch.height=7.0; ch.width=13.0
-        ch.add_data(Reference(ws,min_col=25,max_col=26,min_row=start,max_row=rr-1),titles_from_data=True)
-        ch.set_categories(Reference(ws,min_col=24,min_row=start+1,max_row=rr-1))
+        ch.add_data(Reference(ws,min_col=25,max_col=26,min_row=start+1,max_row=rr-1),titles_from_data=False)
+        _set_chart_text_categories(ch,ws,24,start+1,rr-1,["Forecast magnitude","Typical historical error"])
         ch.legend.position="b"
         ch.dLbls=DataLabelList(); ch.dLbls.showVal=True; ch.dLbls.numFmt="0.0"
         ws.add_chart(ch,"K8")
@@ -145,8 +165,8 @@ def _add_ml_charts(ws, result_list):
         ch.title="Did the model beat a simple historical rule?"
         ch.y_axis.title="Directional accuracy (%)"; ch.y_axis.scaling.min=0; ch.y_axis.scaling.max=100; ch.y_axis.numFmt="0.0"
         ch.height=7.0; ch.width=13.0
-        ch.add_data(Reference(ws,min_col=25,max_col=26,min_row=start,max_row=rr-1),titles_from_data=True)
-        ch.set_categories(Reference(ws,min_col=24,min_row=start+1,max_row=rr-1))
+        ch.add_data(Reference(ws,min_col=25,max_col=26,min_row=start+1,max_row=rr-1),titles_from_data=False)
+        _set_chart_text_categories(ch,ws,24,start+1,rr-1,["Model accuracy","Simple baseline"])
         ch.legend.position="b"
         ch.dLbls=DataLabelList(); ch.dLbls.showVal=True; ch.dLbls.numFmt="0.0"
         ws.add_chart(ch,"K24")
@@ -165,8 +185,9 @@ def _add_ml_charts(ws, result_list):
         ch.title="What the 12M return model pays attention to"
         ch.y_axis.title="Input"; ch.x_axis.title="Share of top-driver influence (%)"; ch.x_axis.numFmt="0.0"
         ch.height=7.5; ch.width=13.0
-        ch.add_data(Reference(ws,min_col=25,min_row=s,max_row=s+len(drivers)),titles_from_data=True)
-        ch.set_categories(Reference(ws,min_col=24,min_row=s+1,max_row=s+len(drivers))); ch.legend=None
+        ch.add_data(Reference(ws,min_col=25,min_row=s+1,max_row=s+len(drivers)),titles_from_data=False)
+        _set_chart_text_categories(ch,ws,24,s+1,s+len(drivers),["Share of top-driver influence"])
+        ch.legend=None
         ch.dLbls=DataLabelList(); ch.dLbls.showVal=True; ch.dLbls.numFmt="0.0"
         ws.add_chart(ch,"K40")
 
@@ -188,8 +209,9 @@ def _add_ml_charts(ws, result_list):
         ch.y_axis.title="Market state"; ch.x_axis.title="Distance-based weight (%)"
         ch.x_axis.scaling.min=0; ch.x_axis.scaling.max=100; ch.x_axis.numFmt="0.0"
         ch.height=7.0; ch.width=13.0
-        ch.add_data(Reference(ws,min_col=25,min_row=s,max_row=s+len(items)),titles_from_data=True)
-        ch.set_categories(Reference(ws,min_col=24,min_row=s+1,max_row=s+len(items))); ch.legend=None
+        ch.add_data(Reference(ws,min_col=25,min_row=s+1,max_row=s+len(items)),titles_from_data=False)
+        _set_chart_text_categories(ch,ws,24,s+1,s+len(items),["Weight"])
+        ch.legend=None
         ch.dLbls=DataLabelList(); ch.dLbls.showVal=True; ch.dLbls.numFmt="0.0"
         ws.add_chart(ch,"K58")
 
