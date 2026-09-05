@@ -40,6 +40,7 @@ from agent_research import (
     SourceHealthAgent,
     ThesisMonitorAgent,
 )
+from chart_excel_compat import apply_chart_compatibility_fix
 from workbook_enhancements import apply_workbook_enhancements
 
 BASE = Path(__file__).resolve().parent
@@ -106,6 +107,18 @@ def enhance_workbook(ticker: str, workbook: Path, *, reason: str) -> dict | None
         return None
 
 
+def fix_chart_rendering(workbook: Path, *, reason: str) -> dict | None:
+    """Keep ML/AI chart helper sources Excel-visible without exposing them in the main view."""
+    try:
+        result = apply_chart_compatibility_fix(workbook)
+        touched = ",".join(result.get("chart_helper_sheets") or []) or "none"
+        print(f"[workbook] {reason}: Excel chart helper compatibility applied to {touched}")
+        return result
+    except Exception as exc:
+        print(f"[workbook] WARNING: {reason} chart compatibility fix failed: {exc}")
+        return None
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Agent-assisted equity research orchestrator")
     parser.add_argument("ticker", type=valid_ticker)
@@ -167,6 +180,7 @@ def main() -> int:
     # need the same treatment before agents inspect them.
     if args.skip_model:
         enhance_workbook(ticker, workbook, reason="reused workbook")
+        fix_chart_rendering(workbook, reason="reused workbook")
 
     stamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
     run_dir = RUNS_DIR / ticker / stamp
@@ -206,6 +220,9 @@ def main() -> int:
             # ML adds workbook tabs after the production build; reapply presentation cleanup so the
             # final file remains consistent while preserving the new model outputs.
             enhance_workbook(ticker, workbook, reason="post-ML final polish")
+            # Excel ignores chart categories sourced from hidden helper cells by default. Keep the
+            # helper sources technically visible but extremely narrow so category labels survive.
+            fix_chart_rendering(workbook, reason="post-ML final chart fix")
         except Exception as exc:
             print(f"[ml] WARNING: ML / AI Growth layer failed without changing the deterministic valuation model: {exc}")
             if args.strict:
