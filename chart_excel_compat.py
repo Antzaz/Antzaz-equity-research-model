@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-"""Excel chart-compatibility post-pass for generated research workbooks.
+"""Excel-safe chart helpers for generated research workbooks.
 
-ML and AI chart helper cells must stay technically visible because Excel normally excludes hidden
-source cells from chart plots. The post-pass also writes explicit category/value-axis positions.
-Orientation is detected from each chart itself rather than from chart order, so the repair remains
-correct when a ticker produces only a subset of the normal charts.
+Excel normally excludes hidden chart-source cells from plots, and openpyxl chart axes can be
+serialized ambiguously unless their positions are explicit. The primary chart generators use the
+helpers in this module directly; ``apply_chart_compatibility_fix`` remains as a defensive post-pass
+for older/reused workbooks.
 """
 
 from pathlib import Path
@@ -20,7 +20,7 @@ HELPER_RANGES = {
 }
 
 
-def _make_helpers_excel_visible(ws, first_col: str, last_col: str, helper_range: str) -> None:
+def make_chart_helpers_excel_visible(ws, first_col: str, last_col: str, helper_range: str) -> None:
     """Keep chart sources visible to Excel while making them unobtrusive to users."""
     start = ws[first_col + "1"].column
     end = ws[last_col + "1"].column
@@ -34,7 +34,7 @@ def _make_helpers_excel_visible(ws, first_col: str, last_col: str, helper_range:
             cell.font = Font(name="Aptos", size=1, color="FFFFFF")
 
 
-def _is_horizontal_bar(chart) -> bool:
+def is_horizontal_bar(chart) -> bool:
     """Detect chart orientation from the chart itself, never from list position."""
     direction = getattr(chart, "type", None)
     if not isinstance(direction, str):
@@ -43,8 +43,8 @@ def _is_horizontal_bar(chart) -> bool:
     return str(value or "").lower() == "bar"
 
 
-def _repair_axis_positions(chart) -> None:
-    """Make chart sources and axes explicit without changing chart-specific semantics."""
+def configure_chart_for_excel(chart) -> None:
+    """Make chart sources and axes explicit without changing chart-specific titles/scales."""
     chart.visible_cells_only = False
     x_axis = getattr(chart, "x_axis", None)
     y_axis = getattr(chart, "y_axis", None)
@@ -56,7 +56,7 @@ def _repair_axis_positions(chart) -> None:
     x_axis.tickLblPos = "nextTo"
     y_axis.tickLblPos = "nextTo"
 
-    if _is_horizontal_bar(chart):
+    if is_horizontal_bar(chart):
         # For openpyxl BarChart(type='bar'), x_axis is the category axis and y_axis the value axis.
         x_axis.axPos = "l"
         y_axis.axPos = "b"
@@ -68,7 +68,7 @@ def _repair_axis_positions(chart) -> None:
 def _repair_charts(ws) -> int:
     charts = list(getattr(ws, "_charts", []) or [])
     for chart in charts:
-        _repair_axis_positions(chart)
+        configure_chart_for_excel(chart)
     return len(charts)
 
 
@@ -82,7 +82,7 @@ def apply_chart_compatibility_fix(workbook_path: str | Path) -> dict:
         if sheet_name not in wb.sheetnames:
             continue
         ws = wb[sheet_name]
-        _make_helpers_excel_visible(ws, first_col, last_col, helper_range)
+        make_chart_helpers_excel_visible(ws, first_col, last_col, helper_range)
         chart_count += _repair_charts(ws)
         touched.append(sheet_name)
 
