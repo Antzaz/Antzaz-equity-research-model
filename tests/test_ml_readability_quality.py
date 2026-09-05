@@ -94,3 +94,34 @@ def test_ai_template_rows_do_not_create_false_company_specific_signal():
     assert stats["filtered_placeholder_rows"]==2
     assert "Analyst input" not in clean_corpus
     assert "12%" in clean_corpus
+
+
+def test_secondary_public_ai_context_is_visible_but_not_scored():
+    rows=[
+        {
+            "kpi":"AI-related public news — Reuters",
+            "current":None,
+            "unit_comparison":"Qualitative public-source research lead",
+            "signal":"Neutral",
+            "investment_read_through":"Company may expand AI infrastructure rapidly; verify against filings.",
+            "data_type":"Secondary public news",
+        },
+        {
+            "kpi":"AI backlog",
+            "current":"Company reported $12bn AI backlog, +40% YoY",
+            "signal":"Very strong",
+            "investment_read_through":"Reported backlog supports monetization visibility.",
+            "data_type":"Company reported",
+        },
+    ]
+    corpus="\n".join([
+        "AI-related public news — Reuters | Neutral | Secondary public news | AI demand could grow 80%",
+        "AI backlog | Company reported $12bn AI backlog, +40% YoY | Very strong | Company reported",
+    ])
+    clean_rows,clean_corpus,stats=_clean_ai_evidence(rows,corpus)
+    assert len(clean_rows)==1
+    assert clean_rows[0]["kpi"]=="AI backlog"
+    assert stats["context_only_ai_rows"]==1
+    assert stats["context_only_evidence"]
+    assert "Reuters" not in clean_corpus
+    assert "+40%" in clean_corpus
