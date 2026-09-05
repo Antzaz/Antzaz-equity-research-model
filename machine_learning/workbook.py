@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Iterable
+
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
 from openpyxl.chart import BarChart, Reference
@@ -10,6 +11,7 @@ from openpyxl.chart.label import DataLabelList
 from openpyxl.chart.series import SeriesLabel
 from openpyxl.utils import get_column_letter
 
+from chart_excel_compat import configure_chart_for_excel, make_chart_helpers_excel_visible
 from .common import MLResult
 
 NAVY="17365D"; BLUE="2F75B5"; WHITE="FFFFFF"; GREY="666666"; LIGHT="F5F9FC"; GOLD="FFF2CC"; RED="FCE4D6"; GREEN="E2F0D9"
@@ -62,12 +64,7 @@ def _pct(v):
 
 
 def _set_chart_text_categories(chart, ws, category_col, first_row, last_row, series_titles=None):
-    """Force text-category refs and literal series names for Excel/renderer compatibility.
-
-    openpyxl's generic set_categories() can serialize a text helper range as numRef. Excel often
-    repairs that silently, but other renderers can show generic Series 1/2 names or broken labels.
-    Writing an explicit strRef and literal SeriesLabel keeps the OOXML unambiguous.
-    """
+    """Force text-category refs and literal series names for Excel/renderer compatibility."""
     sheet_name=ws.title.replace("'","''")
     col=get_column_letter(category_col)
     category_formula=f"'{sheet_name}'!${col}${first_row}:${col}${last_row}"
@@ -115,18 +112,17 @@ def _how_to_read_box(ws):
     ws["K2"].fill=_fill(NAVY); ws["K2"].font=Font(bold=True,color=WHITE)
     ws.merge_cells("K3:N6")
     ws["K3"]=(
-        "PASS = usable second-opinion evidence. REVIEW = context only. INS UFFICIENT_DATA = do not infer a signal. "
+        "PASS = usable second-opinion evidence. REVIEW = context only. INSUFFICIENT_DATA = do not infer a signal. "
         "A forecast is useful only if its historical error is small enough and it beats a simple historical baseline. "
         "Driver charts show what the model pays attention to, not what caused the stock return."
-    ).replace("INS UFFICIENT_DATA","INSUFFICIENT_DATA")
+    )
     ws["K3"].alignment=Alignment(wrap_text=True,vertical="top")
     ws["K3"].fill=_fill(LIGHT)
 
 
 def _add_ml_charts(ws, result_list):
-    """Add plain-English charts. Helper tables live in hidden columns X:AA."""
-    for col in ("X","Y","Z","AA"):
-        ws.column_dimensions[col].hidden=True
+    """Add Excel-safe plain-English charts with technically visible helper columns X:AA."""
+    make_chart_helpers_excel_visible(ws,"X","AA","X1:AA40")
     _how_to_read_box(ws)
 
     # 1) Forecast magnitude versus walk-forward typical error.
@@ -148,6 +144,7 @@ def _add_ml_charts(ws, result_list):
         _set_chart_text_categories(ch,ws,24,start+1,rr-1,["Forecast magnitude","Typical historical error"])
         ch.legend.position="b"
         ch.dLbls=DataLabelList(); ch.dLbls.showVal=True; ch.dLbls.numFmt="0.0"
+        configure_chart_for_excel(ch)
         ws.add_chart(ch,"K8")
 
     # 2) Directional accuracy versus a leakage-safe simple historical baseline.
@@ -169,6 +166,7 @@ def _add_ml_charts(ws, result_list):
         _set_chart_text_categories(ch,ws,24,start+1,rr-1,["Model accuracy","Simple baseline"])
         ch.legend.position="b"
         ch.dLbls=DataLabelList(); ch.dLbls.showVal=True; ch.dLbls.numFmt="0.0"
+        configure_chart_for_excel(ch)
         ws.add_chart(ch,"K24")
 
     # 3) Expected-return model drivers, normalized so the chart is intuitive.
@@ -183,12 +181,13 @@ def _add_ml_charts(ws, result_list):
             ws.cell(i,24,_label(d.get("feature"))); ws.cell(i,25,share*100); ws.cell(i,25).number_format="0.0"
         ch=BarChart(); ch.type="bar"; ch.style=12
         ch.title="What the 12M return model pays attention to"
-        ch.y_axis.title="Input"; ch.x_axis.title="Share of top-driver influence (%)"; ch.x_axis.numFmt="0.0"
+        ch.x_axis.title="Input"; ch.y_axis.title="Share of top-driver influence (%)"; ch.y_axis.numFmt="0.0"; ch.y_axis.scaling.min=0
         ch.height=7.5; ch.width=13.0
         ch.add_data(Reference(ws,min_col=25,min_row=s+1,max_row=s+len(drivers)),titles_from_data=False)
         _set_chart_text_categories(ch,ws,24,s+1,s+len(drivers),["Share of top-driver influence"])
         ch.legend=None
         ch.dLbls=DataLabelList(); ch.dLbls.showVal=True; ch.dLbls.numFmt="0.0"
+        configure_chart_for_excel(ch)
         ws.add_chart(ch,"K40")
 
     # 4) Market-regime weights. If an old run lost a duplicate label, expose the residual instead of hiding it.
@@ -206,13 +205,14 @@ def _add_ml_charts(ws, result_list):
             ws.cell(i,24,name); ws.cell(i,25,val*100); ws.cell(i,25).number_format='0.0'
         ch=BarChart(); ch.type="bar"; ch.style=10
         ch.title="What kind of market does the model think we are in?"
-        ch.y_axis.title="Market state"; ch.x_axis.title="Distance-based weight (%)"
-        ch.x_axis.scaling.min=0; ch.x_axis.scaling.max=100; ch.x_axis.numFmt="0.0"
+        ch.x_axis.title="Market state"; ch.y_axis.title="Distance-based weight (%)"
+        ch.y_axis.scaling.min=0; ch.y_axis.scaling.max=100; ch.y_axis.numFmt="0.0"
         ch.height=7.0; ch.width=13.0
         ch.add_data(Reference(ws,min_col=25,min_row=s+1,max_row=s+len(items)),titles_from_data=False)
         _set_chart_text_categories(ch,ws,24,s+1,s+len(items),["Weight"])
         ch.legend=None
         ch.dLbls=DataLabelList(); ch.dLbls.showVal=True; ch.dLbls.numFmt="0.0"
+        configure_chart_for_excel(ch)
         ws.add_chart(ch,"K58")
 
 
