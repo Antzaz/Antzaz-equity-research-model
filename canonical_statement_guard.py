@@ -76,7 +76,6 @@ def _annual_fact_series(facts: dict | None, tags: tuple[str, ...], unit_hint: st
         units = fact.get('units') or {}
         values = units.get(unit_hint) if unit_hint and unit_hint in units else None
         if not values:
-            # Prefer monetary/share units over percentages/text when possible.
             preferred = [k for k in units if k in {'USD', 'shares', 'USD/shares'}]
             key = preferred[0] if preferred else (next(iter(units), None))
             values = units.get(key) if key else None
@@ -106,7 +105,6 @@ def _annual_fact_series(facts: dict | None, tags: tuple[str, ...], unit_hint: st
     return {year: value for year, (_stamp, value) in best.items()}
 
 
-# These are direct accounting concepts, not analytical/adjusted metrics.
 INCOME_FACTS = {
     'Revenue': (('RevenueFromContractWithCustomerExcludingAssessedTax', 'SalesRevenueNet', 'Revenues', 'ifrs-full:Revenue'), 'USD', 'money'),
     'Total Operating Expenses': (('OperatingExpenses',), 'USD', 'money'),
@@ -221,9 +219,6 @@ def apply_canonical_statement_guard(wb, ticker: str, facts: dict | None) -> dict
         fs.cell(row, source_col).value = 'SEC Company Facts — exact canonical annual fact'
         fs.cell(row, source_col).font = Font(italic=True)
 
-    # Asset-light payments networks generally do not report a conventional industrial gross-profit
-    # subtotal. Structured providers can synthesize one by splitting operating expenses; suppress
-    # those rows rather than presenting a provider construct as issuer GAAP.
     if policy.key == 'payments':
         result['payments_structure_guard'] = True
         for label in ('Cost of Revenue', 'Gross Profit'):
@@ -238,9 +233,6 @@ def apply_canonical_statement_guard(wb, ticker: str, facts: dict | None) -> dict
             'operating income and cash-flow lines take precedence over structured-provider normalized fields.'
         )
 
-    # Internal arithmetic cross-check: if exact revenue and total operating expenses are present,
-    # reported operating income should be close to revenue less operating expenses for ordinary
-    # operating companies. Never manufacture an operating-income value from the identity.
     reconciliation = []
     for year in sorted(set(exact_by_label.get('Revenue', {})) & set(exact_by_label.get('Total Operating Expenses', {})) & set(exact_by_label.get('Operating Income', {}))):
         rev = exact_by_label['Revenue'][year]; opex = exact_by_label['Total Operating Expenses'][year]; op = exact_by_label['Operating Income'][year]
@@ -248,7 +240,6 @@ def apply_canonical_statement_guard(wb, ticker: str, facts: dict | None) -> dict
         reconciliation.append({'year': year, 'difference_bn': diff})
     result['operating_income_reconciliation'] = reconciliation
 
-    # Synchronize direct canonical values into Historical Financials. Derived rows there remain formulas.
     history_map = {
         4: ('Revenue', False),
         9: ('Operating Income', False),
@@ -284,11 +275,17 @@ def apply_canonical_statement_guard(wb, ticker: str, facts: dict | None) -> dict
 
 
 def decorate_data_quality(wb, ticker: str, result: dict[str, Any] | None) -> None:
+    """Keep business-model suitability separate from source exactness.
+
+    A correctly routed commodity, bank, software, payments or other statement profile can be
+    structurally appropriate even when the SEC endpoint is temporarily unavailable. Exact-source
+    coverage is therefore reported by its own guard row instead of incorrectly downgrading the
+    business-model profile itself.
+    """
     if 'Data Quality' not in wb.sheetnames:
         return
     result = result or {}
     ws = wb['Data Quality']
-    policy = None
     try:
         cd = wb['Company Data']
         policy = get_business_model_policy(ticker, cd['B6'].value, cd['B7'].value, cd['B5'].value)
@@ -305,22 +302,29 @@ def decorate_data_quality(wb, ticker: str, result: dict[str, Any] | None) -> Non
 
     exact = int(result.get('latest_core_exact') or 0)
     corrections = result.get('material_corrections') or []
-    status = 'PASS' if exact >= 3 else 'REVIEW'
+    source_status = 'PASS' if exact >= 3 else 'REVIEW'
     set_row(
-        'SEC-first canonical accounting guard', status,
-        f'{exact}/3 latest-year core GAAP lines exact; {len(corrections)} material provider correction(s); {result.get("history_sync", 0)} history cell(s) synchronized.',
-        'Decision-critical reported revenue, operating income and net income should use exact annual filing facts before adjusted/normalized provider fields.'
+        'SEC-first canonical accounting guard', source_status,
+        f'{exact}/3 latest-year core filing lines exact; {len(corrections)} material provider correction(s); {result.get("history_sync", 0)} history cell(s) synchronized.',
+        'Source exactness is assessed separately from statement-profile suitability. Missing SEC access may be recovered from issuer/structured public sources, but those values remain explicitly lower in the source hierarchy.'
     )
 
     if policy.key == 'payments':
-        set_row(
-            'Statement profile suitability', 'PASS',
-            'Payments / asset-light network guard applied; synthetic provider gross-profit rows suppressed; exact GAAP operating expenses and operating income preferred.',
-            'A payments network should not be forced into an industrial cost-of-goods/gross-profit template when the issuer reports operating expenses directly.'
+        observed = (
+            'Payments / asset-light network profile selected; synthetic provider gross-profit rows suppressed; '
+            'reported operating-expense and operating-income structure retained.'
         )
-    elif exact < 3:
-        set_row(
-            'Statement profile suitability', 'REVIEW',
-            f'{policy.label}; exact latest-year SEC core coverage {exact}/3.',
-            'When exact filing facts are unavailable, populated provider rows remain usable only with explicit source/reconciliation caveats.'
+        why = (
+            'A payments network should not be forced into an industrial cost-of-goods/gross-profit template. '
+            'Exact-source coverage is tracked independently by the SEC-first accounting guard.'
         )
+    else:
+        observed = (
+            f'{policy.label} profile selected. Primary valuation framework: {policy.primary_valuation}. '
+            f'Latest-year exact SEC/filing core coverage is {exact}/3 and is tracked separately.'
+        )
+        why = (
+            'PASS means the statement/valuation structure matches the company business model; it does not mean every cell came directly from SEC. '
+            'Source gaps are handled by issuer/structured public fallbacks and disclosed by separate quality controls.'
+        )
+    set_row('Statement profile suitability', 'PASS', observed, why)
