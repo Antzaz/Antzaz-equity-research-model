@@ -4,8 +4,12 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.chart import BarChart, Reference
 
 from chart_excel_compat import apply_chart_compatibility_fix
-from machine_learning.ai_growth_output import _set_chart_text_categories as set_ai_categories
-from machine_learning.workbook import _set_chart_text_categories as set_ml_categories
+from machine_learning.ai_growth_output import (
+    _add_ai_growth_charts,
+    _set_chart_text_categories as set_ai_categories,
+)
+from machine_learning.common import MLResult
+from machine_learning.workbook import _add_ml_charts, _set_chart_text_categories as set_ml_categories
 
 
 def _sample_chart(ws):
@@ -97,7 +101,6 @@ def test_excel_compat_postpass_unhides_sources_and_repairs_axis_positions(tmp_pa
 
 
 def test_excel_compat_uses_chart_type_not_chart_order(tmp_path):
-    """A ticker may emit only a subset of charts; orientation must not depend on list index."""
     wb = Workbook()
     ws = wb.active
     ws.title = "ML & Quantitative Research"
@@ -108,7 +111,6 @@ def test_excel_compat_uses_chart_type_not_chart_order(tmp_path):
     ws["Y3"] = 10
     ws["Y4"] = 20
 
-    # Deliberately reverse the usual order: horizontal first, column second.
     _add_orientation_chart(ws, "bar", "K8")
     _add_orientation_chart(ws, "col", "K40")
 
@@ -122,3 +124,68 @@ def test_excel_compat_uses_chart_type_not_chart_order(tmp_path):
     assert horizontal.y_axis.axPos == "b"
     assert column.x_axis.axPos == "b"
     assert column.y_axis.axPos == "l"
+
+
+def test_primary_ml_generator_is_excel_safe_without_postpass():
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "ML & Quantitative Research"
+    results = [
+        MLResult(
+            name="Expected 12M Excess Return",
+            status="REVIEW",
+            summary="",
+            prediction=0.05,
+            metrics={"walk_forward": {"mae": 0.20, "directional_accuracy": 0.55, "baseline_directional_accuracy": 0.50}},
+            drivers=[{"feature": "momentum_12m", "importance": 1.0}],
+        ),
+        MLResult(
+            name="Consensus / Earnings Surprise",
+            status="REVIEW",
+            summary="",
+            prediction=0.10,
+            metrics={"walk_forward": {"mae": 0.15, "directional_accuracy": 0.60, "baseline_directional_accuracy": 0.52}},
+        ),
+        MLResult(
+            name="Market Regime Classifier",
+            status="REVIEW",
+            summary="",
+            metrics={"regime_probabilities": {"Growth / risk-on": 0.6, "Risk-off / crisis": 0.4}, "monthly_rows": 120},
+        ),
+    ]
+    _add_ml_charts(ws, results)
+    assert ws.column_dimensions["X"].hidden is False
+    assert ws.column_dimensions["Y"].hidden is False
+    assert len(ws._charts) == 4
+    for chart in ws._charts:
+        assert chart.visible_cells_only is False
+    assert ws._charts[0].x_axis.axPos == "b"
+    assert ws._charts[2].x_axis.axPos == "l"
+
+
+def test_primary_ai_generator_is_excel_safe_without_postpass():
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "AI Growth Forecast"
+    signals = {
+        "demand_score": 0.7,
+        "monetization_score": 0.65,
+        "adoption_score": 0.75,
+        "efficiency_score": 0.55,
+        "capex_burden_score": 0.4,
+        "risk_score": 0.35,
+        "evidence": ["substantive AI evidence"],
+        "extraction_mode": "test",
+    }
+    revenue = {"drivers": [{"feature": "momentum_12m", "shap_value": 0.02}]}
+    fcf = {"prediction": 0.20, "drivers": [{"feature": "fcf_margin", "shap_value": -0.03}]}
+    payload = {"ai_adjusted_fcf_growth": 0.23}
+    reverse = {"implied_annual_fcf_growth": 0.15}
+    _add_ai_growth_charts(ws, signals, revenue, fcf, payload, reverse)
+    assert ws.column_dimensions["P"].hidden is False
+    assert ws.column_dimensions["Q"].hidden is False
+    assert len(ws._charts) == 3
+    for chart in ws._charts:
+        assert chart.visible_cells_only is False
+    assert ws._charts[0].x_axis.axPos == "b"
+    assert ws._charts[2].x_axis.axPos == "l"
