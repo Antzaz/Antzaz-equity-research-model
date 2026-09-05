@@ -29,6 +29,7 @@ import decision_view_v2
 import safe_update_model as safe
 import workbook_enhancements as workbook_fx
 
+from chart_readability_v2 import polish_analysis_charts
 from cross_sector_runtime import install_cross_sector_runtime
 from commodity_valuation_v3 import (
     apply_commodity_normalization,
@@ -90,14 +91,19 @@ def _apply_public_evidence_and_polish(wb, ticker, info=None):
 
 
 def _research_extensions_with_deals(wb, ticker, info=None):
-    """Run all guarded extensions, append transactions, then recover public evidence and polish."""
+    """Run guarded extensions, transactions, final chart cleanup, then public-evidence polish."""
     result = _ORIGINAL_RESEARCH_EXTENSIONS(wb, ticker, info)
     try:
         ensure_deal_analysis(wb, ticker, info or {})
     except Exception as exc:
         # A temporary news / EDGAR outage must never prevent the deterministic valuation model
-        # from being produced.  The deal sheet itself also degrades to an explicit no-data state.
+        # from being produced. The deal sheet itself also degrades to an explicit no-data state.
         print(f"Warning: Deals & Transactions refresh failed: {exc}")
+    try:
+        chart_result=polish_analysis_charts(wb,ticker)
+        print(f"Analysis chart readability: rebuilt={chart_result.get('rebuilt',0)}, charts={chart_result.get('chart_count',0)}")
+    except Exception as exc:
+        print(f"Warning: final Analysis Charts readability pass failed: {exc}")
     try:
         evidence = _apply_public_evidence_and_polish(wb, ticker, info or {})
         status = "PUBLIC-EVIDENCE" if evidence.get("workforce") else ("PARTIAL" if evidence.get("headcount") else "REVIEW")
