@@ -29,7 +29,7 @@ import decision_view_v2
 import safe_update_model as safe
 import workbook_enhancements as workbook_fx
 
-from chart_readability_v2 import polish_analysis_charts
+from chart_readability_v2 import polish_workbook_charts
 from cross_sector_runtime import install_cross_sector_runtime
 from commodity_valuation_v3 import (
     apply_commodity_normalization,
@@ -101,8 +101,6 @@ def _research_extensions_with_deals(wb, ticker, info=None):
     try:
         ensure_deal_analysis(wb, ticker, info or {})
     except Exception as exc:
-        # A temporary news / EDGAR outage must never prevent the deterministic valuation model
-        # from being produced. The deal sheet itself also degrades to an explicit no-data state.
         print(f"Warning: Deals & Transactions refresh failed: {exc}")
     try:
         audit=apply_source_audit_fixes(wb,ticker)
@@ -114,10 +112,14 @@ def _research_extensions_with_deals(wb, ticker, info=None):
     except Exception as exc:
         print(f"Warning: final source-audit pass failed: {exc}")
     try:
-        chart_result=polish_analysis_charts(wb,ticker)
-        print(f"Analysis chart readability: rebuilt={chart_result.get('rebuilt',0)}, charts={chart_result.get('chart_count',0)}")
+        chart_result=polish_workbook_charts(wb,ticker)
+        print(
+            "Chart layout: "
+            f"rebuilt={chart_result.get('charts_rebuilt',0)}, "
+            f"sheets={chart_result.get('sheet_counts',{})}"
+        )
     except Exception as exc:
-        print(f"Warning: final Analysis Charts readability pass failed: {exc}")
+        print(f"Warning: final chart-layout pass failed: {exc}")
     try:
         evidence = _apply_public_evidence_and_polish(wb, ticker, info or {})
         status = "PUBLIC-EVIDENCE" if evidence.get("workforce") else ("PARTIAL" if evidence.get("headcount") else "REVIEW")
@@ -127,7 +129,6 @@ def _research_extensions_with_deals(wb, ticker, info=None):
             f"public_officers={evidence.get('officer_count', 0)}"
         )
     except Exception as exc:
-        # Presentation/public-source enrichment is non-destructive and must not block the core model.
         print(f"Warning: public evidence recovery / workbook polish failed: {exc}")
     return result
 
