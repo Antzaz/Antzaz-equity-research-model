@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-"""Final Excel compatibility and visible-data quality pass.
+"""Final Excel compatibility, visible-state quality and presentation pass.
 
 This runs after optional ML / AI sheets are written. The deterministic generator already repairs
 its charts before save, but ML/AI charts are added later in separate processes. Excel defaults to
 plotting visible cells only, so charts sourced from hidden helper columns can appear blank even
-when Python renderers show them correctly. This postprocessor explicitly allows hidden source
-cells for every chart and replaces unexplained visible blanks in decision-facing ML/AI tables
-with N/M text.
+when Python renderers show them correctly. The pass also reapplies the decision-first sheet order
+so ML/AI tabs land in the right place after they are appended.
 """
 
 import argparse
@@ -16,6 +15,8 @@ from typing import Any
 
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
+
+from workbook_presentation import apply_workbook_presentation
 
 GREEN='E2F0D9'; GOLD='FFF2CC'; RED='FCE4D6'
 
@@ -60,12 +61,16 @@ def _fill_ml_visible_states(wb) -> int:
     if 'ML & Quantitative Research' not in wb.sheetnames:
         return 0
     ws = wb['ML & Quantitative Research']; changed = 0
-    # Main six-model dashboard is deliberately decision-facing; blank predictions or drivers are
-    # ambiguous to non-technical readers. Detailed sections below may retain normal blank spacing.
+    # Main six-model dashboard is deliberately decision-facing; unexplained blank predictions or
+    # drivers are ambiguous. The upstream model now exhausts public-data recovery before this point.
     for r in range(7, min(ws.max_row, 12) + 1):
         status = str(ws.cell(r, 2).value or '')
         if ws.cell(r, 3).value in (None, ''):
-            ws.cell(r, 3).value = 'N/M — insufficient data' if status == 'INSUFFICIENT_DATA' else 'N/M — no reliable numeric signal'
+            ws.cell(r, 3).value = (
+                'N/M — model-readiness gate still lacks enough usable observations after public-data recovery'
+                if status == 'INSUFFICIENT_DATA'
+                else 'N/M — no reliable numeric signal'
+            )
             changed += 1
         if ws.cell(r, 5).value in (None, ''):
             ws.cell(r, 5).value = 'See model detail below'; changed += 1
@@ -80,11 +85,8 @@ def _fill_ai_visible_states(wb) -> int:
     if 'AI Growth Forecast' not in wb.sheetnames:
         return 0
     ws = wb['AI Growth Forecast']; changed = 0
-    # Revenue is not directly reverse-DCF-implied in this model; make that explicit instead of
-    # leaving a visually unexplained blank.
     if ws['E16'].value in (None, ''):
         ws['E16'] = 'N/M — reverse DCF hurdle is FCF-based'; changed += 1
-    # Fill decision cells only; evidence-table spacing remains intentionally blank.
     for row in (16, 17):
         for col in (2, 3, 4, 5, 6):
             cell = ws.cell(row, col)
@@ -104,7 +106,7 @@ def _decorate_quality(wb, result: dict[str, Any]) -> None:
         f"{result.get('empty_series', 0)} chart(s) have zero series; "
         f"{result.get('visible_cells_filled', 0)} decision-facing blank cell(s) made explicit."
     )
-    why = 'Prevents charts that render in Python but appear blank in desktop Excel, and prevents N/M states from looking like missing pipeline data.'
+    why = 'Prevents charts that render in Python but appear blank in desktop Excel, and prevents genuine N/M states from looking like missing pipeline data.'
     for c, value in enumerate((label, status, observed, why), 1):
         ws.cell(row, c).value = value; ws.cell(row, c).alignment = Alignment(wrap_text=True, vertical='top')
     ws.cell(row, 2).fill = PatternFill('solid', fgColor=GREEN if status == 'PASS' else GOLD)
@@ -116,6 +118,17 @@ def finalize_workbook_integrity(path: str | Path) -> dict[str, Any]:
     wb = load_workbook(path)
     result = _repair_charts(wb)
     result['visible_cells_filled'] = _fill_ml_visible_states(wb) + _fill_ai_visible_states(wb)
+
+    ticker = ''
+    try:
+        ticker = str(wb['Company Data']['B4'].value or '').upper().strip()
+    except Exception:
+        pass
+    try:
+        result['presentation'] = apply_workbook_presentation(wb, ticker)
+    except Exception as exc:
+        result['presentation'] = {'error': repr(exc)}
+
     _decorate_quality(wb, result)
     try:
         wb.calculation.calcMode = 'auto'; wb.calculation.fullCalcOnLoad = True; wb.calculation.forceFullCalc = True
@@ -126,13 +139,14 @@ def finalize_workbook_integrity(path: str | Path) -> dict[str, Any]:
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description='Repair final workbook chart compatibility and explicit N/M states')
+    p = argparse.ArgumentParser(description='Repair final workbook chart compatibility, explicit N/M states and presentation')
     p.add_argument('workbook')
     args = p.parse_args()
     result = finalize_workbook_integrity(args.workbook)
     print(
         f"[workbook-integrity] charts={result['charts']}; zero-series={result['empty_series']}; "
-        f"visible blanks clarified={result['visible_cells_filled']}"
+        f"visible blanks clarified={result['visible_cells_filled']}; "
+        f"visible sheets={(result.get('presentation') or {}).get('visible_sheets', 'N/M')}"
     )
     return 0 if result['empty_series'] == 0 else 2
 
