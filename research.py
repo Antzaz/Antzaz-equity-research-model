@@ -43,6 +43,7 @@ from agent_research import (
     ThesisMonitorAgent,
 )
 from chart_excel_compat import apply_chart_compatibility_fix
+from chart_readability_v2 import apply_chart_readability
 from workbook_enhancements import apply_workbook_enhancements
 
 BASE = Path(__file__).resolve().parent
@@ -135,6 +136,20 @@ def fix_chart_rendering(workbook: Path, *, reason: str) -> dict | None:
         return None
 
 
+def fix_chart_layout(ticker: str, workbook: Path, *, reason: str) -> dict | None:
+    """Run last so no later ML/AI writer can stack or scatter charts again."""
+    try:
+        result = apply_chart_readability(workbook, ticker)
+        print(
+            f"[workbook] {reason}: rebuilt {int(result.get('charts_rebuilt') or 0)} chart(s); "
+            f"layout={result.get('sheet_counts',{})}"
+        )
+        return result
+    except Exception as exc:
+        print(f"[workbook] WARNING: {reason} chart layout cleanup failed: {exc}")
+        return None
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Agent-assisted equity research orchestrator")
     parser.add_argument("ticker", type=valid_ticker)
@@ -198,6 +213,7 @@ def main() -> int:
     if args.skip_model:
         enhance_workbook(ticker, workbook, reason="reused workbook")
         fix_chart_rendering(workbook, reason="reused workbook")
+        fix_chart_layout(ticker, workbook, reason="reused workbook final layout")
 
     stamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
     run_dir = RUNS_DIR / ticker / stamp
@@ -235,7 +251,10 @@ def main() -> int:
         try:
             run_ml(ticker, workbook, use_llm=bool(ai_client))
             enhance_workbook(ticker, workbook, reason="post-ML final polish")
-            fix_chart_rendering(workbook, reason="post-ML final chart fix")
+            fix_chart_rendering(workbook, reason="post-ML Excel chart compatibility")
+            # This MUST be the final chart writer. ML/AI layers can recreate charts, so running
+            # the canonical layout after them prevents duplicated anchors and scattered graphs.
+            fix_chart_layout(ticker, workbook, reason="post-ML canonical chart layout")
         except Exception as exc:
             print(f"[ml] WARNING: ML / AI Growth layer failed without changing the deterministic valuation model: {exc}")
             if args.strict:
@@ -251,6 +270,7 @@ def main() -> int:
         "ai_growth_llm_extraction": bool(args.ml and ai_client),
         "data_integrity_runner": "commodity_safe_runner.py",
         "public_evidence_and_workbook_polish": True,
+        "final_chart_layout": True,
         "results": [x.to_dict() for x in results],
     }
     (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False, default=str) + "\n", encoding="utf-8")
