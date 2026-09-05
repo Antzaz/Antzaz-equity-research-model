@@ -20,6 +20,8 @@ jobs:
           python -m py_compile \
             update_model.py \
             research.py \
+            commodity_safe_runner.py \
+            workbook_enhancements.py \
             source_registry.py \
             institutional_lenses.py \
             agent_research/__init__.py \
@@ -51,4 +53,5 @@ jobs:
             institutional_research/src/live_data.py \
             institutional_research/src/alpha_analysis.py \
             institutional_research/src/risk.py \
-            institutional_research/src/professional_portfolio.py
+            institutional_research/src/professional_portfolio.py \
+            tests/test_workbook_enhancements.py
