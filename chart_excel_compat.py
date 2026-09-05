@@ -2,16 +2,10 @@ from __future__ import annotations
 
 """Excel chart-compatibility post-pass for generated research workbooks.
 
-The ML and AI chart writers keep compact helper tables outside the main analysis area. Excel
-and third-party renderers are sensitive to two details in openpyxl-generated bar charts:
-
-1. hidden source cells are skipped when ``plotVisOnly`` is left at its default; and
-2. openpyxl can serialize both category/value axes on the same side unless their positions are
-   made explicit, while horizontal bar charts also need their category/value titles and scales
-   attached to the correct OOXML axes.
-
-This post-pass repairs both problems after every research run. Helper columns remain technically
-visible but extremely narrow/white so the workbook stays clean while chart labels remain valid.
+ML and AI chart helper cells must stay technically visible because Excel normally excludes hidden
+source cells from chart plots. The post-pass also writes explicit category/value-axis positions.
+Orientation is detected from each chart itself rather than from chart order, so the repair remains
+correct when a ticker produces only a subset of the normal charts.
 """
 
 from pathlib import Path
@@ -27,6 +21,7 @@ HELPER_RANGES = {
 
 
 def _make_helpers_excel_visible(ws, first_col: str, last_col: str, helper_range: str) -> None:
+    """Keep chart sources visible to Excel while making them unobtrusive to users."""
     start = ws[first_col + "1"].column
     end = ws[last_col + "1"].column
     for col_idx in range(start, end + 1):
@@ -39,80 +34,41 @@ def _make_helpers_excel_visible(ws, first_col: str, last_col: str, helper_range:
             cell.font = Font(name="Aptos", size=1, color="FFFFFF")
 
 
-def _repair_axis_positions(chart, *, horizontal: bool) -> None:
-    """Write unambiguous Excel axis positions and include helper cells in the plot."""
+def _is_horizontal_bar(chart) -> bool:
+    """Detect chart orientation from the chart itself, never from list position."""
+    direction = getattr(chart, "type", None)
+    if not isinstance(direction, str):
+        direction = getattr(chart, "barDir", None)
+    value = getattr(direction, "val", direction)
+    return str(value or "").lower() == "bar"
+
+
+def _repair_axis_positions(chart) -> None:
+    """Make chart sources and axes explicit without changing chart-specific semantics."""
     chart.visible_cells_only = False
-    chart.x_axis.delete = False
-    chart.y_axis.delete = False
-    chart.x_axis.tickLblPos = "nextTo"
-    chart.y_axis.tickLblPos = "nextTo"
-    if horizontal:
-        # openpyxl's x_axis object is the category axis for BarChart even when barDir='bar'.
-        chart.x_axis.axPos = "l"
-        chart.y_axis.axPos = "b"
+    x_axis = getattr(chart, "x_axis", None)
+    y_axis = getattr(chart, "y_axis", None)
+    if x_axis is None or y_axis is None:
+        return
+
+    x_axis.delete = False
+    y_axis.delete = False
+    x_axis.tickLblPos = "nextTo"
+    y_axis.tickLblPos = "nextTo"
+
+    if _is_horizontal_bar(chart):
+        # For openpyxl BarChart(type='bar'), x_axis is the category axis and y_axis the value axis.
+        x_axis.axPos = "l"
+        y_axis.axPos = "b"
     else:
-        chart.x_axis.axPos = "b"
-        chart.y_axis.axPos = "l"
+        x_axis.axPos = "b"
+        y_axis.axPos = "l"
 
 
-def _repair_ml_charts(ws) -> int:
+def _repair_charts(ws) -> int:
     charts = list(getattr(ws, "_charts", []) or [])
-    for idx, chart in enumerate(charts):
-        horizontal = idx >= 2
-        _repair_axis_positions(chart, horizontal=horizontal)
-        if idx == 0:
-            chart.x_axis.title = None
-            chart.y_axis.title = "Percent (%)"
-            if chart.legend is not None:
-                chart.legend.position = "b"
-        elif idx == 1:
-            chart.x_axis.title = None
-            chart.y_axis.title = "Directional accuracy (%)"
-            chart.y_axis.scaling.min = 0
-            chart.y_axis.scaling.max = 100
-            chart.y_axis.numFmt = "0.0"
-            if chart.legend is not None:
-                chart.legend.position = "b"
-        elif idx == 2:
-            chart.x_axis.title = "Input"
-            chart.y_axis.title = "Share of top-driver influence (%)"
-            chart.x_axis.scaling.min = None
-            chart.x_axis.scaling.max = None
-            chart.y_axis.scaling.min = 0
-            chart.y_axis.numFmt = "0.0"
-        elif idx == 3:
-            chart.x_axis.title = "Market state"
-            chart.y_axis.title = "Distance-based weight (%)"
-            chart.x_axis.scaling.min = None
-            chart.x_axis.scaling.max = None
-            chart.y_axis.scaling.min = 0
-            chart.y_axis.scaling.max = 100
-            chart.y_axis.numFmt = "0.0"
-    return len(charts)
-
-
-def _repair_ai_charts(ws) -> int:
-    charts = list(getattr(ws, "_charts", []) or [])
-    for idx, chart in enumerate(charts):
-        horizontal = idx == 2
-        _repair_axis_positions(chart, horizontal=horizontal)
-        if idx == 0:
-            chart.x_axis.title = None
-            chart.y_axis.title = "Supportive score"
-            chart.y_axis.scaling.min = 0
-            chart.y_axis.scaling.max = 100
-            chart.y_axis.numFmt = "0.0"
-        elif idx == 1:
-            chart.x_axis.title = None
-            chart.y_axis.title = "Annual FCF growth (%)"
-            chart.y_axis.numFmt = "0.0"
-        elif idx == 2:
-            chart.x_axis.title = "Driver"
-            chart.y_axis.title = "Share of top-driver influence (%)"
-            chart.x_axis.scaling.min = None
-            chart.x_axis.scaling.max = None
-            chart.y_axis.scaling.min = 0
-            chart.y_axis.numFmt = "0.0"
+    for chart in charts:
+        _repair_axis_positions(chart)
     return len(charts)
 
 
@@ -127,10 +83,7 @@ def apply_chart_compatibility_fix(workbook_path: str | Path) -> dict:
             continue
         ws = wb[sheet_name]
         _make_helpers_excel_visible(ws, first_col, last_col, helper_range)
-        if sheet_name == "ML & Quantitative Research":
-            chart_count += _repair_ml_charts(ws)
-        elif sheet_name == "AI Growth Forecast":
-            chart_count += _repair_ai_charts(ws)
+        chart_count += _repair_charts(ws)
         touched.append(sheet_name)
 
     if touched:
