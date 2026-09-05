@@ -9,11 +9,15 @@ set of decision-facing sheets first. This module keeps the underlying model inta
 - applying consistent tab colors, gridline/zoom settings and a cleaner dashboard title;
 - adding internal navigation links to the visual dashboard;
 - preserving every underlying calculation/source sheet for auditability.
+
+The pass is deliberately idempotent because it runs once after deterministic generation and
+again after optional ML/AI sheets are appended.
 """
 
 from typing import Any
 
 from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils.cell import range_boundaries
 
 NAVY = "17365D"; BLUE = "2F75B5"; GREEN = "70AD47"; GOLD = "FFC000"; PURPLE = "8064A2"; GREY = "A5A5A5"; WHITE = "FFFFFF"; LIGHT = "F5F9FC"
 
@@ -63,11 +67,13 @@ def _tab_color(sheet_name: str) -> str | None:
 
 def _reorder(wb) -> None:
     priority = {name: i for i, name in enumerate(PRIMARY_ORDER)}
-    # Use a stable sort so unrecognized specialist sheets keep their relative order after the
-    # primary decision-facing block.
+    # Capture original positions *before* sorting. Calling list.index() from inside a list.sort
+    # key is unsafe because CPython temporarily mutates the target list during sorting.
+    original = list(wb._sheets)
+    original_pos = {id(ws): i for i, ws in enumerate(original)}
     wb._sheets[:] = sorted(
-        wb._sheets,
-        key=lambda ws: (0, priority[ws.title]) if ws.title in priority else (1, wb._sheets.index(ws)),
+        original,
+        key=lambda ws: (0, priority[ws.title]) if ws.title in priority else (1, original_pos[id(ws)]),
     )
 
 
@@ -88,10 +94,16 @@ def _hide_redundant_tabs(wb) -> list[str]:
     hidden = []
     for old, replacement in HIDE_IF_REDUNDANT.items():
         if old in wb.sheetnames and replacement in wb.sheetnames:
-            # Never hide the active sheet until another active sheet has been selected.
             wb[old].sheet_state = "hidden"
             hidden.append(old)
     return hidden
+
+
+def _unmerge_intersecting(ws, min_row: int, max_row: int, min_col: int, max_col: int) -> None:
+    for merged in list(ws.merged_cells.ranges):
+        a, b, c, d = range_boundaries(str(merged))
+        if not (c < min_col or a > max_col or d < min_row or b > max_row):
+            ws.unmerge_cells(str(merged))
 
 
 def _dashboard_navigation(wb, ticker: str) -> int:
@@ -110,13 +122,17 @@ def _dashboard_navigation(wb, ticker: str) -> int:
         ws["A3"].font = Font(italic=True, color="666666")
 
     row = 98
-    # Clear the small presentation-only area in case a previous run created different links.
+    # This area is rebuilt on every pass. Unmerge first so a second run never writes into read-only
+    # MergedCell objects left by the first run.
+    _unmerge_intersecting(ws, row, row + 3, 1, 16)
     for r in range(row, row + 4):
         for c in range(1, 17):
-            ws.cell(r, c).value = None
-            ws.cell(r, c).hyperlink = None
-            ws.cell(r, c).fill = PatternFill(fill_type=None)
-            ws.cell(r, c).font = Font()
+            cell = ws.cell(r, c)
+            cell.value = None
+            cell.hyperlink = None
+            cell.fill = PatternFill(fill_type=None)
+            cell.font = Font()
+            cell.alignment = Alignment()
     ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=16)
     ws.cell(row, 1, "Workbook Navigation")
     ws.cell(row, 1).fill = PatternFill("solid", fgColor=NAVY); ws.cell(row, 1).font = Font(bold=True, color=WHITE)
@@ -169,7 +185,6 @@ def _decorate_quality(wb, hidden: list[str], navigation_links: int) -> None:
 def apply_workbook_presentation(wb, ticker: str) -> dict[str, Any]:
     ticker = str(ticker or "").upper().strip()
     _reorder(wb)
-    # Select the modern dashboard before hiding the legacy dashboard.
     if "Visual Dashboard" in wb.sheetnames:
         try:
             wb.active = wb.index(wb["Visual Dashboard"])
