@@ -14,6 +14,11 @@ check registered data sources, and run research QA. LLM reasoning is opt-in. The
 layer is also opt-in because it downloads a broader training universe. When ML is enabled, the
 AI Growth Forecast layer adds LightGBM fundamental growth, bounded AI evidence extraction,
 SHAP explainability and a reverse-DCF expectations-gap cross-check.
+
+Generated workbooks also receive a non-destructive public-evidence recovery and presentation
+pass. It fills avoidable qualitative evidence gaps from issuer/regulatory sources, keeps genuinely
+non-comparable fields as N/A/REVIEW instead of estimating them, and consolidates the workbook
+presentation without altering valuation inputs.
 """
 
 from __future__ import annotations
@@ -35,6 +40,7 @@ from agent_research import (
     SourceHealthAgent,
     ThesisMonitorAgent,
 )
+from workbook_enhancements import apply_workbook_enhancements
 
 BASE = Path(__file__).resolve().parent
 UPDATED_MODELS = BASE / "updated_models"
@@ -84,6 +90,22 @@ def run_ml(ticker: str, workbook: Path, *, use_llm: bool = False) -> None:
     subprocess.run(cmd, cwd=BASE, check=True)
 
 
+def enhance_workbook(ticker: str, workbook: Path, *, reason: str) -> dict | None:
+    """Apply evidence recovery/presentation cleanup without making the research run fragile."""
+    try:
+        result = apply_workbook_enhancements(workbook, ticker)
+        print(
+            f"[workbook] {reason}: workforce={result.get('workforce_status')}, "
+            f"annual_filing={'yes' if result.get('annual_filing') else 'no'}, "
+            f"hidden_support={','.join(result.get('hidden_support_sheets') or []) or 'none'}"
+        )
+        return result
+    except Exception as exc:
+        # Evidence/presentation enrichment must never block a valid deterministic workbook.
+        print(f"[workbook] WARNING: {reason} enhancement failed without changing model inputs: {exc}")
+        return None
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Agent-assisted equity research orchestrator")
     parser.add_argument("ticker", type=valid_ticker)
@@ -119,6 +141,7 @@ def render_report(ticker: str, workbook: Path, results: list, ai_model: str | No
         "",
         "- The agents and ML models do not execute trades.",
         "- AI narrative and ML output do not overwrite financial inputs or DCF assumptions.",
+        "- Public-evidence recovery does not overwrite valuation inputs or invent missing quantitative facts.",
         "- The AI Growth Forecast uses the LLM only for evidence extraction; LightGBM produces the fundamental growth forecast.",
         "- The AI evidence adjustment is bounded until enough dated AI KPI history exists for supervised training.",
         "- LightGBM is checked against an Elastic Net baseline on a chronological holdout and confidence is downgraded when it fails to match the baseline.",
@@ -126,7 +149,7 @@ def render_report(ticker: str, workbook: Path, results: list, ai_model: str | No
         "- ML walk-forward testing and data-readiness gates are preferred to filling missing outputs with fabricated data.",
         "- Cross-border annual data passes completed-fiscal-year and scale-integrity checks before valuation.",
         "- Commodity producers use a separate normalization overlay so peak commodity/acquisition years are not extrapolated as secular growth.",
-        "- Market-share records preserve their market definition and source.",
+        "- Market-share records preserve their market definition and source; non-comparable market share is N/A rather than estimated.",
         "- Valuation changes remain analyst-reviewed and are calculated by the deterministic model.",
         "",
     ])
@@ -139,6 +162,11 @@ def main() -> int:
     if not args.skip_model:
         run_model(ticker)
     workbook = latest_workbook(ticker)
+
+    # Normal model builds are already enhanced inside commodity_safe_runner. Reused old workbooks
+    # need the same treatment before agents inspect them.
+    if args.skip_model:
+        enhance_workbook(ticker, workbook, reason="reused workbook")
 
     stamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
     run_dir = RUNS_DIR / ticker / stamp
@@ -175,6 +203,9 @@ def main() -> int:
     if args.ml:
         try:
             run_ml(ticker, workbook, use_llm=bool(ai_client))
+            # ML adds workbook tabs after the production build; reapply presentation cleanup so the
+            # final file remains consistent while preserving the new model outputs.
+            enhance_workbook(ticker, workbook, reason="post-ML final polish")
         except Exception as exc:
             print(f"[ml] WARNING: ML / AI Growth layer failed without changing the deterministic valuation model: {exc}")
             if args.strict:
@@ -188,6 +219,7 @@ def main() -> int:
         "ai_growth_enabled": bool(args.ml),
         "ai_growth_llm_extraction": bool(args.ml and ai_client),
         "data_integrity_runner": "commodity_safe_runner.py",
+        "public_evidence_and_workbook_polish": True,
         "results": [x.to_dict() for x in results],
     }
     (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False, default=str) + "\n", encoding="utf-8")
