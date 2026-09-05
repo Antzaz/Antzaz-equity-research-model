@@ -100,7 +100,6 @@ def _score(targets: list[str], candidate: str) -> float:
         union = t_tokens | c_tokens
         jaccard = len(t_tokens & c_tokens) / len(union) if union else 0.0
         containment = len(t_tokens & c_tokens) / len(t_tokens) if t_tokens else 0.0
-        # Require the candidate to contain the economically important words from the target.
         combined = 0.45 * seq + 0.35 * jaccard + 0.20 * containment
         best = max(best, combined)
     return best
@@ -119,15 +118,13 @@ def _best_provider_row(df, label: str, aliases: list[str]) -> tuple[str | None, 
     if not ranked:
         return None, 0.0
     score, row = ranked[0]
-    # 0.86 is intentionally strict. This backfill is for obvious alias drift, not inference.
     return (row, score) if score >= 0.86 else (None, score)
 
 
 def _profile_for(wb, ticker: str):
     t = str(ticker or "").upper().strip()
     if t in statement_profiles.TICKER_PROFILE:
-        p = statement_profiles.get_statement_profile(t)
-        return p
+        return statement_profiles.get_statement_profile(t)
     try:
         cd = wb["Company Data"]
         policy = get_business_model_policy(t, cd["B6"].value, cd["B7"].value, cd["B5"].value)
@@ -176,12 +173,7 @@ def _provider_values(df, row_name: str, unit: str) -> dict[int, float]:
             continue
         if not math.isfinite(value):
             continue
-        if unit == "eps":
-            out[year] = value
-        elif unit == "shares":
-            out[year] = value / 1e9
-        else:
-            out[year] = value / 1e9
+        out[year] = value if unit == "eps" else value / 1e9
     return out
 
 
@@ -201,7 +193,6 @@ def _fill_section(ws, rows, df, year_cols, start, end, source_col) -> tuple[int,
         row = _find(ws, label, start, end)
         if not row:
             continue
-        # If every visible year already has a number/formula, there is nothing to recover.
         if all(ws.cell(row, c).value not in (None, "") for c in year_cols.values()):
             continue
         candidate, confidence = _best_provider_row(df, label, list(yf_names or []) + list(aliases or []))
@@ -244,8 +235,6 @@ def _derive_safe_identities(ws, sections, profile) -> int:
     i0, b0, c0, ih, bh, ch = sections
     iy = _year_cols(ws, ih); by = _year_cols(ws, bh); cy = _year_cols(ws, ch)
     n = 0
-    # Gross profit is meaningful only for ordinary operating-company profiles where both source
-    # components are already available. Payments/banks/insurance keep N/M if they do not report it.
     if profile.get("key") not in {"bank", "berkshire"}:
         rev = _find(ws, "Revenue", ih + 1, b0 - 1); cost = _find(ws, "Cost of Revenue", ih + 1, b0 - 1); gross = _find(ws, "Gross Profit", ih + 1, b0 - 1)
         if rev and cost and gross:
@@ -292,17 +281,13 @@ def _summary_sentence_rows(info: dict | None) -> list[tuple[str, str, str, str]]
         return []
     source = website or "https://finance.yahoo.com/"
     sentences = [x.strip() for x in re.split(r"(?<=[.!?])\s+", summary.replace("\n", " ")) if len(x.strip()) >= 35]
-    rows = []
-    for idx, sentence in enumerate(sentences[:3], 1):
-        rows.append(("Public business profile", f"Business activity {idx}", sentence[:500], source))
-    return rows
+    return [("Public business profile", f"Business activity {idx}", sentence[:500], source) for idx, sentence in enumerate(sentences[:3], 1)]
 
 
 def _backfill_company_profile(wb, ticker: str, info: dict | None) -> int:
     if "Company Data" not in wb.sheetnames:
         return 0
-    ws = wb["Company Data"]
-    header = _find(ws, "Business / Segment")
+    ws = wb["Company Data"]; header = _find(ws, "Business / Segment")
     if not header:
         return 0
     populated = []
@@ -310,7 +295,6 @@ def _backfill_company_profile(wb, ticker: str, info: dict | None) -> int:
         product = str(ws.cell(r, 2).value or "").strip()
         if product:
             populated.append((r, product))
-    # Curated or segment-derived profiles are already superior to the generic summary fallback.
     if len(populated) >= 2 or (populated and "see business description" not in populated[0][1].lower()):
         return 0
     rows = _summary_sentence_rows(info)
@@ -345,6 +329,11 @@ def _decorate_quality(wb, result: dict[str, Any]) -> None:
     for c, value in enumerate((label, status, observed, why), 1):
         ws.cell(row, c).value = value; ws.cell(row, c).alignment = Alignment(wrap_text=True, vertical="top")
     ws.cell(row, 2).fill = PatternFill("solid", fgColor=GREEN if status == "PASS" else GOLD); ws.cell(row, 2).font = Font(bold=True)
+
+
+def decorate_public_data_quality(wb, result: dict[str, Any]) -> None:
+    """Reapply the recovery disclosure after downstream modules rebuild Data Quality."""
+    _decorate_quality(wb, result or {})
 
 
 def backfill_public_data(wb, ticker: str, info: dict | None = None) -> dict[str, Any]:
