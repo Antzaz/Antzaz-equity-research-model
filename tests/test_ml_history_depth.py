@@ -11,12 +11,12 @@ class _FakeStore:
         return 150
 
 
-def test_default_ml_search_targets_broad_twenty_year_history():
+def test_default_ml_search_targets_maximum_twenty_year_history():
     args = ml.parser().parse_args(["GOOGL", "--no-workbook-write"])
     assert args.auto_history_limit == 500
     assert args.auto_history_years == 20
-    assert args.auto_history_batch_size == 100
-    assert args.max_universe == 50
+    assert args.auto_history_batch_size == 500
+    assert args.max_universe == 500
 
 
 def test_old_150_feature_row_database_is_not_declared_deep_ready(monkeypatch):
@@ -33,9 +33,10 @@ def test_old_150_feature_row_database_is_not_declared_deep_ready(monkeypatch):
     monkeypatch.setattr(ml, "yahoo_fundamental_rows", lambda *args, **kwargs: [])
 
     status = ml._auto_seed_history(
-        _FakeStore(), "GOOGL", ["MSFT"], "SPY", limit=500, years=20, batch_size=100
+        _FakeStore(), "GOOGL", ["MSFT"], "SPY", limit=500, years=20, batch_size=500
     )
     assert status["attempted"] is True
     assert status["ready"] is False
+    assert status["batch_size"] == 500
     assert status["minimum_feature_rows"] >= 600
     assert "deepening" in status["note"]
