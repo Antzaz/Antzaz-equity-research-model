@@ -1,25 +1,30 @@
-"""Final chart-readability pass for the deterministic research workbook.
+"""Final idempotent chart-layout pass for generated equity-research workbooks.
 
-The workbook is assembled by several layers.  A late idempotent pass is therefore safer than
-assuming every earlier chart writer ran exactly once.  This module removes overlapping charts at
-known analysis anchors, rebuilds the three text-heavy charts with short labels, and reduces label
-clutter on Monte Carlo / stress outputs without removing underlying research detail from tables.
+Several model layers create charts at different stages.  Running a partial clean-up before the
+ML/AI layers can therefore leave duplicated anchors or stacked charts in the final workbook.
+This module is deliberately late and destructive only to chart objects on presentation sheets:
+it keeps all source tables/formulas, clears those sheets' charts, and rebuilds one clean canonical
+layout with short category labels and fixed anchors.
+
+The pass is safe to run repeatedly.  One anchor always has one chart.
 """
 
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
+from openpyxl import load_workbook
 from openpyxl.chart import BarChart, LineChart, Reference
 from openpyxl.chart.data_source import AxDataSource, StrRef
-from openpyxl.chart.label import DataLabelList
 from openpyxl.chart.series import SeriesLabel
-from openpyxl.styles import Font
+from openpyxl.styles import Alignment, Font
 from openpyxl.utils import get_column_letter
 
 GREY="666666"
 FMT_BN='#,##0.0;[Red](#,##0.0);-'
 FMT_PCT='0.0%;[Red](0.0%);-'
+FMT_PRICE='$#,##0.00;[Red]($#,##0.00);-'
 
 
 def _num(v):
@@ -28,32 +33,6 @@ def _num(v):
         return float(v)
     except Exception:
         return None
-
-
-def _anchor(chart):
-    try:
-        return int(chart.anchor._from.row),int(chart.anchor._from.col)
-    except Exception:
-        return None,None
-
-
-def _chart_title(chart):
-    """Best-effort plain title extraction is intentionally avoided; anchors are deterministic."""
-    return getattr(chart,"title",None)
-
-
-def _remove_at(ws,anchors):
-    anchors=set(anchors)
-    ws._charts=[ch for ch in getattr(ws,"_charts",[]) if _anchor(ch) not in anchors]
-
-
-def _set_text_categories(chart,ws,col,first,last,titles):
-    sheet_name=ws.title.replace("'","''")
-    letter=get_column_letter(col)
-    formula=f"'{sheet_name}'!${letter}${first}:${letter}${last}"
-    for i,series in enumerate(chart.series):
-        series.cat=AxDataSource(strRef=StrRef(f=formula))
-        if i<len(titles): series.tx=SeriesLabel(v=str(titles[i]))
 
 
 def _short_label(label,max_len=27):
@@ -66,11 +45,6 @@ def _short_label(label,max_len=27):
         "Google Cloud":"Cloud",
         "Google Services":"Services",
         "Other Bets":"Other Bets",
-    }
-    if text in aliases: return aliases[text]
-    # Parenthetical detail belongs in the table/notes, not on chart axes.
-    text=re.sub(r"\s*\([^)]{8,}\)\s*$","",text).strip()
-    replacements={
         "Revenue Growth":"Growth",
         "Operating Margin":"Margin",
         "EBIT Margin":"Margin",
@@ -78,144 +52,249 @@ def _short_label(label,max_len=27):
         "Combined Severe Bear":"Severe Bear",
         "Probability Weighted":"Prob.-Weighted",
     }
-    for old,new in replacements.items(): text=text.replace(old,new)
+    if text in aliases: return aliases[text]
+    text=re.sub(r"\s*\([^)]{8,}\)\s*$","",text).strip()
+    for old,new in aliases.items(): text=text.replace(old,new)
     text=re.sub(r"\s+"," ",text)
     return text if len(text)<=max_len else text[:max_len-1].rstrip()+"…"
 
 
-def _find_section(ws,*labels):
-    wanted={str(x).strip().lower() for x in labels}
+def _set_text_categories(chart,ws,col,first,last,titles=None):
+    """Force text-axis categories as strRef so Excel does not reinterpret text as numeric data."""
+    sheet_name=ws.title.replace("'","''")
+    letter=get_column_letter(col)
+    formula=f"'{sheet_name}'!${letter}${first}:${letter}${last}"
+    for i,series in enumerate(chart.series):
+        series.cat=AxDataSource(strRef=StrRef(f=formula))
+        if titles and i<len(titles):
+            series.tx=SeriesLabel(v=str(titles[i]))
+
+
+def _base_chart(chart,title,width=13.5,height=8.2):
+    chart.style=10; chart.title=title; chart.width=width; chart.height=height
+    chart.visible_cells_only=False; chart.display_blanks="gap"
+    try: chart.legend.position="b"
+    except Exception: pass
+    return chart
+
+
+def _section_row(ws,label):
+    needle=str(label).strip().lower()
     for r in range(1,ws.max_row+1):
-        if str(ws.cell(r,1).value or "").strip().lower() in wanted:
-            return r
+        if str(ws.cell(r,1).value or "").strip().lower()==needle: return r
     return None
 
 
-def _business_rows(seg):
-    section=_find_section(seg,"Revenue by Business Line","Revenue by Business Line / Product Group","Revenue by Business Line / Disclosed Revenue Group")
-    if not section: return []
-    header=section+1; latest_col=4; out=[]
-    for r in range(header+1,min(seg.max_row,header+20)+1):
-        name=seg.cell(r,1).value; value=_num(seg.cell(r,latest_col).value)
-        if name in (None,""):
-            if out: break
-            continue
-        if value is None: continue
-        out.append((r,_short_label(name)))
-    return out[:8]
+def _ensure_analysis_helpers(wb,ws):
+    # Short stress-test categories.
+    labels=["Base","Growth -3ppt","Growth -5ppt","Margin -300bps","Margin -500bps","Capex +500bps","WACC +100bps","WACC +200bps","TGR -50bps","TGR -100bps","Severe Bear"]
+    for r,label in enumerate(labels,3): ws.cell(r,30,label)
 
+    # Clean business labels while preserving values in AN.
+    for r,label in enumerate(["Search","YouTube","Network","Subs / Platforms / Devices","Cloud","Other Bets"],3):
+        ws.cell(r,39,label)
 
-def _margin_rows(seg):
-    section=_find_section(seg,"Reported Operating / Reportable Segments","Reported Operating Segments","Reported Segments")
-    if not section: return [],None,None
-    header=section+1; margin_col=None; profit_label="Segment profit"
-    for c in range(1,min(18,seg.max_column)+1):
-        txt=str(seg.cell(header,c).value or "")
-        if "Margin" in txt and "Δ" not in txt: margin_col=c
-        if any(k in txt for k in ("Op. Income","Operating Income","EBITDA","Segment Profit","Adjusted Earnings")): profit_label=txt or profit_label
-    if margin_col is None: return [],None,profit_label
-    rows=[]; excluded=[]
-    for r in range(header+1,min(seg.max_row,header+15)+1):
-        name=seg.cell(r,1).value; margin=_num(seg.cell(r,margin_col).value)
-        if name in (None,""):
-            if rows or excluded: break
-            continue
-        if margin is None: continue
-        # A -489% segment margin can be economically real, but plotting it beside 20–40% margins
-        # destroys readability. Keep the fact in the note and omit it only from the common scale.
-        if abs(margin)>1.0:
-            excluded.append((_short_label(name),margin))
-        else:
-            rows.append((r,_short_label(name),margin))
-    return rows[:8],excluded,profit_label
-
-
-def _polish_existing_chart_titles(ws):
-    for ch in getattr(ws,"_charts",[]):
-        row,col=_anchor(ch)
-        if (row,col)==(6,0):
-            try:
-                ch.title="Monte Carlo Value Distribution"
-                ch.x_axis.tickLblSkip=2
-            except Exception: pass
-        elif (row,col)==(28,0):
-            try:
-                ch.title="DCF Stress Tests"
-                ch.height=9.5
-            except Exception: pass
-
-
-def _shorten_stress_helpers(ws):
-    # analysis_charts.py stores stress categories in AD3:AD13.
-    for r in range(3,14):
-        v=ws.cell(r,30).value
-        if isinstance(v,str) and not v.startswith("="):
-            ws.cell(r,30,_short_label(v,22))
-
-
-def _rebuild_history_chart(wb,ws):
-    if "Historical Financials" not in wb.sheetnames: return
-    h=wb["Historical Financials"]
-    ws["AX2"]="Year"; ws["AY2"]="Revenue"; ws["AZ2"]="FCF"
-    for out_r,src_col in enumerate(range(2,8),3):
-        letter=get_column_letter(src_col)
-        ws.cell(out_r,50,f"='Historical Financials'!{letter}3")
-        ws.cell(out_r,51,f"='Historical Financials'!{letter}4")
-        ws.cell(out_r,52,f"='Historical Financials'!{letter}16")
-        ws.cell(out_r,51).number_format=FMT_BN; ws.cell(out_r,52).number_format=FMT_BN
-    ch=LineChart(); ch.style=10; ch.title="Revenue & Free Cash Flow"; ch.height=9; ch.width=13.5
-    ch.y_axis.title="$bn"; ch.x_axis.title="Fiscal year"; ch.legend.position="b"
-    ch.add_data(Reference(ws,min_col=51,max_col=52,min_row=2,max_row=8),titles_from_data=True)
-    ch.set_categories(Reference(ws,min_col=50,min_row=3,max_row=8)); ch.visible_cells_only=False; ch.display_blanks="gap"
-    ws.add_chart(ch,"I29")
-    ws["I48"]="Revenue = reported sales | FCF = OCF − Capex | Source: Historical Financials"
-    ws["I48"].font=Font(size=9,color=GREY)
-
-
-def _rebuild_business_chart(wb,ws):
-    if "Segment Analysis" not in wb.sheetnames: return
-    seg=wb["Segment Analysis"]; rows=_business_rows(seg)
-    for r in range(2,14):
-        ws.cell(r,39).value=None; ws.cell(r,40).value=None
-    ws["AM2"]="Business"; ws["AN2"]="Revenue ($bn)"
-    for out_r,(src_r,name) in enumerate(rows,3):
-        ws.cell(out_r,39,name); ws.cell(out_r,40,f"='Segment Analysis'!D{src_r}"); ws.cell(out_r,40).number_format=FMT_BN
-    if not rows: return
-    end=2+len(rows); ch=BarChart(); ch.type="bar"; ch.style=10; ch.title="Revenue Mix"; ch.height=8.5; ch.width=13.5; ch.legend=None
-    ch.add_data(Reference(ws,min_col=40,min_row=3,max_row=end),titles_from_data=False)
-    _set_text_categories(ch,ws,39,3,end,["Revenue"]); ch.x_axis.title="$bn"; ch.x_axis.numFmt="0"; ch.visible_cells_only=False; ch.display_blanks="gap"
-    ch.dLbls=DataLabelList(); ch.dLbls.showVal=True; ch.dLbls.numFmt="0.0"
-    ws.add_chart(ch,"A53")
-
-
-def _rebuild_margin_chart(wb,ws):
-    if "Segment Analysis" not in wb.sheetnames: return
-    seg=wb["Segment Analysis"]; rows,excluded,profit_label=_margin_rows(seg)
-    for r in range(2,14):
+    # Rebuild a comparable-scale segment-margin helper.  Other Bets remains in Segment Analysis
+    # because its very large negative margin would flatten the useful 20-40% comparison.
+    for r in range(2,10):
         ws.cell(r,42).value=None; ws.cell(r,43).value=None
-    ws["AP2"]="Segment"; ws["AQ2"]="Margin"
-    for out_r,(src_r,name,margin) in enumerate(rows,3):
-        ws.cell(out_r,42,name); ws.cell(out_r,43,margin); ws.cell(out_r,43).number_format=FMT_PCT
-    if rows:
-        end=2+len(rows); ch=BarChart(); ch.type="bar"; ch.style=10; ch.title="Latest Segment Margin"; ch.height=8.5; ch.width=13.5; ch.legend=None
-        ch.add_data(Reference(ws,min_col=43,min_row=3,max_row=end),titles_from_data=False)
-        _set_text_categories(ch,ws,42,3,end,["Margin"]); ch.x_axis.title="Operating margin"; ch.x_axis.numFmt="0%"; ch.visible_cells_only=False; ch.display_blanks="gap"
-        ch.dLbls=DataLabelList(); ch.dLbls.showVal=True; ch.dLbls.numFmt="0.0%"
+    ws["AP2"]="Segment"; ws["AQ2"]="2025 Margin"
+    if "Segment Analysis" in wb.sheetnames:
+        seg=wb["Segment Analysis"]
+        source={str(seg.cell(r,1).value or "").strip():r for r in range(1,seg.max_row+1)}
+        for out_r,name in ((3,"Google Services"),(4,"Google Cloud")):
+            src=source.get(name)
+            if src:
+                ws.cell(out_r,42,name)
+                ws.cell(out_r,43,f"='Segment Analysis'!L{src}")
+                ws.cell(out_r,43).number_format=FMT_PCT
+
+    # History helper, independent of any earlier chart-writer implementation.
+    if "Historical Financials" in wb.sheetnames:
+        h=wb["Historical Financials"]
+        ws["AX2"]="Year"; ws["AY2"]="Revenue"; ws["AZ2"]="FCF"
+        for out_r,src_col in enumerate(range(2,8),3):
+            letter=get_column_letter(src_col)
+            ws.cell(out_r,50,f"='Historical Financials'!{letter}3")
+            ws.cell(out_r,51,f"='Historical Financials'!{letter}4")
+            ws.cell(out_r,52,f"='Historical Financials'!{letter}16")
+            ws.cell(out_r,51).number_format=FMT_BN; ws.cell(out_r,52).number_format=FMT_BN
+
+
+def _clean_analysis_text(ws):
+    # The old subtitle was in A3 only, causing a tall narrow column of wrapped text.
+    for rng in list(ws.merged_cells.ranges):
+        if str(rng)=="A3:P3": ws.unmerge_cells(str(rng))
+    ws.merge_cells("A3:P3")
+    ws["A3"]="Clean chart dashboard: valuation distribution, scenarios, stress tests, operating history, business mix, segment profitability and historical valuation. Detailed methodology stays in the source sheets."
+    ws["A3"].font=Font(italic=True,color=GREY); ws["A3"].alignment=Alignment(wrap_text=True,vertical="center"); ws.row_dimensions[3].height=28
+
+    for row in (23,48,70):
+        for rng in list(ws.merged_cells.ranges):
+            if rng.min_row<=row<=rng.max_row and rng.min_col<=16 and rng.max_col>=1:
+                try: ws.unmerge_cells(str(rng))
+                except Exception: pass
+        for c in range(1,17): ws.cell(row,c).value=None
+    ws.merge_cells("A23:H23"); ws.merge_cells("I23:P23")
+    ws["A23"]="Monte Carlo: 5,000 valuation simulations. P10 / median / P(>price) are on Advanced Analytics."
+    ws["I23"]="Scenario DCF: Bear / Base / Bull / probability-weighted value versus current price."
+    ws.merge_cells("A48:H48"); ws.merge_cells("I48:P48")
+    ws["A48"]="Stress tests change one driver at a time; Severe Bear combines multiple adverse assumptions."
+    ws["I48"]="Revenue and FCF are reported history; FCF = operating cash flow − capex."
+    ws.merge_cells("A70:H70"); ws.merge_cells("I70:P70")
+    ws["A70"]="Business mix uses issuer-disclosed 2025 revenue groups only; no product revenue is estimated."
+    ws["I70"]="Segment margin chart shows Services and Cloud on a comparable scale. Extreme negative segment margins remain visible on Segment Analysis rather than distorting the common chart scale."
+    for row in (23,48,70):
+        ws.cell(row,1).alignment=Alignment(wrap_text=True,vertical="center"); ws.cell(row,9).alignment=Alignment(wrap_text=True,vertical="center")
+
+    # Compact reference guide.
+    for r in range(102,112):
+        for rng in list(ws.merged_cells.ranges):
+            if rng.min_row<=r<=rng.max_row:
+                try: ws.unmerge_cells(str(rng))
+                except Exception: pass
+        for c in range(1,17): ws.cell(r,c).value=None
+    ws.merge_cells("A102:D102"); ws.merge_cells("E102:P102"); ws["A102"]="Chart"; ws["E102"]="How to use it"
+    guide=[
+        ("Monte Carlo","Distribution of intrinsic-value outcomes; use P10, median and probability above market as risk context."),
+        ("Scenario DCF","Compares Bear/Base/Bull and probability-weighted intrinsic value with current market price."),
+        ("Stress Tests","One-driver downside sensitivities. Severe Bear combines several adverse shocks."),
+        ("Revenue & FCF","Checks whether reported growth is converting into cash generation."),
+        ("Revenue Mix","Issuer-disclosed 2025 revenue groups; useful for mix and concentration analysis."),
+        ("Segment Margin","Comparable-scale segment profitability. Extreme outliers stay in Segment Analysis."),
+        ("Historical P/E","Historical valuation context only; not a standalone signal."),
+    ]
+    for r,(name,note) in enumerate(guide,103):
+        ws.merge_cells(start_row=r,start_column=1,end_row=r,end_column=4); ws.merge_cells(start_row=r,start_column=5,end_row=r,end_column=16)
+        ws.cell(r,1,name); ws.cell(r,5,note); ws.cell(r,5).alignment=Alignment(wrap_text=True,vertical="top"); ws.row_dimensions[r].height=24
+
+
+def _rebuild_analysis_charts(wb):
+    if "Analysis Charts" not in wb.sheetnames: return 0
+    ws=wb["Analysis Charts"]; ws._charts=[]; _ensure_analysis_helpers(wb,ws); _clean_analysis_text(ws)
+
+    # Monte Carlo
+    ch=_base_chart(BarChart(),"Monte Carlo Value Distribution"); ch.type="col"; ch.legend=None
+    ch.add_data(Reference(ws,min_col=25,min_row=3,max_row=22),titles_from_data=False)
+    _set_text_categories(ch,ws,24,3,22,["Frequency"]); ch.y_axis.title="Simulation frequency"; ch.y_axis.numFmt="0"
+    try: ch.x_axis.tickLblSkip=2
+    except Exception: pass
+    ws.add_chart(ch,"A7")
+
+    # Scenario DCF vs market
+    ch=_base_chart(BarChart(),"Scenario DCF vs Current Price"); ch.type="col"; ch.legend=None
+    ch.add_data(Reference(ws,min_col=28,min_row=3,max_row=7),titles_from_data=False)
+    _set_text_categories(ch,ws,27,3,7,["Value / share"]); ch.y_axis.title="USD / share"; ch.y_axis.numFmt="$0"
+    ws.add_chart(ch,"I7")
+
+    # Stress tests
+    ch=_base_chart(BarChart(),"DCF Stress Tests",height=9.2); ch.type="bar"; ch.legend=None
+    ch.add_data(Reference(ws,min_col=31,min_row=3,max_row=13),titles_from_data=False)
+    _set_text_categories(ch,ws,30,3,13,["Value / share"]); ch.x_axis.title="USD / share"; ch.x_axis.numFmt="$0"
+    ws.add_chart(ch,"A29")
+
+    # Revenue and FCF
+    ch=_base_chart(LineChart(),"Revenue & Free Cash Flow",height=9.2)
+    ch.add_data(Reference(ws,min_col=51,max_col=52,min_row=2,max_row=8),titles_from_data=True)
+    ch.set_categories(Reference(ws,min_col=50,min_row=3,max_row=8)); ch.y_axis.title="USD bn"; ch.y_axis.numFmt="0"
+    ws.add_chart(ch,"I29")
+
+    # Business mix
+    business_last=8 if any(ws.cell(r,40).value not in (None,"") for r in range(3,9)) else 2
+    if business_last>=3:
+        ch=_base_chart(BarChart(),"2025 Revenue Mix"); ch.type="bar"; ch.legend=None
+        ch.add_data(Reference(ws,min_col=40,min_row=3,max_row=business_last),titles_from_data=False)
+        _set_text_categories(ch,ws,39,3,business_last,["Revenue"]); ch.x_axis.title="USD bn"; ch.x_axis.numFmt="0"
+        ws.add_chart(ch,"A53")
+
+    # Comparable segment margins
+    if ws["AQ3"].value not in (None,""):
+        ch=_base_chart(BarChart(),"2025 Segment Operating Margin"); ch.type="bar"; ch.legend=None
+        ch.add_data(Reference(ws,min_col=43,min_row=3,max_row=4),titles_from_data=False)
+        _set_text_categories(ch,ws,42,3,4,["Operating margin"]); ch.x_axis.title="Operating margin"; ch.x_axis.numFmt="0%"
         ws.add_chart(ch,"I53")
-    note=f"Margin = {profit_label} ÷ segment revenue."
-    if excluded:
-        details=", ".join(f"{name} {margin:.1%}" for name,margin in excluded)
-        note+=f" Outlier omitted from common chart scale but retained in Segment Analysis: {details}."
-    ws["I70"]=note; ws["I70"].font=Font(size=9,color=GREY)
+
+    # Historical P/E
+    if any(ws.cell(r,48).value not in (None,"") for r in range(3,9)):
+        ch=_base_chart(LineChart(),"Historical Year-End P/E"); ch.legend=None
+        ch.add_data(Reference(ws,min_col=48,min_row=3,max_row=8),titles_from_data=False)
+        _set_text_categories(ch,ws,47,3,8,["P/E"]); ch.y_axis.title="P/E (x)"; ch.y_axis.numFmt="0.0x"
+        ws.add_chart(ch,"A75")
+    return len(ws._charts)
+
+
+def _rebuild_ml_charts(wb):
+    if "ML & Quantitative Research" not in wb.sheetnames: return 0
+    ws=wb["ML & Quantitative Research"]; ws._charts=[]
+    for r,label in enumerate(["12M price trend","Recent drawdown","6M volatility","Operating margin","FCF yield","6M price trend"],17): ws.cell(r,24,label)
+    for r,label in enumerate(["Transition / mixed","Growth / risk-on","Inflation / stagflation","Risk-off / crisis"],26): ws.cell(r,24,label)
+
+    ch=_base_chart(BarChart(),"Forecast Size vs Typical Historical Error",width=13,height=7); ch.type="col"
+    ch.add_data(Reference(ws,min_col=25,max_col=26,min_row=3,max_row=4),titles_from_data=False); _set_text_categories(ch,ws,24,3,4,["Forecast magnitude","Typical historical error"]); ch.y_axis.title="Percent"; ws.add_chart(ch,"J6")
+    ch=_base_chart(BarChart(),"Model vs Simple Baseline",width=13,height=7); ch.type="col"
+    ch.add_data(Reference(ws,min_col=25,max_col=26,min_row=10,max_row=11),titles_from_data=False); _set_text_categories(ch,ws,24,10,11,["Model","Simple baseline"]); ch.y_axis.title="Accuracy (%)"; ws.add_chart(ch,"J21")
+    ch=_base_chart(BarChart(),"12M Return Model — Driver Influence",width=13,height=7.5); ch.type="bar"; ch.legend=None
+    ch.add_data(Reference(ws,min_col=25,min_row=17,max_row=22),titles_from_data=False); _set_text_categories(ch,ws,24,17,22,["Relative influence"]); ch.x_axis.title="Relative influence"; ws.add_chart(ch,"J36")
+    ch=_base_chart(BarChart(),"Market Regime Weights",width=13,height=7.5); ch.type="bar"; ch.legend=None
+    ch.add_data(Reference(ws,min_col=25,min_row=26,max_row=29),titles_from_data=False); _set_text_categories(ch,ws,24,26,29,["Weight"]); ch.x_axis.title="Weight (%)"; ws.add_chart(ch,"J52")
+    return len(ws._charts)
+
+
+def _rebuild_ai_growth_charts(wb):
+    if "AI Growth Forecast" not in wb.sheetnames: return 0
+    ws=wb["AI Growth Forecast"]; ws._charts=[]
+    for r,label in enumerate(["Demand","Monetization","Adoption","Efficiency","Capital-light","Risk-adjusted"],3): ws.cell(r,16,label)
+    for r,label in enumerate(["Fundamental ML","AI-adjusted","Market-implied"],12): ws.cell(r,16,label)
+    for r,label in enumerate(["Revenue: 12M price trend ↑","Revenue: Net debt / rev ↑","Revenue: Net margin ↓","FCF: FCF margin ↓","FCF: Capex / rev ↑","FCF: Drawdown ↓"],18): ws.cell(r,16,label)
+
+    ch=_base_chart(BarChart(),"AI Evidence Scores — 50 = Neutral",width=14.5,height=7.5); ch.type="bar"; ch.legend=None
+    ch.add_data(Reference(ws,min_col=17,min_row=3,max_row=8),titles_from_data=False); _set_text_categories(ch,ws,16,3,8,["Supportive score"]); ch.x_axis.title="Score"; ch.x_axis.numFmt="0"; ws.add_chart(ch,"H6")
+    ch=_base_chart(BarChart(),"FCF Growth — Model vs Market",width=14.5,height=7.2); ch.type="col"; ch.legend=None
+    ch.add_data(Reference(ws,min_col=17,min_row=12,max_row=14),titles_from_data=False); _set_text_categories(ch,ws,16,12,14,["Annual FCF growth"]); ch.y_axis.title="Annual growth (%)"; ws.add_chart(ch,"H20")
+    ch=_base_chart(BarChart(),"Growth Forecast — Relative Driver Influence",width=14.5,height=7.8); ch.type="bar"; ch.legend=None
+    ch.add_data(Reference(ws,min_col=17,min_row=18,max_row=23),titles_from_data=False); _set_text_categories(ch,ws,16,18,23,["Relative influence"]); ch.x_axis.title="Relative influence"; ws.add_chart(ch,"H34")
+    ws["H49"]="Driver influence is model attribution, not causality. The table on the left remains the authoritative detail."; ws["H49"].font=Font(italic=True,color=GREY,size=9)
+    return len(ws._charts)
+
+
+def _rebuild_expectations_chart(wb):
+    if "Expectations & Consensus" not in wb.sheetnames: return 0
+    ws=wb["Expectations & Consensus"]; ws._charts=[]
+    if ws["J46"].value in (None,""): return 0
+    ch=_base_chart(BarChart(),"Revenue — Independent Model vs Street",width=12.5,height=7); ch.type="col"
+    ch.add_data(Reference(ws,min_col=11,max_col=12,min_row=46,max_row=47),titles_from_data=False); _set_text_categories(ch,ws,10,46,47,["Street","Independent Model"]); ch.y_axis.title="Revenue (USD bn)"; ws.add_chart(ch,"I7")
+    return 1
+
+
+def _rebuild_market_expectations_chart(wb):
+    if "Market Expectations" not in wb.sheetnames: return 0
+    ws=wb["Market Expectations"]; ws._charts=[]
+    if ws["G53"].value in (None,""): return 0
+    ch=_base_chart(BarChart(),"Base vs Price-Implied Hurdles",width=12.5,height=7); ch.type="col"
+    ch.add_data(Reference(ws,min_col=8,max_col=9,min_row=53,max_row=54),titles_from_data=False); _set_text_categories(ch,ws,7,53,54,["Base","Market Implied"]); ch.y_axis.title="Percent"; ws.add_chart(ch,"F18")
+    return 1
+
+
+def polish_workbook_charts(wb,ticker=None):
+    counts={
+        "Analysis Charts":_rebuild_analysis_charts(wb),
+        "ML & Quantitative Research":_rebuild_ml_charts(wb),
+        "AI Growth Forecast":_rebuild_ai_growth_charts(wb),
+        "Expectations & Consensus":_rebuild_expectations_chart(wb),
+        "Market Expectations":_rebuild_market_expectations_chart(wb),
+    }
+    return {"charts_rebuilt":sum(counts.values()),"sheet_counts":counts}
 
 
 def polish_analysis_charts(wb,ticker=None):
-    if "Analysis Charts" not in wb.sheetnames: return {"rebuilt":0}
-    ws=wb["Analysis Charts"]
-    _shorten_stress_helpers(ws)
-    # Known final anchors: historical performance (I29), business mix (A53), segment margin (I53).
-    # Remove every prior object at those anchors before rebuilding so repeated pipeline passes are idempotent.
-    _remove_at(ws,{(28,8),(52,0),(52,8)})
-    _rebuild_history_chart(wb,ws); _rebuild_business_chart(wb,ws); _rebuild_margin_chart(wb,ws)
-    _polish_existing_chart_titles(ws)
-    return {"rebuilt":3,"chart_count":len(getattr(ws,"_charts",[]) or [])}
+    """Backwards-compatible deterministic-run hook."""
+    return {"rebuilt":_rebuild_analysis_charts(wb),"chart_count":len(wb["Analysis Charts"]._charts) if "Analysis Charts" in wb.sheetnames else 0}
+
+
+def apply_chart_readability(workbook_path,ticker=None):
+    """File-based final hook for research.py after ML/AI have finished writing charts."""
+    path=Path(workbook_path)
+    wb=load_workbook(path,data_only=False)
+    result=polish_workbook_charts(wb,ticker)
+    wb.save(path)
+    return result
