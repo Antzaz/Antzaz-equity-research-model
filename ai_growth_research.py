@@ -49,6 +49,10 @@ AI_CONTEXT_TERMS=(
     "large language model","inference","training compute","gpu","accelerator","agentic",
     "copilot","foundation model","ai-","ai ",
 )
+CONTEXT_ONLY_TYPES=(
+    "secondary public news","public company profile / secondary","secondary public",
+    "context only","research lead",
+)
 
 
 def ticker_type(raw: str) -> str:
@@ -87,8 +91,17 @@ def _row_text(row: dict) -> str:
     ).strip()
 
 
+def _is_context_only_ai_row(row: dict) -> bool:
+    """Secondary headlines/profile snippets are research context, not quantitative KPI evidence."""
+    dtype=str(row.get("data_type") or "").lower().strip()
+    text=_row_text(row).lower()
+    return any(term in dtype or term in text for term in CONTEXT_ONLY_TYPES)
+
+
 def _is_substantive_ai_row(row: dict) -> bool:
-    """Keep real AI evidence; reject analyst-input/template rows that create false precision."""
+    """Keep issuer/management AI evidence; reject placeholders and secondary context for scoring."""
+    if _is_context_only_ai_row(row):
+        return False
     text=_row_text(row)
     low=f" {text.lower()} "
     if not any(term in low for term in AI_CONTEXT_TERMS):
@@ -112,16 +125,37 @@ def _is_substantive_ai_row(row: dict) -> bool:
 
 
 def _clean_ai_evidence(rows: list[dict], corpus: str) -> tuple[list[dict],str,dict]:
-    """Remove template placeholders before deterministic or LLM scoring.
+    """Build a scoring corpus while preserving secondary public context separately.
 
-    Source-file evidence remains available, but placeholder lines from KPI templates are removed.
-    This prevents labels such as 'AI revenue — Analyst input' from nudging neutral scores upward.
+    Public-news/profile rows are useful research leads, so they remain visible in the output, but
+    they are excluded from deterministic/LLM quantitative scores. This prevents an AI-related
+    headline from moving the numeric overlay simply because it repeats words like growth, demand,
+    capex or risk. Template/analyst-input rows are also removed before scoring.
     """
-    clean_rows=[dict(r) for r in rows if isinstance(r,dict) and _is_substantive_ai_row(r)]
+    clean_rows=[]
+    context_rows=[]
+    rejected_rows=0
+    for row in rows:
+        if not isinstance(row,dict):
+            rejected_rows+=1
+            continue
+        if _is_context_only_ai_row(row):
+            if any(term in f" {_row_text(row).lower()} " for term in AI_CONTEXT_TERMS):
+                context_rows.append("Context only — "+_row_text(row)[:220])
+            continue
+        if _is_substantive_ai_row(row):
+            clean_rows.append(dict(row))
+        else:
+            rejected_rows+=1
+
     clean_lines=[]
     removed_lines=0
+    context_lines=0
     for line in str(corpus or "").splitlines():
         low=line.lower().strip()
+        if low and any(term in low for term in CONTEXT_ONLY_TYPES):
+            context_lines+=1
+            continue
         if low and any(term in low for term in PLACEHOLDER_TERMS) and not re.search(r"[-+]?\d+(?:\.\d+)?",line):
             removed_lines+=1
             continue
@@ -130,8 +164,13 @@ def _clean_ai_evidence(rows: list[dict], corpus: str) -> tuple[list[dict],str,di
     stats={
         "raw_kpi_rows":len(rows),
         "substantive_ai_rows":len(clean_rows),
-        "filtered_placeholder_rows":max(0,len(rows)-len(clean_rows)),
+        # Compatibility field retained for existing tests/reporting; it means filtered non-scoring rows.
+        "filtered_placeholder_rows":rejected_rows,
         "filtered_placeholder_lines":removed_lines,
+        "context_only_ai_rows":len(context_rows),
+        "context_only_lines":context_lines,
+        "context_only_evidence":context_rows[:8],
+        "scoring_rule":"Secondary public news/profile context is displayed but excluded from quantitative AI scores.",
     }
     return clean_rows,clean_corpus,stats
 
@@ -150,11 +189,22 @@ def main() -> int:
         if args.llm
         else deterministic_ai_signals(rows, corpus)
     )
+    context_only=list(evidence_quality.get("context_only_evidence") or [])
+    if context_only:
+        existing=list(signals.evidence or [])
+        signals.evidence=(existing+context_only)[:8]
     if evidence_quality["substantive_ai_rows"]==0 and not corpus.strip():
-        signals.summary="No substantive company-specific AI evidence was available after placeholder filtering; scores remain neutral."
+        if context_only:
+            signals.summary=(
+                "No issuer-grade company-specific AI KPI evidence was available after filtering. "
+                "Secondary public context is shown for research follow-up but is excluded from numeric AI scores; scores remain neutral."
+            )
+        else:
+            signals.summary="No substantive company-specific AI evidence was available after placeholder filtering; scores remain neutral."
     print(
-        f"[ai-growth] evidence: {signals.evidence_count} substantive KPI row(s) "
-        f"({evidence_quality['filtered_placeholder_rows']} filtered); "
+        f"[ai-growth] evidence: {signals.evidence_count} substantive KPI row(s); "
+        f"context-only={evidence_quality.get('context_only_ai_rows',0)}; "
+        f"filtered={evidence_quality['filtered_placeholder_rows']}; "
         f"extraction={signals.extraction_mode}; confidence={signals.confidence:.0%}"
     )
     print(f"[ai-growth] business model: {policy.label}; primary valuation={policy.primary_valuation}")
@@ -225,7 +275,8 @@ def main() -> int:
             "valuation_bridge": "reverse DCF implied FCF growth" if policy.reverse_dcf_allowed else policy.primary_valuation,
             "governance": (
                 "AI evidence is a bounded overlay until sufficient dated AI KPI history exists "
-                "to train AI features directly. Template/analyst-input rows are filtered before scoring. "
+                "to train AI features directly. Template/analyst-input rows are filtered before scoring, and "
+                "secondary public-news/profile context is displayed but excluded from numeric AI scores. "
                 "This layer does not overwrite DCF assumptions. Business-model policy disables industrial "
                 "FCF/reverse-DCF where that framework is not economically appropriate."
             ),
