@@ -21,6 +21,7 @@ import re
 from openpyxl import load_workbook
 
 from business_model_registry import workbook_policy, reverse_dcf_applicability_message
+from chart_excel_compat import apply_chart_compatibility_fix
 from machine_learning.ai_growth import (
     LightGBMGrowthForecaster,
     ai_adjustments,
@@ -248,6 +249,8 @@ def main() -> int:
 
     if not args.no_workbook_write:
         write_ai_growth_sheet(workbook, ticker, payload)
+        compat = apply_chart_compatibility_fix(workbook)
+        print(f"[ai-growth] Excel chart compatibility: {compat.get('charts_repaired',0)} chart(s) repaired")
 
     def show(label: str, value):
         print(f"[ai-growth] {label}: {'N/M' if value is None else f'{value:.1%}'}")
