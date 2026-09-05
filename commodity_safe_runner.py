@@ -4,7 +4,7 @@ from __future__ import annotations
 
 The guarded core model remains stable while this entry point installs business-model routing,
 canonical accounting guards, conservative public-data recovery, scenario-assumption sanity checks,
-commodity normalization, verified segment adapters, and the source-backed transaction monitor.
+commodity normalization, verified segment adapters, and a final decision-first workbook layout.
 """
 
 import advanced_analytics_v2
@@ -23,6 +23,8 @@ from deal_analysis import ensure_deal_analysis
 from google_segment_analysis import ensure_google_segment_analysis
 from public_data_orchestrator import run_public_data_recovery
 from scenario_integrity import repair_default_scenario_margin_paths
+from visualization_v2 import ensure_visual_dashboard
+from workbook_presentation import apply_workbook_presentation
 
 
 # Install business-model routing after safe_update_model has installed its guarded wrappers, but
@@ -111,8 +113,16 @@ def _financial_statements_with_canonical_guard(wb, ticker, facts):
 
 
 def _research_extensions_with_deals(wb, ticker, info=None):
-    """Run guarded extensions, append transactions, then report final accounting quality."""
+    """Run final extensions, rebuild the dashboard from final data, then consolidate presentation."""
     result = _ORIGINAL_RESEARCH_EXTENSIONS(wb, ticker, info)
+
+    # research_extensions deliberately removes some legacy presentation tabs. Rebuild the modern
+    # Visual Dashboard *after* the final financial/segment/valuation state so it cannot be stale.
+    try:
+        ensure_visual_dashboard(wb, ticker)
+    except Exception as exc:
+        print(f"Warning: final Visual Dashboard rebuild failed: {exc}")
+
     try:
         ensure_deal_analysis(wb, ticker, info or {})
     except Exception as exc:
@@ -133,6 +143,16 @@ def _research_extensions_with_deals(wb, ticker, info=None):
             ws.cell(row, 3, scenario.get("reason")); ws.cell(row, 4, "Prevents arbitrary template margin caps from replacing observed economics.")
         except Exception:
             pass
+
+    try:
+        presentation = apply_workbook_presentation(wb, ticker)
+        setattr(wb, "_workbook_presentation", presentation)
+        print(
+            f"Workbook presentation: visible={presentation.get('visible_sheets')}; "
+            f"hidden={', '.join(presentation.get('hidden_tabs') or []) or 'none'}"
+        )
+    except Exception as exc:
+        print(f"Warning: workbook presentation consolidation failed: {exc}")
     return result
 
 
