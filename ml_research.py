@@ -10,6 +10,7 @@ import re
 import pandas as pd
 import yfinance as yf
 
+from chart_excel_compat import apply_chart_compatibility_fix
 from machine_learning import (
     ExpectedReturnModel,EarningsSurpriseModel,FinancialAnomalyModel,MarketRegimeModel,
     AIImpactMLModel,PortfolioPositionSizingModel,
@@ -31,13 +32,13 @@ ML_RUNS=BASE/"ml_runs"
 HISTORY_DB=BASE/"ml_data"/"ml_history.sqlite"
 VALUATION_FEATURES=["price_to_sales","earnings_yield","fcf_yield","book_to_market","ev_to_sales"]
 
-# Deep shared-history policy. Every normal --ml search reuses the same SQLite store and, while
-# coverage is still sparse, incrementally expands it toward a broad 500-name / 20-year universe.
-# A per-run batch cap keeps ordinary research usable instead of turning the first search into a
-# full-database bootstrap. The target ticker and its workbook peers are always prioritized.
+# Maximum shared-history policy. Every normal ML search reuses the same SQLite store and targets
+# the broadest currently supported training set: up to 500 names and 20 years of price history.
+# Incomplete names can all be deepened in one run; after the local database is built, later
+# searches reuse it and are much faster. The requested ticker and workbook peers stay prioritized.
 AUTO_HISTORY_DEFAULT_LIMIT=500
 AUTO_HISTORY_DEFAULT_YEARS=20
-AUTO_HISTORY_DEFAULT_BATCH=100
+AUTO_HISTORY_DEFAULT_BATCH=500
 AUTO_HISTORY_MAX_LIMIT=500
 AUTO_HISTORY_MAX_YEARS=20
 
@@ -49,11 +50,11 @@ def ticker_type(raw:str)->str:
 
 
 def parser():
-    p=argparse.ArgumentParser(description="Run six-model machine-learning research layer")
+    p=argparse.ArgumentParser(description="Run maximum six-model machine-learning research layer")
     p.add_argument("ticker",type=ticker_type)
     p.add_argument("--workbook",help="Optional workbook path; defaults to newest generated model")
     p.add_argument("--benchmark",default="SPY")
-    p.add_argument("--max-universe",type=int,default=50,help="Maximum symbols used by the legacy live-data fallback when persistent history is not ready")
+    p.add_argument("--max-universe",type=int,default=500,help="Maximum symbols used by the legacy live-data fallback when persistent history is not ready")
     p.add_argument("--max-position",type=float,default=.25)
     p.add_argument("--risk-aversion",type=float,default=4.0)
     p.add_argument("--history-db",default=str(HISTORY_DB),help="Persistent SQLite training database")
@@ -61,7 +62,7 @@ def parser():
     p.add_argument("--no-auto-history",action="store_true",help="Do not automatically deepen a sparse/missing persistent history database")
     p.add_argument("--auto-history-limit",type=int,default=AUTO_HISTORY_DEFAULT_LIMIT,help="Target number of tracked names for the shared automatic history database")
     p.add_argument("--auto-history-years",type=int,default=AUTO_HISTORY_DEFAULT_YEARS,help="Price-history years targeted by the automatic history database")
-    p.add_argument("--auto-history-batch-size",type=int,default=AUTO_HISTORY_DEFAULT_BATCH,help="Maximum incomplete symbols deepened in one normal ML search; repeated searches continue toward the target universe")
+    p.add_argument("--auto-history-batch-size",type=int,default=AUTO_HISTORY_DEFAULT_BATCH,help="Maximum incomplete symbols deepened in one ML search; default is the full supported 500-name universe")
     p.add_argument("--no-workbook-write",action="store_true")
     return p
 
@@ -187,16 +188,15 @@ def _auto_seed_history(
     years:int=AUTO_HISTORY_DEFAULT_YEARS,
     batch_size:int=AUTO_HISTORY_DEFAULT_BATCH,
 )->dict:
-    """Incrementally deepen the shared point-in-time history behind every normal --ml search.
+    """Deepen the shared point-in-time history behind every normal ML search.
 
-    The target state is a broad 500-name / 20-year market-history universe. Only a bounded number
-    of incomplete symbols are downloaded per ordinary research run, so repeated searches improve
-    the common training set without making a single company search unreasonably slow. The target
-    ticker and its same-industry peers are inserted first and therefore receive priority.
+    The target state is the maximum supported broad 500-name / 20-year market-history universe.
+    The default batch can process every incomplete name in one search. Once the local SQLite
+    history is populated, later searches reuse it instead of repeatedly rebuilding the universe.
     """
     desired_limit=max(20,min(int(limit),AUTO_HISTORY_MAX_LIMIT))
     desired_years=max(3,min(int(years),AUTO_HISTORY_MAX_YEARS))
-    per_run=max(10,min(int(batch_size),150))
+    per_run=max(10,min(int(batch_size),500))
     rows=_starter_universe(ticker,peers,benchmark,desired_limit)
     store.upsert_symbols(rows)
     symbols=[r["symbol"] for r in rows]
@@ -217,9 +217,6 @@ def _auto_seed_history(
     minimum_feature_rows=max(600,min(1500,desired_symbols*2))
     status["minimum_feature_rows"]=minimum_feature_rows
 
-    # Do not declare a shallow old database finished merely because it has 150 rows. A broad
-    # database is ready only when most of the requested universe has usable price/fundamental
-    # coverage and enough realized point-in-time targets exist for meaningful cross-sectional ML.
     coverage_ready=(
         price_ready>=max(1,int(desired_symbols*.85)) and
         fundamental_ready>=max(1,int((desired_symbols-(1 if benchmark_symbol in symbols else 0))*.65))
@@ -227,7 +224,7 @@ def _auto_seed_history(
     if status["features"]>=minimum_feature_rows and target_ready and coverage_ready:
         status["ready"]=True
         status["note"]=(
-            f"Deep persistent history ready: {status['features']:,} realized point-in-time feature rows; "
+            f"Maximum persistent history ready: {status['features']:,} realized point-in-time feature rows; "
             f"prices ready for {price_ready}/{desired_symbols} symbols and fundamentals ready for "
             f"{fundamental_ready}/{desired_symbols}."
         )
@@ -269,11 +266,10 @@ def _auto_seed_history(
     )
     status["ready"]=bool(status["features"]>=minimum_feature_rows and target_ready and coverage_ready)
     status["note"]=(
-        f"Automatic deep history {'ready' if status['ready'] else 'deepening'}: {status['features']:,} realized "
+        f"Maximum automatic history {'ready' if status['ready'] else 'deepening'}: {status['features']:,} realized "
         f"point-in-time feature rows; price coverage {price_ready}/{desired_symbols}, fundamental coverage "
         f"{fundamental_ready}/{desired_symbols}. Up to {per_run} incomplete names are added per ML search "
-        f"until the shared database approaches {desired_limit} names / {desired_years} years. For an immediate "
-        "one-shot build use `python ml_history.py bootstrap --universe sp500 --limit 500 --years 20`."
+        f"toward {desired_limit} names / {desired_years} years. The same local database is reused by later searches."
     )
     return status
 
@@ -332,6 +328,7 @@ def main()->int:
     expected=expected_model.fit_predict(expected_frame,current)
     expected.details=dict(expected.details or {}); expected.details["training_source"]=expected_source
     expected.details["feature_columns"]=expected_model.feature_cols
+    expected.details["analysis_mode"]="maximum_500_names_20_years"
     if auto_history: expected.details["automatic_history"]=auto_history
 
     earnings_frame=pd.DataFrame(); earnings_source="live fallback"
@@ -368,11 +365,21 @@ def main()->int:
 
     stamp=datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
     run_dir=ML_RUNS/ticker/stamp; run_dir.mkdir(parents=True,exist_ok=True)
-    payload={"ticker":ticker,"generated_at":datetime.now().astimezone().isoformat(timespec="seconds"),"workbook":str(workbook),
-             "persistent_history_db":str(db_path) if store else None,"automatic_history":auto_history,"models":[r.to_dict() for r in results]}
+    payload={
+        "ticker":ticker,
+        "generated_at":datetime.now().astimezone().isoformat(timespec="seconds"),
+        "workbook":str(workbook),
+        "analysis_mode":"maximum_500_names_20_years",
+        "persistent_history_db":str(db_path) if store else None,
+        "automatic_history":auto_history,
+        "models":[r.to_dict() for r in results],
+    }
     write_json(run_dir/"ml_results.json",payload)
     _journal(store,ticker,stamp,results)
-    if not args.no_workbook_write: write_ml_sheet(workbook,ticker,results)
+    if not args.no_workbook_write:
+        write_ml_sheet(workbook,ticker,results)
+        compat=apply_chart_compatibility_fix(workbook)
+        print(f"[ml] Excel chart compatibility: {compat.get('charts_repaired',0)} chart(s) repaired")
     print(f"[done] ML results: {run_dir/'ml_results.json'}")
     print(f"[done] Workbook updated: {workbook}" if not args.no_workbook_write else "[done] Workbook write skipped")
     return 0
