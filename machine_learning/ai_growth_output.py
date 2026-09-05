@@ -17,7 +17,10 @@ import math
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.chart import BarChart, Reference
+from openpyxl.chart.data_source import AxDataSource, StrRef
 from openpyxl.chart.label import DataLabelList
+from openpyxl.chart.series import SeriesLabel
+from openpyxl.utils import get_column_letter
 
 
 FEATURE_LABELS={
@@ -51,6 +54,18 @@ def _finite(value: Any) -> float | None:
 def _fmt_pct(value: Any) -> str:
     x = _finite(value)
     return "N/M" if x is None else f"{x:.1%}"
+
+
+def _set_chart_text_categories(chart, ws, category_col, first_row, last_row, series_titles=None):
+    """Use explicit string categories/literal series titles so Excel need not repair chart OOXML."""
+    sheet_name=ws.title.replace("'","''")
+    col=get_column_letter(category_col)
+    category_formula=f"'{sheet_name}'!${col}${first_row}:${col}${last_row}"
+    titles=list(series_titles or [])
+    for idx,series in enumerate(chart.series):
+        series.cat=AxDataSource(strRef=StrRef(f=category_formula))
+        if idx<len(titles):
+            series.tx=SeriesLabel(v=str(titles[idx]))
 
 
 def _placeholder_evidence(signals: dict[str, Any]) -> bool:
@@ -106,8 +121,8 @@ def _add_ai_growth_charts(ws, signals: dict[str, Any], revenue: dict[str, Any], 
     ch.title="AI evidence: 50 = neutral, higher = more supportive"
     ch.y_axis.title="Supportive score"; ch.y_axis.scaling.min=0; ch.y_axis.scaling.max=100; ch.y_axis.numFmt="0.0"
     ch.height=7.2; ch.width=13.5; ch.legend=None
-    ch.add_data(Reference(ws,min_col=17,min_row=2,max_row=8),titles_from_data=True)
-    ch.set_categories(Reference(ws,min_col=16,min_row=3,max_row=8))
+    ch.add_data(Reference(ws,min_col=17,min_row=3,max_row=8),titles_from_data=False)
+    _set_chart_text_categories(ch,ws,16,3,8,["Supportive score"])
     ch.dLbls=DataLabelList(); ch.dLbls.showVal=True; ch.dLbls.numFmt="0.0"
     ws.add_chart(ch,"H6")
 
@@ -128,8 +143,8 @@ def _add_ai_growth_charts(ws, signals: dict[str, Any], revenue: dict[str, Any], 
         vals=[v for _,v in fcf_rows if v is not None]
         if vals and min(vals)>=0: ch.y_axis.scaling.min=0
         ch.height=7.0; ch.width=13.5; ch.legend=None
-        ch.add_data(Reference(ws,min_col=17,min_row=11,max_row=end),titles_from_data=True)
-        ch.set_categories(Reference(ws,min_col=16,min_row=12,max_row=end))
+        ch.add_data(Reference(ws,min_col=17,min_row=12,max_row=end),titles_from_data=False)
+        _set_chart_text_categories(ch,ws,16,12,end,["Annual FCF growth"])
         ch.dLbls=DataLabelList(); ch.dLbls.showVal=True; ch.dLbls.numFmt="0.0"
         ws.add_chart(ch,"H20")
 
@@ -151,8 +166,8 @@ def _add_ai_growth_charts(ws, signals: dict[str, Any], revenue: dict[str, Any], 
         ch.title="What influences the growth forecast most"
         ch.y_axis.title="Driver"; ch.x_axis.title="Share of top-driver influence (%)"; ch.x_axis.numFmt="0.0"
         ch.height=8.0; ch.width=14.5; ch.legend=None
-        ch.add_data(Reference(ws,min_col=17,min_row=17,max_row=17+len(driver_rows)),titles_from_data=True)
-        ch.set_categories(Reference(ws,min_col=16,min_row=18,max_row=17+len(driver_rows)))
+        ch.add_data(Reference(ws,min_col=17,min_row=18,max_row=17+len(driver_rows)),titles_from_data=False)
+        _set_chart_text_categories(ch,ws,16,18,17+len(driver_rows),["Relative influence"])
         ch.dLbls=DataLabelList(); ch.dLbls.showVal=True; ch.dLbls.numFmt="0.0"
         ws.add_chart(ch,"H34")
 
