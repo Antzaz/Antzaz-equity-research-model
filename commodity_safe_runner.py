@@ -38,12 +38,16 @@ from commodity_valuation_v3 import (
 )
 from deal_analysis import ensure_deal_analysis
 from google_segment_analysis import ensure_google_segment_analysis
+from institutional_overrides import install_institutional_overrides
 
 
 # Install business-model routing after safe_update_model has installed its guarded wrappers, but
-# before we capture/extend those wrappers below.  update_model.main resolves these module globals
+# before we capture/extend those wrappers below. update_model.main resolves these module globals
 # at execution time, so the production research.py path receives the cross-sector behavior.
 install_cross_sector_runtime(safe_module=safe, update_model_module=safe.update_model)
+# Consensus remains an external benchmark and reverse-DCF market hurdles use one canonical
+# definition across Advanced Analytics / Market Expectations.
+install_institutional_overrides()
 
 _ORIGINAL_DYNAMIC = safe.apply_dynamic_wacc
 _ORIGINAL_DECISION = safe.ensure_decision_view
