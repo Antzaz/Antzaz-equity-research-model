@@ -1,4 +1,4 @@
-name: Python syntax check
+name: Python repository audit
 
 on:
   push:
@@ -8,50 +8,16 @@ on:
   pull_request:
 
 jobs:
-  compile:
+  compile-and-static-audit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - name: Compile equity research, agents, automation, showcase and portfolio modules
-        run: |
-          python -m py_compile \
-            update_model.py \
-            research.py \
-            commodity_safe_runner.py \
-            workbook_enhancements.py \
-            source_registry.py \
-            institutional_lenses.py \
-            agent_research/__init__.py \
-            agent_research/core.py \
-            agent_research/agents.py \
-            agent_research/source_health.py \
-            currency_normalization.py \
-            consensus_rebase.py \
-            consensus_quality.py \
-            market_context.py \
-            research_extensions.py \
-            ai_analysis.py \
-            equity_live_dashboard.py \
-            showcase/app.py \
-            issuer_source_engine.py \
-            model_reliability.py \
-            dynamic_peer_engine.py \
-            segment_analysis_v2.py \
-            segment_source_engine.py \
-            segment_source_enrichment.py \
-            segment_chart_fix.py \
-            automation/portfolio_universe.py \
-            automation/build_private_bundle.py \
-            automation/build_showcase_snapshot.py \
-            institutional_research/run_research.py \
-            institutional_research/dashboard.py \
-            institutional_research/live_dashboard.py \
-            institutional_research/pages/1_Alpha_Analysis.py \
-            institutional_research/src/live_data.py \
-            institutional_research/src/alpha_analysis.py \
-            institutional_research/src/risk.py \
-            institutional_research/src/professional_portfolio.py \
-            tests/test_workbook_enhancements.py
+      - name: Compile every Python module
+        run: python -m compileall -q .
+      - name: Install critical static checker
+        run: python -m pip install --disable-pip-version-check ruff
+      - name: Check syntax and high-confidence Python errors
+        run: ruff check . --select E9,F63,F7,F82
