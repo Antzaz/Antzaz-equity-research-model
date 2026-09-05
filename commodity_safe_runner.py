@@ -18,11 +18,16 @@ The runner also installs narrow verified issuer adapters when generic parsers ar
 brittle. Alphabet's segment adapter is one such case: it uses only company-reported 10-K values.
 Every issuer also receives a source-backed Deals & Transactions sheet after the guarded research
 extensions finish, so the deal monitor cannot be removed by the low-value-tab pruning pass.
+
+A final public-evidence recovery / presentation pass then tries to resolve avoidable REVIEW states
+from issuer/regulatory sources, keeps genuinely non-comparable fields as N/A rather than fabricating
+data, and reorders/styles the workbook around the core investment workflow.
 """
 
 import advanced_analytics_v2
 import decision_view_v2
 import safe_update_model as safe
+import workbook_enhancements as workbook_fx
 
 from cross_sector_runtime import install_cross_sector_runtime
 from commodity_valuation_v3 import (
@@ -70,8 +75,18 @@ def _verified_segment_with_alphabet(wb, ticker):
     return _ORIGINAL_VERIFIED_SEGMENT(wb, ticker)
 
 
+def _apply_public_evidence_and_polish(wb, ticker, info=None):
+    """Recover public qualitative evidence and polish the workbook without changing valuation inputs."""
+    evidence = workbook_fx._collect_public_evidence(wb, ticker, info or {})
+    workbook_fx._patch_leadership_sheet(wb, evidence)
+    workbook_fx._patch_summary_sheets(wb, evidence)
+    workbook_fx._write_public_evidence_quality(wb, evidence)
+    workbook_fx._polish_workbook(wb)
+    return evidence
+
+
 def _research_extensions_with_deals(wb, ticker, info=None):
-    """Run all guarded extensions, then append the transaction monitor as a final research tab."""
+    """Run all guarded extensions, append transactions, then recover public evidence and polish."""
     result = _ORIGINAL_RESEARCH_EXTENSIONS(wb, ticker, info)
     try:
         ensure_deal_analysis(wb, ticker, info or {})
@@ -79,6 +94,17 @@ def _research_extensions_with_deals(wb, ticker, info=None):
         # A temporary news / EDGAR outage must never prevent the deterministic valuation model
         # from being produced.  The deal sheet itself also degrades to an explicit no-data state.
         print(f"Warning: Deals & Transactions refresh failed: {exc}")
+    try:
+        evidence = _apply_public_evidence_and_polish(wb, ticker, info or {})
+        status = "PUBLIC-EVIDENCE" if evidence.get("workforce") else ("PARTIAL" if evidence.get("headcount") else "REVIEW")
+        print(
+            "Public evidence / workbook polish: "
+            f"workforce={status}, annual_filing={'yes' if evidence.get('annual_filing') else 'no'}, "
+            f"public_officers={evidence.get('officer_count', 0)}"
+        )
+    except Exception as exc:
+        # Presentation/public-source enrichment is non-destructive and must not block the core model.
+        print(f"Warning: public evidence recovery / workbook polish failed: {exc}")
     return result
 
 
