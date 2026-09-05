@@ -40,6 +40,8 @@ from commodity_valuation_v3 import (
 from deal_analysis import ensure_deal_analysis
 from google_segment_analysis import ensure_google_segment_analysis
 from institutional_overrides import install_institutional_overrides
+from peer_quality_overrides import install_peer_quality_overrides
+from source_audit_v2 import apply_source_audit_fixes
 
 
 # Install business-model routing after safe_update_model has installed its guarded wrappers, but
@@ -49,6 +51,9 @@ install_cross_sector_runtime(safe_module=safe, update_model_module=safe.update_m
 # Consensus remains an external benchmark and reverse-DCF market hurdles use one canonical
 # definition across Advanced Analytics / Market Expectations.
 install_institutional_overrides()
+# Loss-making peers remain in the peer set, but non-positive P/E and EV/EBITDA are N/M rather
+# than misleading negative valuation multiples.
+install_peer_quality_overrides()
 
 _ORIGINAL_DYNAMIC = safe.apply_dynamic_wacc
 _ORIGINAL_DECISION = safe.ensure_decision_view
@@ -91,7 +96,7 @@ def _apply_public_evidence_and_polish(wb, ticker, info=None):
 
 
 def _research_extensions_with_deals(wb, ticker, info=None):
-    """Run guarded extensions, transactions, final chart cleanup, then public-evidence polish."""
+    """Run guarded extensions, then final source/chart/evidence cleanup."""
     result = _ORIGINAL_RESEARCH_EXTENSIONS(wb, ticker, info)
     try:
         ensure_deal_analysis(wb, ticker, info or {})
@@ -99,6 +104,15 @@ def _research_extensions_with_deals(wb, ticker, info=None):
         # A temporary news / EDGAR outage must never prevent the deterministic valuation model
         # from being produced. The deal sheet itself also degrades to an explicit no-data state.
         print(f"Warning: Deals & Transactions refresh failed: {exc}")
+    try:
+        audit=apply_source_audit_fixes(wb,ticker)
+        print(
+            "Source audit fixes: "
+            f"annual_filing_added={audit.get('annual_filing_added',False)}, "
+            f"definitions_clarified={audit.get('definitions_clarified',False)}"
+        )
+    except Exception as exc:
+        print(f"Warning: final source-audit pass failed: {exc}")
     try:
         chart_result=polish_analysis_charts(wb,ticker)
         print(f"Analysis chart readability: rebuilt={chart_result.get('rebuilt',0)}, charts={chart_result.get('chart_count',0)}")
