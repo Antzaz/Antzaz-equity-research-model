@@ -22,6 +22,8 @@ from openpyxl.chart.label import DataLabelList
 from openpyxl.chart.series import SeriesLabel
 from openpyxl.utils import get_column_letter
 
+from chart_excel_compat import configure_chart_for_excel, make_chart_helpers_excel_visible
+
 
 FEATURE_LABELS={
     "revenue_growth":"Revenue growth",
@@ -101,9 +103,8 @@ def _add_read_me(ws, signals: dict[str, Any]) -> None:
 
 def _add_ai_growth_charts(ws, signals: dict[str, Any], revenue: dict[str, Any], fcf: dict[str, Any],
                           payload: dict[str, Any], reverse: dict[str, Any]) -> None:
-    """Create decision-oriented charts using hidden helper tables."""
-    ws.column_dimensions["P"].hidden=True
-    ws.column_dimensions["Q"].hidden=True
+    """Create Excel-safe decision-oriented charts using unobtrusive visible helper tables."""
+    make_chart_helpers_excel_visible(ws,"P","Q","P1:Q30")
     _add_read_me(ws,signals)
 
     signal_rows=[
@@ -124,6 +125,7 @@ def _add_ai_growth_charts(ws, signals: dict[str, Any], revenue: dict[str, Any], 
     ch.add_data(Reference(ws,min_col=17,min_row=3,max_row=8),titles_from_data=False)
     _set_chart_text_categories(ch,ws,16,3,8,["Supportive score"])
     ch.dLbls=DataLabelList(); ch.dLbls.showVal=True; ch.dLbls.numFmt="0.0"
+    configure_chart_for_excel(ch)
     ws.add_chart(ch,"H6")
 
     ws["P11"]="Growth view"; ws["Q11"]="Annual FCF growth"
@@ -146,6 +148,7 @@ def _add_ai_growth_charts(ws, signals: dict[str, Any], revenue: dict[str, Any], 
         ch.add_data(Reference(ws,min_col=17,min_row=12,max_row=end),titles_from_data=False)
         _set_chart_text_categories(ch,ws,16,12,end,["Annual FCF growth"])
         ch.dLbls=DataLabelList(); ch.dLbls.showVal=True; ch.dLbls.numFmt="0.0"
+        configure_chart_for_excel(ch)
         ws.add_chart(ch,"H20")
 
     driver_rows=[]
@@ -164,11 +167,12 @@ def _add_ai_growth_charts(ws, signals: dict[str, Any], revenue: dict[str, Any], 
             ws.cell(i,16,name); ws.cell(i,17,(val/total*100 if total>0 else 0)); ws.cell(i,17).number_format="0.0"
         ch=BarChart(); ch.type="bar"; ch.style=12
         ch.title="What influences the growth forecast most"
-        ch.y_axis.title="Driver"; ch.x_axis.title="Share of top-driver influence (%)"; ch.x_axis.numFmt="0.0"
+        ch.x_axis.title="Driver"; ch.y_axis.title="Share of top-driver influence (%)"; ch.y_axis.numFmt="0.0"; ch.y_axis.scaling.min=0
         ch.height=8.0; ch.width=14.5; ch.legend=None
         ch.add_data(Reference(ws,min_col=17,min_row=18,max_row=17+len(driver_rows)),titles_from_data=False)
         _set_chart_text_categories(ch,ws,16,18,17+len(driver_rows),["Relative influence"])
         ch.dLbls=DataLabelList(); ch.dLbls.showVal=True; ch.dLbls.numFmt="0.0"
+        configure_chart_for_excel(ch)
         ws.add_chart(ch,"H34")
 
 
