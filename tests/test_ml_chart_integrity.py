@@ -52,6 +52,15 @@ def test_ai_growth_chart_categories_are_explicit_text_refs_with_literal_series_n
     _assert_chart_refs(chart, ["Model", "Baseline"])
 
 
+def _add_orientation_chart(ws, chart_type: str, anchor: str):
+    chart = BarChart()
+    chart.type = chart_type
+    chart.add_data(Reference(ws, min_col=25, min_row=3, max_row=4), titles_from_data=False)
+    set_ml_categories(chart, ws, 24, 3, 4, ["Forecast"])
+    ws.add_chart(chart, anchor)
+    return chart
+
+
 def test_excel_compat_postpass_unhides_sources_and_repairs_axis_positions(tmp_path):
     wb = Workbook()
     ml = wb.active
@@ -65,17 +74,8 @@ def test_excel_compat_postpass_unhides_sources_and_repairs_axis_positions(tmp_pa
     ml["Y3"] = 10
     ml["Y4"] = 20
 
-    col_chart = BarChart()
-    col_chart.type = "col"
-    col_chart.add_data(Reference(ml, min_col=25, min_row=3, max_row=4), titles_from_data=False)
-    set_ml_categories(col_chart, ml, 24, 3, 4, ["Forecast"])
-    ml.add_chart(col_chart, "K8")
-
-    bar_chart = BarChart()
-    bar_chart.type = "bar"
-    bar_chart.add_data(Reference(ml, min_col=25, min_row=3, max_row=4), titles_from_data=False)
-    set_ml_categories(bar_chart, ml, 24, 3, 4, ["Driver weight"])
-    ml.add_chart(bar_chart, "K40")
+    _add_orientation_chart(ml, "col", "K8")
+    _add_orientation_chart(ml, "bar", "K40")
 
     path = tmp_path / "chart_compat.xlsx"
     wb.save(path)
@@ -94,3 +94,31 @@ def test_excel_compat_postpass_unhides_sources_and_repairs_axis_positions(tmp_pa
     assert c2.visible_cells_only is False
     assert c2.x_axis.axPos == "l"
     assert c2.y_axis.axPos == "b"
+
+
+def test_excel_compat_uses_chart_type_not_chart_order(tmp_path):
+    """A ticker may emit only a subset of charts; orientation must not depend on list index."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "ML & Quantitative Research"
+    ws["X2"] = "Model"
+    ws["Y2"] = "Forecast"
+    ws["X3"] = "A"
+    ws["X4"] = "B"
+    ws["Y3"] = 10
+    ws["Y4"] = 20
+
+    # Deliberately reverse the usual order: horizontal first, column second.
+    _add_orientation_chart(ws, "bar", "K8")
+    _add_orientation_chart(ws, "col", "K40")
+
+    path = tmp_path / "chart_order_independent.xlsx"
+    wb.save(path)
+    apply_chart_compatibility_fix(path)
+
+    fixed = load_workbook(path)
+    horizontal, column = fixed["ML & Quantitative Research"]._charts
+    assert horizontal.x_axis.axPos == "l"
+    assert horizontal.y_axis.axPos == "b"
+    assert column.x_axis.axPos == "b"
+    assert column.y_axis.axPos == "l"
