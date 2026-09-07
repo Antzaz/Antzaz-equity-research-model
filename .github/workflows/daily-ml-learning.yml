@@ -1,0 +1,154 @@
+name: Daily ML learning maintenance
+
+on:
+  schedule:
+    # 06:17 UTC = 08:17 Helsinki in winter / 09:17 in summer.
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/daily-ml-learning.yml'
+      - 'automation/ml_learning_state.py'
+      - 'machine_learning/continual_learning.py'
+      - 'ml_history.py'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  learn:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install learning dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pyzipper
+
+      - name: Restore previous encrypted learning state
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LIVE_BUNDLE_PASSWORD: ${{ secrets.LIVE_BUNDLE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/restore"
+          artifact_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?name=ml-learning-state&per_page=100" \
+            --jq '[.artifacts[] | select(.expired == false)] | sort_by(.created_at) | last | .id // empty')"
+          if [ -z "$artifact_id" ]; then
+            echo "No previous persistent learning artifact. This run will initialize one."
+            exit 0
+          fi
+          curl -L --fail --silent --show-error \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" \
+            -o "$RUNNER_TEMP/state-artifact.zip"
+          python - <<'PY'
+          import os, zipfile
+          from pathlib import Path
+          src=Path(os.environ['RUNNER_TEMP'])/'state-artifact.zip'
+          dst=Path(os.environ['RUNNER_TEMP'])/'restore'
+          with zipfile.ZipFile(src) as zf:
+              zf.extractall(dst)
+          PY
+          python automation/ml_learning_state.py unpack \
+            --input "$RUNNER_TEMP/restore/ml-learning-state.zip" \
+            --destination .
+          python ml_history.py status
+
+      - name: Refresh maximum-data history and evaluate matured forecasts
+        env:
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+        run: |
+          set +e
+          python ml_history.py daily-refresh \
+            --universe sp500 \
+            --limit 500 \
+            --years 1 \
+            --deep-years 20 \
+            --deep-batch 25
+          refresh_code=$?
+          python -m machine_learning.continual_learning
+          learning_code=$?
+          set -e
+          if [ "$refresh_code" -ne 0 ]; then
+            echo "::warning::One or more public data providers failed during the daily history refresh. Existing persistent history is preserved."
+          fi
+          if [ "$learning_code" -ne 0 ]; then
+            echo "::warning::Continual-learning evaluation failed. No fabricated outcome data will be written."
+          fi
+
+      - name: Restore private holdings for monthly model retraining
+        env:
+          PORTFOLIO_CSV_B64: ${{ secrets.PORTFOLIO_CSV_B64 }}
+        run: |
+          python - <<'PY'
+          import base64, os
+          from pathlib import Path
+          raw=os.environ.get('PORTFOLIO_CSV_B64','').strip()
+          if not raw:
+              print('No private portfolio secret; monthly holding-level retraining will be skipped.')
+              raise SystemExit(0)
+          p=Path('institutional_research/portfolio.csv')
+          p.parent.mkdir(parents=True,exist_ok=True)
+          p.write_bytes(base64.b64decode(raw))
+          PY
+
+      - name: Monthly governed retraining
+        env:
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+        run: |
+          set -euo pipefail
+          day="$(TZ=Europe/Helsinki date +%d)"
+          if [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ] && [ "$day" != "01" ]; then
+            echo "Daily maintenance complete; heavy retraining is scheduled for the first day of each month."
+            exit 0
+          fi
+          if [ ! -f institutional_research/portfolio.csv ]; then
+            echo "No private portfolio file; skipping holding-level monthly retraining."
+            exit 0
+          fi
+          python automation/portfolio_universe.py institutional_research/portfolio.csv > "$RUNNER_TEMP/tickers.txt"
+          count=0
+          failures=0
+          while IFS= read -r ticker; do
+            [ -z "$ticker" ] && continue
+            echo "::add-mask::$ticker"
+            count=$((count+1))
+            if ! python ml_research.py "$ticker" --no-workbook-write --no-auto-history > "$RUNNER_TEMP/ml_${count}.log" 2>&1; then
+              failures=$((failures+1))
+              echo "::warning::One holding-level ML retraining run failed."
+            fi
+          done < "$RUNNER_TEMP/tickers.txt"
+          python -m machine_learning.continual_learning || true
+          echo "Monthly retraining: $count model run(s), $failures failure(s)."
+
+      - name: Encrypt updated learning state
+        env:
+          LIVE_BUNDLE_PASSWORD: ${{ secrets.LIVE_BUNDLE_PASSWORD }}
+        run: |
+          python automation/ml_learning_state.py pack \
+            --source ml_data \
+            --output "$RUNNER_TEMP/ml-learning-state.zip"
+
+      - name: Upload persistent encrypted learning state
+        uses: actions/upload-artifact@v4
+        with:
+          name: ml-learning-state
+          path: ${{ runner.temp }}/ml-learning-state.zip
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
