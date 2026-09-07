@@ -1,6 +1,6 @@
 {
   "benchmark": "SPY",
-  "history_period": "10y",
+  "history_period": "max",
   "trading_days": 252,
   "risk_free_rate": 0.04,
   "alpha_analysis": {
@@ -46,6 +46,14 @@
     "max_days_to_liquidate": 5.0,
     "liquidity_participation_rate": 0.10,
     "rebalance_threshold": 0.03
+  },
+  "portfolio_optimization": {
+    "max_history_years": 20,
+    "frontier_points": 50,
+    "risk_aversion": 4.0,
+    "turnover_limit": 0.50,
+    "regime_covariance_blend": 0.45,
+    "methodology": "Maximum-history pairwise shrinkage + Ledoit-Wolf common overlap; ML expected returns are confidence-shrunk; regime risk adjustment is bounded."
   },
   "stress_scenarios": [
     {
