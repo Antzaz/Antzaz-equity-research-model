@@ -5,7 +5,7 @@ from __future__ import annotations
 Examples:
     python ml_history.py status
     python ml_history.py bootstrap --universe sp500 --limit 500 --years 20
-    python ml_history.py daily-refresh --universe sp500 --limit 500 --years 2
+    python ml_history.py daily-refresh --universe sp500 --limit 500 --years 1 --deep-batch 25 --deep-years 20
     python ml_history.py enrich-alpha --universe sp500 --limit 500 --call-budget 20
     python ml_history.py enrich-fmp --universe sp500 --limit 500 --call-budget 200
     python ml_history.py build-features
@@ -42,7 +42,10 @@ def parser():
         if name in {"bootstrap","backfill-prices"}:
             s.add_argument("--years",type=int,default=20)
         if name=="daily-refresh":
-            s.add_argument("--years",type=int,default=2,help="Recent Yahoo window re-downloaded and upserted every unattended run")
+            s.add_argument("--years",type=int,default=1,help="Recent Yahoo window re-downloaded and upserted every unattended run")
+            s.add_argument("--deep-years",type=int,default=20,help="Target historical depth for staged background backfill")
+            s.add_argument("--deep-batch",type=int,default=25,help="Maximum incomplete names deepened per daily run")
+            s.add_argument("--skip-deep",action="store_true")
             s.add_argument("--skip-macro",action="store_true")
         if name in {"bootstrap","enrich-alpha"}: s.add_argument("--call-budget",type=int,default=20,help="Maximum Alpha Vantage calls this run; free keys are currently limited to 25/day")
         if name=="enrich-fmp": s.add_argument("--call-budget",type=int,default=200)
@@ -92,15 +95,9 @@ def backfill_prices(store,symbols,years):
     return total
 
 
-def refresh_recent_prices(store,symbols,years=2):
-    """Always refresh a bounded recent window so a 'complete' database still receives new days.
-
-    ``backfill_prices`` deliberately skips symbols once they have enough historical depth. That is
-    correct for bootstrap work but wrong for unattended daily learning because a mature database
-    would otherwise stop receiving new prices forever. Re-downloading the last 1-2 years is
-    idempotent and also captures late split/dividend adjustments from the public provider.
-    """
-    years=max(1,min(int(years or 2),5))
+def refresh_recent_prices(store,symbols,years=1):
+    """Always refresh a bounded recent window so a 'complete' database still receives new days."""
+    years=max(1,min(int(years or 1),5))
     print(f"[prices] daily refresh: {len(symbols)} symbol(s), trailing {years} year(s)")
     buf=[]; total=0
     for row in yahoo_price_rows(symbols,years=years,batch_size=30):
@@ -138,6 +135,24 @@ def backfill_fundamentals(store,rows,use_sec=True):
         if i%25==0: print(f"[fundamentals] processed {i}/{len(rows)}; row upserts={inserted:,}")
     print(f"[fundamentals] complete: {inserted:,} row upserts")
     return inserted
+
+
+def deepen_incomplete_history(store,rows,symbols,years=20,batch=25):
+    """Progressively build maximum history without a one-run 500-name bootstrap spike."""
+    batch=max(0,int(batch or 0)); years=max(1,int(years or 20))
+    if batch<=0:
+        return {"price_names":0,"fundamental_names":0,"price_rows":0,"fundamental_rows":0}
+    missing_prices=[s for s in symbols if not _price_complete(store,s,years)][:batch]
+    row_map={r.get("symbol"):r for r in rows}
+    missing_fundamentals=[s for s in symbols if s!="SPY" and _fundamental_count(store,s)<8][:batch]
+    print(f"[deep] staged history: prices={len(missing_prices)}, fundamentals={len(missing_fundamentals)}, target={years}y")
+    price_rows=backfill_prices(store,missing_prices,years) if missing_prices else 0
+    frows=[row_map[s] for s in missing_fundamentals if s in row_map]
+    fundamental_rows=backfill_fundamentals(store,frows,True) if frows else 0
+    return {
+        "price_names":len(missing_prices),"fundamental_names":len(frows),
+        "price_rows":int(price_rows),"fundamental_rows":int(fundamental_rows),
+    }
 
 
 def enrich_alpha(store,symbols,call_budget=20):
@@ -208,6 +223,8 @@ def main():
     rows,symbols=_universe(store,args.universe,args.limit)
     if args.command=="daily-refresh":
         refresh_recent_prices(store,symbols,args.years)
+        if not args.skip_deep:
+            deepen_incomplete_history(store,rows,symbols,args.deep_years,args.deep_batch)
         if not args.skip_macro:
             backfill_macro(store)
         n=store.build_features("SPY")
