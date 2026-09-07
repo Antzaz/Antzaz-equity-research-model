@@ -12,6 +12,10 @@ on:
       - 'automation/ml_learning_state.py'
       - 'automation/sec_preflight.py'
       - 'machine_learning/continual_learning.py'
+      - 'machine_learning/short_horizon.py'
+      - 'machine_learning/short_horizon_patch.py'
+      - 'machine_learning/learning_runner.py'
+      - 'machine_learning/__init__.py'
       - 'ml_history.py'
 
 permissions:
@@ -87,7 +91,7 @@ jobs:
             --deep-years 20 \
             --deep-batch 25
           refresh_code=$?
-          python -m machine_learning.continual_learning
+          python -m machine_learning.learning_runner
           learning_code=$?
           set -e
           if [ "$refresh_code" -ne 0 ]; then
@@ -144,7 +148,7 @@ jobs:
               echo "::warning::One holding-level ML retraining run failed."
             fi
           done < "$RUNNER_TEMP/tickers.txt"
-          python -m machine_learning.continual_learning || true
+          python -m machine_learning.learning_runner || true
           echo "Monthly retraining: $count holding(s), $failures research/ML failure(s)."
 
       - name: Encrypt updated learning state
