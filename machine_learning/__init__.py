@@ -26,8 +26,12 @@ from .ai_growth import (
     expectations_gap,
 )
 from .continual_learning import install_hooks as _install_continual_learning_hooks
+from .short_horizon_patch import install_short_horizon_learning as _install_short_horizon_learning
 
+# Install the base feedback hooks first, then extend only the learning/governance layer with
+# research-only 1M/3M/6M return horizons.  The existing 12M model and optimizer contract remain intact.
 _install_continual_learning_hooks()
+_install_short_horizon_learning()
 
 __all__=[
     "MLResult","ExpectedReturnModel","EarningsSurpriseModel","FinancialAnomalyModel",
