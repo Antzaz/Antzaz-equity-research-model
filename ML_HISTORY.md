@@ -30,16 +30,31 @@ if ($env:ALPHAVANTAGE_API_KEY) { "Alpha Vantage key loaded" } else { "Alpha Vant
 
 Alpha Vantage currently documents a free usage ceiling of up to 25 requests per day for most datasets. The default enrichment budget is therefore 20 calls/run, leaving a small buffer for the normal equity-research consensus layer.
 
-## Optional SEC contact header
+## SEC automated-access identity
 
-For deep US historical fundamentals, configure a compliant SEC User-Agent with a real contact email:
+For deep US historical fundamentals, configure a compliant SEC User-Agent with a descriptive application name and a real contact email. The project never prints the configured value because it may contain personal contact information.
+
+Local Windows configuration:
 
 ```powershell
 [Environment]::SetEnvironmentVariable("SEC_USER_AGENT","EquityResearch your-real-email@example.com","User")
 $env:SEC_USER_AGENT=[Environment]::GetEnvironmentVariable("SEC_USER_AGENT","User")
+python .\automation\sec_preflight.py
 ```
 
 Do not use the placeholder email literally.
+
+For unattended GitHub Actions, use the included helper once:
+
+```powershell
+.\automation\setup_sec_user_agent.ps1 -RunLearning
+```
+
+It validates the format, stores the value as the `SEC_USER_AGENT` GitHub Actions secret through the authenticated GitHub CLI, and can immediately dispatch the daily learning workflow. The identity is not written into the public repository.
+
+The daily learning workflow runs `automation/sec_preflight.py` before historical refresh. If the identity is missing or SEC is temporarily unreachable, the run clearly reports `SEC DISABLED` / `SEC DEGRADED` and retains Yahoo fundamentals as the transparent fallback rather than fabricating or silently relabeling data.
+
+The SEC currently asks automated clients to declare their User-Agent and limits aggregate automated access to no more than 10 requests per second. The existing SEC history adapter sleeps between Company Facts requests and therefore remains below that ceiling in normal sequential backfills.
 
 ## Step 1 — free/public historical database
 
