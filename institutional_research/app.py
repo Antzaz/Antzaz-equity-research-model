@@ -28,7 +28,7 @@ if missing:
 
 research_pages = [
     st.Page(
-        str(BASE / relative),
+        relative,
         title=title,
         icon=icon,
         default=default,
