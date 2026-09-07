@@ -9,6 +9,9 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/daily-portfolio-refresh.yml'
+      - 'automation/ml_learning_state.py'
+      - 'machine_learning/continual_learning.py'
+      - 'ml_history.py'
 
 permissions:
   contents: read
@@ -17,7 +20,7 @@ permissions:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 180
 
     steps:
       - uses: actions/checkout@v7
@@ -33,6 +36,64 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r institutional_research/requirements.txt
           python -m pip install openpyxl requests lxml beautifulsoup4 pypdf pyzipper
+
+      - name: Restore encrypted persistent ML learning state
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LIVE_BUNDLE_PASSWORD: ${{ secrets.LIVE_BUNDLE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ml-learning-restore"
+          artifact_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?name=ml-learning-state&per_page=100" \
+            --jq '[.artifacts[] | select(.expired == false)] | sort_by(.created_at) | last | .id // empty')"
+          if [ -z "$artifact_id" ]; then
+            echo "No prior ML learning-state artifact found; starting a new persistent store."
+            exit 0
+          fi
+          echo "Restoring prior encrypted ML learning state."
+          curl -L --fail --silent --show-error \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" \
+            -o "$RUNNER_TEMP/ml-learning-artifact.zip"
+          python - <<'PY'
+          import os, zipfile
+          from pathlib import Path
+          src=Path(os.environ['RUNNER_TEMP'])/'ml-learning-artifact.zip'
+          dst=Path(os.environ['RUNNER_TEMP'])/'ml-learning-restore'
+          with zipfile.ZipFile(src) as zf:
+              zf.extractall(dst)
+          PY
+          archive="$RUNNER_TEMP/ml-learning-restore/ml-learning-state.zip"
+          if [ ! -f "$archive" ]; then
+            echo "Prior artifact did not contain ml-learning-state.zip"
+            exit 1
+          fi
+          python automation/ml_learning_state.py unpack --input "$archive" --destination .
+          python ml_history.py status
+
+      - name: Daily maximum-data ML learning maintenance
+        env:
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+        run: |
+          set +e
+          python ml_history.py daily-refresh \
+            --universe sp500 \
+            --limit 500 \
+            --years 1 \
+            --deep-years 20 \
+            --deep-batch 25
+          refresh_code=$?
+          python -m machine_learning.continual_learning
+          learning_code=$?
+          set -e
+          if [ "$refresh_code" -ne 0 ]; then
+            echo "Warning: daily history refresh had a provider/network failure. The previous persistent state remains usable."
+          fi
+          if [ "$learning_code" -ne 0 ]; then
+            echo "Warning: continual-learning evaluation had a failure. Portfolio refresh will continue without inventing new evidence."
+          fi
 
       - name: Restore private portfolio
         env:
@@ -138,6 +199,65 @@ jobs:
           done < "$RUNNER_TEMP/portfolio_tickers.txt"
           echo "failures=$failures" >> "$GITHUB_OUTPUT"
           echo "Equity refresh complete: $index company model(s), $failures failure(s)."
+
+      - name: Monthly governed ML retraining for portfolio companies
+        env:
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+        run: |
+          set -euo pipefail
+          day="$(TZ=Europe/Helsinki date +%d)"
+          if [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ] && [ "$day" != "01" ]; then
+            echo "Not the monthly retraining date; daily learning/evaluation already completed."
+            exit 0
+          fi
+          echo "Running monthly point-in-time ML retraining."
+          failures=0
+          index=0
+          while IFS= read -r ticker; do
+            [ -z "$ticker" ] && continue
+            index=$((index + 1))
+            log="$RUNNER_TEMP/ml_retrain_${index}.log"
+            if python ml_research.py "$ticker" --no-workbook-write --no-auto-history > "$log" 2>&1; then
+              echo "ML research model $index retrained."
+            else
+              failures=$((failures + 1))
+              echo "ML research model $index retraining failed; sanitized log follows."
+              cat "$log"
+            fi
+          done < "$RUNNER_TEMP/portfolio_tickers.txt"
+          python -m machine_learning.continual_learning || true
+          echo "Monthly ML retraining complete: $index company model(s), $failures failure(s)."
+
+      - name: Re-run portfolio analytics after monthly ML retraining
+        run: |
+          day="$(TZ=Europe/Helsinki date +%d)"
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] || [ "$day" = "01" ]; then
+            python institutional_research/run_research.py > "$RUNNER_TEMP/portfolio_post_ml.log" 2>&1 || {
+              echo "Post-ML portfolio analytics failed."
+              cat "$RUNNER_TEMP/portfolio_post_ml.log"
+              exit 1
+            }
+            echo "Portfolio analytics refreshed with the newly governed ML predictions."
+          else
+            echo "No monthly ML retraining today; post-ML rerun not needed."
+          fi
+
+      - name: Pack encrypted persistent ML learning state
+        env:
+          LIVE_BUNDLE_PASSWORD: ${{ secrets.LIVE_BUNDLE_PASSWORD }}
+        run: |
+          python automation/ml_learning_state.py pack \
+            --source ml_data \
+            --output "$RUNNER_TEMP/ml-learning-state.zip"
+
+      - name: Upload encrypted ML learning state
+        uses: actions/upload-artifact@v7
+        with:
+          name: ml-learning-state
+          path: ${{ runner.temp }}/ml-learning-state.zip
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
 
       - name: Build encrypted private live-data bundle
         env:
