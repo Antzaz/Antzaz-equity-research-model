@@ -20,7 +20,7 @@ permissions:
 jobs:
   learn:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
 
     steps:
       - uses: actions/checkout@v4
@@ -128,13 +128,18 @@ jobs:
             [ -z "$ticker" ] && continue
             echo "::add-mask::$ticker"
             count=$((count+1))
+            if ! python research.py "$ticker" --no-ml > "$RUNNER_TEMP/research_${count}.log" 2>&1; then
+              failures=$((failures+1))
+              echo "::warning::Could not build the current research workbook for one holding; ML retraining for that holding was skipped."
+              continue
+            fi
             if ! python ml_research.py "$ticker" --no-workbook-write --no-auto-history > "$RUNNER_TEMP/ml_${count}.log" 2>&1; then
               failures=$((failures+1))
               echo "::warning::One holding-level ML retraining run failed."
             fi
           done < "$RUNNER_TEMP/tickers.txt"
           python -m machine_learning.continual_learning || true
-          echo "Monthly retraining: $count model run(s), $failures failure(s)."
+          echo "Monthly retraining: $count holding(s), $failures research/ML failure(s)."
 
       - name: Encrypt updated learning state
         env:
