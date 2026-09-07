@@ -16,6 +16,7 @@ from src.reverse_dcf import reverse_dcf_table
 from src.stress import beta_stress_test
 from src.forecast_tracker import analyze_forecasts
 from src.export import write_outputs
+from src.portfolio_optimization import build_portfolio_optimization
 from src.professional_portfolio import (
     benchmark_relative_metrics,
     concentration_metrics,
@@ -33,6 +34,8 @@ from src.professional_portfolio import (
 
 
 BASE = Path(__file__).resolve().parent
+ROOT = BASE.parent
+ML_HISTORY_DB = ROOT / "ml_data" / "ml_history.sqlite"
 
 
 def main():
@@ -56,7 +59,7 @@ def main():
     proxy_map = {k: str(v).upper() for k, v in config.get("factor_proxies", {}).items()}
     all_market_tickers = list(dict.fromkeys(tickers + [benchmark] + list(proxy_map.values())))
 
-    print("Downloading market data...")
+    print("Downloading maximum available public market history...")
     prices = download_prices(all_market_tickers, period=config["history_period"])
     missing = [t for t in tickers + [benchmark] if t not in prices.columns]
     if missing:
@@ -201,6 +204,8 @@ def main():
     attribution = static_return_attribution(asset_returns, weights)
 
     expected_returns = load_expected_returns(BASE / "expected_returns.csv", tickers)
+
+    # Legacy optimizer remains exported for backwards compatibility.
     optimizations = optimize_portfolios(
         asset_returns,
         holdings,
@@ -208,6 +213,30 @@ def main():
         risk_free_rate=float(config["risk_free_rate"]),
         max_position=float(constraints_cfg.get("max_position", 0.25)),
     )
+
+    # Maximum-data optimizer: up to 20Y local ML history, robust covariance, efficient
+    # frontiers, confidence-shrunk expected-return ML and regime-aware risk.
+    print("Running maximum-data classical + ML portfolio optimization...")
+    optimizer_cfg = {
+        **constraints_cfg,
+        **config.get("portfolio_optimization", {}),
+    }
+    portfolio_opt = build_portfolio_optimization(
+        asset_returns=asset_returns,
+        benchmark_returns=benchmark_returns,
+        holdings=holdings,
+        manual_expected_returns=expected_returns,
+        risk_free_rate=float(config["risk_free_rate"]),
+        config=optimizer_cfg,
+        history_db=ML_HISTORY_DB,
+    )
+    opt_meta = portfolio_opt.get("metadata", {})
+    print(
+        "Portfolio optimizer: "
+        f"status={opt_meta.get('status')}, history_assets={opt_meta.get('history_assets', 0)}, "
+        f"regime={(opt_meta.get('regime') or {}).get('regime') or 'unavailable'}"
+    )
+
     constraints = constraint_report(
         holdings,
         risk_summary,
@@ -263,6 +292,7 @@ def main():
         "monte_carlo": mc_summary,
         "reverse_dcf_assumptions": config["reverse_dcf"],
         "portfolio_constraints": constraints_cfg,
+        "portfolio_optimization": opt_meta,
         "alpha_analysis": alpha_metadata,
         "factor_proxy_note": (
             "ETF proxy sensitivities are public-data diagnostics, not a commercial "
@@ -309,6 +339,14 @@ def main():
         "forecast_accuracy": forecasts,
         "expected_returns_inputs": expected_returns,
         "portfolio_optimizations": optimizations,
+        "optimizer_summary": portfolio_opt.get("summary"),
+        "optimizer_weights": portfolio_opt.get("weights"),
+        "efficient_frontier": portfolio_opt.get("frontier"),
+        "optimizer_expected_returns": portfolio_opt.get("expected_returns"),
+        "optimizer_covariance": portfolio_opt.get("covariance"),
+        "optimizer_regime_covariance": portfolio_opt.get("regime_covariance"),
+        "optimizer_correlation": portfolio_opt.get("correlation"),
+        "optimizer_data_coverage": portfolio_opt.get("coverage"),
         "constraint_report": constraints,
         "active_share_detail": active_share_detail,
     }
@@ -327,9 +365,10 @@ def main():
     if active_share is None:
         print("Optional: add benchmark_weights.csv to calculate true Active Share.")
     if expected_returns.empty:
-        print("Optional: add expected_returns.csv to enable expected-return / max-Sharpe sizing.")
+        print("Manual expected_returns.csv is optional: the maximum-data optimizer now builds a historical prior and uses ML where available.")
     print("Next:")
     print("  python -m streamlit run dashboard.py")
+    print("  Open the Portfolio Optimization page for efficient-frontier and ML allocation charts.")
 
 
 if __name__ == "__main__":
