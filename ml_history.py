@@ -5,6 +5,7 @@ from __future__ import annotations
 Examples:
     python ml_history.py status
     python ml_history.py bootstrap --universe sp500 --limit 500 --years 20
+    python ml_history.py daily-refresh --universe sp500 --limit 500 --years 2
     python ml_history.py enrich-alpha --universe sp500 --limit 500 --call-budget 20
     python ml_history.py enrich-fmp --universe sp500 --limit 500 --call-budget 200
     python ml_history.py build-features
@@ -34,11 +35,15 @@ def parser():
     p.add_argument("--db",default=str(DEFAULT_DB),help="SQLite database path")
     sub=p.add_subparsers(dest="command",required=True)
     sub.add_parser("status")
-    for name in ("bootstrap","backfill-prices","backfill-fundamentals","enrich-alpha","enrich-fmp"):
+    for name in ("bootstrap","backfill-prices","backfill-fundamentals","enrich-alpha","enrich-fmp","daily-refresh"):
         s=sub.add_parser(name)
         s.add_argument("--universe",choices=["sp500","default"],default="sp500")
         s.add_argument("--limit",type=int,default=500)
-        if name in {"bootstrap","backfill-prices"}: s.add_argument("--years",type=int,default=20)
+        if name in {"bootstrap","backfill-prices"}:
+            s.add_argument("--years",type=int,default=20)
+        if name=="daily-refresh":
+            s.add_argument("--years",type=int,default=2,help="Recent Yahoo window re-downloaded and upserted every unattended run")
+            s.add_argument("--skip-macro",action="store_true")
         if name in {"bootstrap","enrich-alpha"}: s.add_argument("--call-budget",type=int,default=20,help="Maximum Alpha Vantage calls this run; free keys are currently limited to 25/day")
         if name=="enrich-fmp": s.add_argument("--call-budget",type=int,default=200)
         if name=="bootstrap":
@@ -84,6 +89,26 @@ def backfill_prices(store,symbols,years):
             total+=store.upsert_prices(buf); buf=[]; print(f"[prices] upserted {total:,} rows")
     if buf: total+=store.upsert_prices(buf)
     print(f"[prices] complete: {total:,} row upserts")
+    return total
+
+
+def refresh_recent_prices(store,symbols,years=2):
+    """Always refresh a bounded recent window so a 'complete' database still receives new days.
+
+    ``backfill_prices`` deliberately skips symbols once they have enough historical depth. That is
+    correct for bootstrap work but wrong for unattended daily learning because a mature database
+    would otherwise stop receiving new prices forever. Re-downloading the last 1-2 years is
+    idempotent and also captures late split/dividend adjustments from the public provider.
+    """
+    years=max(1,min(int(years or 2),5))
+    print(f"[prices] daily refresh: {len(symbols)} symbol(s), trailing {years} year(s)")
+    buf=[]; total=0
+    for row in yahoo_price_rows(symbols,years=years,batch_size=30):
+        buf.append(row)
+        if len(buf)>=10000:
+            total+=store.upsert_prices(buf); buf=[]; print(f"[prices] daily upserts {total:,}")
+    if buf: total+=store.upsert_prices(buf)
+    print(f"[prices] daily refresh complete: {total:,} row upserts")
     return total
 
 
@@ -181,7 +206,13 @@ def main():
         n=store.build_features(args.benchmark); print(f"[features] materialized {n:,} point-in-time rows"); print_status(store); return 0
     if args.command=="backfill-macro": backfill_macro(store); print_status(store); return 0
     rows,symbols=_universe(store,args.universe,args.limit)
-    if args.command=="backfill-prices": backfill_prices(store,symbols,args.years)
+    if args.command=="daily-refresh":
+        refresh_recent_prices(store,symbols,args.years)
+        if not args.skip_macro:
+            backfill_macro(store)
+        n=store.build_features("SPY")
+        print(f"[features] daily materialization/upsert: {n:,} point-in-time rows")
+    elif args.command=="backfill-prices": backfill_prices(store,symbols,args.years)
     elif args.command=="backfill-fundamentals": backfill_fundamentals(store,rows,True)
     elif args.command=="enrich-alpha": enrich_alpha(store,symbols,args.call_budget)
     elif args.command=="enrich-fmp": enrich_fmp(store,symbols,args.call_budget)
