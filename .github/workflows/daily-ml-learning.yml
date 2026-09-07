@@ -10,6 +10,7 @@ on:
     paths:
       - '.github/workflows/daily-ml-learning.yml'
       - 'automation/ml_learning_state.py'
+      - 'automation/sec_preflight.py'
       - 'machine_learning/continual_learning.py'
       - 'ml_history.py'
 
@@ -36,6 +37,11 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
           python -m pip install pyzipper
+
+      - name: Validate SEC automated-access configuration
+        env:
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+        run: python automation/sec_preflight.py
 
       - name: Restore previous encrypted learning state
         env:
