@@ -1,0 +1,149 @@
+name: Daily portfolio analytics
+
+on:
+  schedule:
+    # Runs after Daily ML learning maintenance.
+    - cron: '47 6 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/daily-portfolio-analytics.yml'
+      - 'institutional_research/run_research.py'
+      - 'institutional_research/src/**'
+
+permissions:
+  contents: read
+
+jobs:
+  portfolio:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: institutional_research/requirements.txt
+
+      - name: Install portfolio dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r institutional_research/requirements.txt
+          python -m pip install -r requirements.txt
+
+      - name: Restore private portfolio
+        env:
+          PORTFOLIO_CSV_B64: ${{ secrets.PORTFOLIO_CSV_B64 }}
+        run: |
+          python - <<'PY'
+          import base64, os
+          from pathlib import Path
+          raw=os.environ.get('PORTFOLIO_CSV_B64','').strip()
+          if not raw:
+              raise SystemExit('Missing PORTFOLIO_CSV_B64 Actions secret')
+          p=Path('institutional_research/portfolio.csv')
+          p.parent.mkdir(parents=True,exist_ok=True)
+          p.write_bytes(base64.b64decode(raw))
+          print('Private portfolio restored for this runner only.')
+          PY
+
+      - name: Restore recruiter-safe thesis inputs
+        env:
+          PORTFOLIO_THESIS_JSON: ${{ secrets.PORTFOLIO_THESIS_JSON }}
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          raw=os.environ.get('PORTFOLIO_THESIS_JSON','').strip()
+          data=json.loads(raw) if raw else {'version':1,'portfolio_philosophy':{},'company_theses':[]}
+          Path('institutional_research/portfolio_thesis_public.json').write_text(json.dumps(data,ensure_ascii=False),encoding='utf-8')
+          PY
+
+      - name: Restore persistent ML learning state when available
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LIVE_BUNDLE_PASSWORD: ${{ secrets.LIVE_BUNDLE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ml-restore"
+          artifact_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?name=ml-learning-state&per_page=100" \
+            --jq '[.artifacts[] | select(.expired == false)] | sort_by(.created_at) | last | .id // empty')"
+          if [ -z "$artifact_id" ]; then
+            echo "No persisted ML learning state yet; portfolio analytics will use available public/local fallbacks."
+            exit 0
+          fi
+          curl -L --fail --silent --show-error \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" \
+            -o "$RUNNER_TEMP/ml-artifact.zip"
+          python - <<'PY'
+          import os, zipfile
+          from pathlib import Path
+          root=Path(os.environ['RUNNER_TEMP'])
+          with zipfile.ZipFile(root/'ml-artifact.zip') as zf:
+              zf.extractall(root/'ml-restore')
+          PY
+          python automation/ml_learning_state.py unpack \
+            --input "$RUNNER_TEMP/ml-restore/ml-learning-state.zip" \
+            --destination .
+
+      - name: Mask private research universe
+        run: |
+          python automation/portfolio_universe.py institutional_research/portfolio.csv > "$RUNNER_TEMP/tickers.txt"
+          count=0
+          while IFS= read -r ticker; do
+            [ -z "$ticker" ] && continue
+            echo "::add-mask::$ticker"
+            count=$((count+1))
+          done < "$RUNNER_TEMP/tickers.txt"
+          echo "Portfolio companies: $count"
+
+      - name: Run institutional portfolio research and optimizers
+        run: |
+          python institutional_research/run_research.py
+
+      - name: Build and validate sanitized showcase snapshot
+        run: |
+          python automation/build_showcase_snapshot.py
+          python automation/validate_showcase.py
+
+      - name: Refresh deterministic equity models for holdings
+        env:
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+        run: |
+          failures=0
+          count=0
+          while IFS= read -r ticker; do
+            [ -z "$ticker" ] && continue
+            count=$((count+1))
+            if ! python update_model.py "$ticker" > "$RUNNER_TEMP/equity_${count}.log" 2>&1; then
+              failures=$((failures+1))
+              echo "::warning::One holding-level equity refresh failed."
+            fi
+          done < "$RUNNER_TEMP/tickers.txt"
+          echo "Equity refresh: $count model(s), $failures failure(s)."
+
+      - name: Build encrypted private live-data bundle
+        env:
+          LIVE_BUNDLE_PASSWORD: ${{ secrets.LIVE_BUNDLE_PASSWORD }}
+        run: |
+          python automation/build_private_bundle.py \
+            --portfolio institutional_research/portfolio.csv \
+            --portfolio-outputs institutional_research/outputs/latest \
+            --models-dir updated_models \
+            --output "$RUNNER_TEMP/private-live-data.zip" \
+            --password "$LIVE_BUNDLE_PASSWORD"
+
+      - name: Upload encrypted portfolio bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: private-live-data
+          path: ${{ runner.temp }}/private-live-data.zip
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
