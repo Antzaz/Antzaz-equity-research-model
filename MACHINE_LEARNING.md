@@ -24,6 +24,36 @@ python -m machine_learning.learning_runner
 
 The standard ML runner uses no OpenAI API calls or tokens.
 
+## Visual ML Research Lab
+
+Launch the existing institutional-research Streamlit app:
+
+```powershell
+python -m streamlit run institutional_research/app.py
+```
+
+Then open **ML Research Lab** from the sidebar. The page reads the same local `ml_data/ml_history.sqlite` evidence used by the scheduled learning workflow and exposes:
+
+- current **1D / 1W / 1M / 3M / 6M / 12M** excess-return forecasts versus SPY;
+- per-company horizon charts and plain-English forecast explanations;
+- expected **1W realized volatility** and **1M forward drawdown**;
+- live matured-vs-pending forecast counts;
+- champion/challenger governance, MAE skill versus baseline, directional accuracy, IC, calibration and drift;
+- stored walk-forward evidence for the component estimators;
+- autonomous research hypotheses, challenger experiments, skeptic decisions and promotion candidates;
+- point-in-time database health and freshness.
+
+The page also provides two explicit research controls: **Refresh forecasts & learning** and **Run challenger research now**. These actions update research evidence only; they do not execute trades, rewrite production model code, or modify DCF assumptions.
+
+If the local database has not been initialized yet, run:
+
+```powershell
+python ml_history.py daily-refresh --universe sp500 --limit 500 --years 1 --deep-years 20 --deep-batch 25
+python -m machine_learning.learning_runner
+```
+
+The dashboard leaves unavailable evidence blank rather than fabricating forecasts or realized outcomes.
+
 ## Core company models
 
 ### 1. Expected 12-month excess return
