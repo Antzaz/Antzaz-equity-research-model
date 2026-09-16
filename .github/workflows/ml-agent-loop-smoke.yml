@@ -14,6 +14,7 @@ on:
       - 'institutional_research/pages/5_ML_Research_Lab.py'
       - 'institutional_research/src/ml_research_dashboard.py'
       - 'tests/test_short_horizon_research_loop.py'
+      - 'tests/test_short_horizon_learning.py'
       - 'tests/test_ml_research_dashboard.py'
       - 'tests/test_streamlit_navigation.py'
       - '.github/workflows/ml-agent-loop-smoke.yml'
@@ -52,6 +53,7 @@ jobs:
         run: >-
           python -m pytest -q
           tests/test_short_horizon_research_loop.py
+          tests/test_short_horizon_learning.py
           tests/test_continual_learning.py
           tests/test_ml_research_dashboard.py
           tests/test_streamlit_navigation.py
