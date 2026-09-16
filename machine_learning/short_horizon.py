@@ -2,10 +2,14 @@ from __future__ import annotations
 
 """Short-horizon expected-return research models.
 
-These models are deliberately separate from the existing 12-month expected-return model.
-They use the same point-in-time feature family but learn genuinely different forward
-excess-return targets at 1M, 3M and 6M horizons.  Their predictions are journaled for
-continual-learning evaluation, but they do not feed the portfolio optimizer.
+This module extends the existing governed return stack with genuinely short trading horizons
+while preserving the current 12-month model and portfolio-optimizer contract.
+
+- 1D and 1W models use fast market features derived only from information available at the
+  decision date (price, volume, momentum, volatility, drawdown, beta and market context).
+- 1M/3M/6M models continue to use the project's point-in-time fundamental/market feature store.
+- Every forecast is journaled for later maturation and champion/challenger evaluation.
+- None of these research-only horizons execute trades or overwrite valuation assumptions.
 """
 
 from datetime import datetime, timezone
@@ -15,22 +19,81 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import HistGradientBoostingRegressor
+from sklearn.ensemble import ExtraTreesRegressor, HistGradientBoostingRegressor
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import ElasticNet
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
+from .common import RANDOM_STATE
 from .models import EXPECTED_FEATURES
 from .validation import expanding_walk_forward
 
 
+FAST_FEATURES = [
+    "ret_1d",
+    "ret_5d",
+    "ret_21d",
+    "excess_1d",
+    "excess_5d",
+    "excess_21d",
+    "vol_5d",
+    "vol_21d",
+    "vol_63d",
+    "drawdown_21d",
+    "drawdown_63d",
+    "beta_63d",
+    "volume_z_21d",
+    "market_ret_1d",
+    "market_ret_5d",
+    "market_vol_21d",
+]
+
 SHORT_HORIZONS = {
-    "Expected 1M Excess Return": {"days": 30, "target_type": "1m_excess_return", "label": "1M", "lookback": 21},
-    "Expected 3M Excess Return": {"days": 91, "target_type": "3m_excess_return", "label": "3M", "lookback": 63},
-    "Expected 6M Excess Return": {"days": 182, "target_type": "6m_excess_return", "label": "6M", "lookback": 126},
+    "Expected 1D Excess Return": {
+        "days": 1,
+        "trading_days": 1,
+        "target_type": "1d_excess_return",
+        "label": "1D",
+        "lookback": 1,
+        "feature_mode": "fast",
+        "journal_spacing_days": 1,
+    },
+    "Expected 1W Excess Return": {
+        "days": 7,
+        "trading_days": 5,
+        "target_type": "1w_excess_return",
+        "label": "1W",
+        "lookback": 5,
+        "feature_mode": "fast",
+        "journal_spacing_days": 1,
+    },
+    "Expected 1M Excess Return": {
+        "days": 30,
+        "target_type": "1m_excess_return",
+        "label": "1M",
+        "lookback": 21,
+        "feature_mode": "fundamental",
+        "journal_spacing_days": 7,
+    },
+    "Expected 3M Excess Return": {
+        "days": 91,
+        "target_type": "3m_excess_return",
+        "label": "3M",
+        "lookback": 63,
+        "feature_mode": "fundamental",
+        "journal_spacing_days": 14,
+    },
+    "Expected 6M Excess Return": {
+        "days": 182,
+        "target_type": "6m_excess_return",
+        "label": "6M",
+        "lookback": 126,
+        "feature_mode": "fundamental",
+        "journal_spacing_days": 30,
+    },
 }
-SHORT_HORIZON_MODEL_VERSION = "ml-short-horizon-v1"
+SHORT_HORIZON_MODEL_VERSION = "ml-short-horizon-v2-fast"
 
 
 def _now() -> str:
@@ -59,7 +122,7 @@ def _symbol_candidates(symbol: str) -> list[str]:
     return list(dict.fromkeys(x for x in out if x))
 
 
-def _price_series(store, symbol: str) -> pd.Series:
+def _price_frame(store, symbol: str) -> pd.DataFrame:
     frames = []
     for candidate in _symbol_candidates(symbol):
         try:
@@ -68,19 +131,26 @@ def _price_series(store, symbol: str) -> pd.Series:
             pf = pd.DataFrame()
         if pf is None or pf.empty:
             continue
-        adj = pd.to_numeric(pf.get("adj_close"), errors="coerce")
-        close = pd.to_numeric(pf.get("close"), errors="coerce")
-        px = adj.fillna(close) if adj is not None else close
-        if px is not None and not px.dropna().empty:
-            frames.append(px.dropna())
+        out = pf.copy()
+        out.index = pd.to_datetime(out.index, errors="coerce")
+        out = out[~out.index.isna()]
+        if getattr(out.index, "tz", None) is not None:
+            out.index = out.index.tz_convert("UTC").tz_localize(None)
+        frames.append(out)
     if not frames:
-        return pd.Series(dtype=float)
+        return pd.DataFrame()
     out = pd.concat(frames).sort_index()
-    out.index = pd.to_datetime(out.index, errors="coerce")
-    out = out[~out.index.isna()]
-    if getattr(out.index, "tz", None) is not None:
-        out.index = out.index.tz_convert("UTC").tz_localize(None)
     return out[~out.index.duplicated(keep="first")]
+
+
+def _price_series(store, symbol: str) -> pd.Series:
+    pf = _price_frame(store, symbol)
+    if pf.empty:
+        return pd.Series(dtype=float)
+    adj = pd.to_numeric(pf.get("adj_close"), errors="coerce")
+    close = pd.to_numeric(pf.get("close"), errors="coerce")
+    px = adj.fillna(close) if adj is not None else close
+    return px.dropna() if px is not None else pd.Series(dtype=float)
 
 
 def _first_at_or_after(series: pd.Series, when: pd.Timestamp):
@@ -105,13 +175,32 @@ def _forward_excess(stock: pd.Series, bench: pd.Series, as_of: pd.Timestamp, day
     return float(realized), target_date
 
 
+def _forward_excess_trading(stock: pd.Series, bench: pd.Series, as_of: pd.Timestamp, trading_days: int):
+    aligned = pd.concat([stock.rename("stock"), bench.rename("bench")], axis=1, join="inner").dropna()
+    if aligned.empty:
+        return None, None
+    aligned = aligned.loc[aligned.index >= as_of]
+    n = int(trading_days)
+    if len(aligned) <= n:
+        return None, None
+    s0 = _finite(aligned.iloc[0]["stock"])
+    b0 = _finite(aligned.iloc[0]["bench"])
+    s1 = _finite(aligned.iloc[n]["stock"])
+    b1 = _finite(aligned.iloc[n]["bench"])
+    if None in (s0, s1, b0, b1) or s0 == 0 or b0 == 0:
+        return None, None
+    realized = (s1 / s0 - 1.0) - (b1 / b0 - 1.0)
+    return float(realized), aligned.index[n]
+
+
 def _trailing_excess(stock: pd.Series, bench: pd.Series, as_of: pd.Timestamp, observations: int) -> float:
-    s = stock.loc[stock.index <= as_of].dropna().tail(int(observations) + 1)
-    b = bench.loc[bench.index <= as_of].dropna().tail(int(observations) + 1)
-    if len(s) < max(10, observations // 2) or len(b) < max(10, observations // 2):
+    n = max(1, int(observations))
+    aligned = pd.concat([stock.rename("stock"), bench.rename("bench")], axis=1, join="inner").dropna()
+    aligned = aligned.loc[aligned.index <= as_of].tail(n + 1)
+    if len(aligned) < 2:
         return 0.0
-    s0, s1 = _finite(s.iloc[0]), _finite(s.iloc[-1])
-    b0, b1 = _finite(b.iloc[0]), _finite(b.iloc[-1])
+    s0, s1 = _finite(aligned.iloc[0]["stock"]), _finite(aligned.iloc[-1]["stock"])
+    b0, b1 = _finite(aligned.iloc[0]["bench"]), _finite(aligned.iloc[-1]["bench"])
     if None in (s0, s1, b0, b1) or s0 == 0 or b0 == 0:
         return 0.0
     return float((s1 / s0 - 1.0) - (b1 / b0 - 1.0))
@@ -129,8 +218,18 @@ def _feature_history(store) -> pd.DataFrame:
     return df.dropna(subset=["symbol", "as_of"])
 
 
+def _feature_symbols(store) -> list[str]:
+    df = _feature_history(store)
+    if not df.empty:
+        return sorted(df["symbol"].astype(str).str.upper().unique().tolist())
+    try:
+        return [str(x).upper() for x in store.symbols()]
+    except Exception:
+        return []
+
+
 def build_horizon_training_frame(store, benchmark: str, horizon_days: int) -> pd.DataFrame:
-    """Derive a true forward excess-return target for each stored point-in-time feature row."""
+    """Derive forward excess-return targets for the existing PIT fundamental feature rows."""
     features = _feature_history(store)
     if features.empty:
         return pd.DataFrame()
@@ -172,8 +271,123 @@ def _drawdown(prices: pd.Series) -> float | None:
     return _finite(dd.min())
 
 
+def _fast_symbol_frame(store, symbol: str, benchmark: str) -> pd.DataFrame:
+    pf = _price_frame(store, symbol)
+    bf = _price_frame(store, benchmark)
+    if pf.empty or bf.empty:
+        return pd.DataFrame()
+
+    stock = pd.to_numeric(pf.get("adj_close"), errors="coerce")
+    if stock is None or stock.dropna().empty:
+        stock = pd.to_numeric(pf.get("close"), errors="coerce")
+    else:
+        stock = stock.fillna(pd.to_numeric(pf.get("close"), errors="coerce"))
+    bench = pd.to_numeric(bf.get("adj_close"), errors="coerce")
+    if bench is None or bench.dropna().empty:
+        bench = pd.to_numeric(bf.get("close"), errors="coerce")
+    else:
+        bench = bench.fillna(pd.to_numeric(bf.get("close"), errors="coerce"))
+    volume = pd.to_numeric(pf.get("volume"), errors="coerce") if "volume" in pf else pd.Series(index=pf.index, dtype=float)
+
+    df = pd.concat(
+        [stock.rename("stock"), bench.rename("bench"), volume.rename("volume")],
+        axis=1,
+        join="inner",
+    ).sort_index()
+    df = df.dropna(subset=["stock", "bench"])
+    if len(df) < 80:
+        return pd.DataFrame()
+
+    sr = df["stock"].pct_change()
+    br = df["bench"].pct_change()
+    df["ret_1d"] = df["stock"].pct_change(1)
+    df["ret_5d"] = df["stock"].pct_change(5)
+    df["ret_21d"] = df["stock"].pct_change(21)
+    df["excess_1d"] = sr - br
+    df["excess_5d"] = df["stock"].pct_change(5) - df["bench"].pct_change(5)
+    df["excess_21d"] = df["stock"].pct_change(21) - df["bench"].pct_change(21)
+    df["vol_5d"] = sr.rolling(5).std() * np.sqrt(252)
+    df["vol_21d"] = sr.rolling(21).std() * np.sqrt(252)
+    df["vol_63d"] = sr.rolling(63).std() * np.sqrt(252)
+    df["drawdown_21d"] = df["stock"] / df["stock"].rolling(21).max() - 1.0
+    df["drawdown_63d"] = df["stock"] / df["stock"].rolling(63).max() - 1.0
+    cov = sr.rolling(63).cov(br)
+    var = br.rolling(63).var().replace(0, np.nan)
+    df["beta_63d"] = cov / var
+    vol_mean = df["volume"].rolling(21).mean()
+    vol_std = df["volume"].rolling(21).std().replace(0, np.nan)
+    df["volume_z_21d"] = (df["volume"] - vol_mean) / vol_std
+    df["market_ret_1d"] = br
+    df["market_ret_5d"] = df["bench"].pct_change(5)
+    df["market_vol_21d"] = br.rolling(21).std() * np.sqrt(252)
+    df["symbol"] = str(symbol).upper()
+    df["as_of"] = df.index
+    return df.replace([np.inf, -np.inf], np.nan)
+
+
+def build_fast_training_frame(
+    store,
+    benchmark: str,
+    trading_days: int,
+    *,
+    max_rows: int = 60000,
+) -> pd.DataFrame:
+    """Build a cross-sectional daily PIT panel for 1D/1W excess-return research."""
+    frames = []
+    td = int(trading_days)
+    for symbol in _feature_symbols(store):
+        if symbol == benchmark.upper():
+            continue
+        df = _fast_symbol_frame(store, symbol, benchmark)
+        if df.empty:
+            continue
+        df["target_excess_return"] = (
+            df["stock"].shift(-td) / df["stock"] - 1.0
+            - (df["bench"].shift(-td) / df["bench"] - 1.0)
+        )
+        target_dates = pd.Series(df.index, index=df.index).shift(-td)
+        df["target_date"] = pd.to_datetime(target_dates, errors="coerce")
+        use = df[["symbol", "as_of", "target_date", "target_excess_return"] + FAST_FEATURES].copy()
+        use = use.dropna(subset=["target_excess_return", "target_date"])
+        frames.append(use)
+    if not frames:
+        return pd.DataFrame()
+    out = pd.concat(frames, ignore_index=True).sort_values(["as_of", "symbol"])
+    for c in FAST_FEATURES + ["target_excess_return"]:
+        out[c] = pd.to_numeric(out[c], errors="coerce")
+    out = out.replace([np.inf, -np.inf], np.nan)
+    if len(out) > int(max_rows):
+        stride = max(1, int(np.ceil(len(out) / float(max_rows))))
+        sampled = out.iloc[::stride].copy()
+        recent_cut = out["as_of"].max() - pd.Timedelta(days=120)
+        recent = out[out["as_of"] >= recent_cut]
+        out = pd.concat([sampled, recent], ignore_index=True).drop_duplicates(["symbol", "as_of"])
+        out = out.sort_values(["as_of", "symbol"]).tail(int(max_rows))
+    return out.reset_index(drop=True)
+
+
+def current_fast_feature_frame(store, benchmark: str) -> pd.DataFrame:
+    rows = []
+    for symbol in _feature_symbols(store):
+        if symbol == benchmark.upper():
+            continue
+        df = _fast_symbol_frame(store, symbol, benchmark)
+        if df.empty:
+            continue
+        row = df.tail(1).iloc[0]
+        out = {c: _finite(row.get(c)) for c in FAST_FEATURES}
+        out.update({"symbol": str(symbol).upper(), "as_of": pd.Timestamp(row["as_of"])})
+        rows.append(out)
+    frame = pd.DataFrame(rows)
+    if frame.empty:
+        return frame
+    for c in FAST_FEATURES:
+        frame[c] = pd.to_numeric(frame[c], errors="coerce")
+    return frame.replace([np.inf, -np.inf], np.nan)
+
+
 def current_feature_frame(store, benchmark: str) -> pd.DataFrame:
-    """Build current feature vectors from latest PIT fundamentals plus current market features."""
+    """Build current PIT fundamental vectors with freshly calculated market features."""
     try:
         with store.connect() as con:
             latest = pd.read_sql_query(
@@ -219,23 +433,59 @@ def current_feature_frame(store, benchmark: str) -> pd.DataFrame:
     return frame.replace([np.inf, -np.inf], np.nan)
 
 
-def _estimators():
+def model_feature_columns(model_name: str) -> list[str]:
+    spec = SHORT_HORIZONS[model_name]
+    return FAST_FEATURES if spec.get("feature_mode") == "fast" else EXPECTED_FEATURES
+
+
+def training_frame_for_model(store, model_name: str, benchmark: str = "SPY") -> pd.DataFrame:
+    spec = SHORT_HORIZONS[model_name]
+    if spec.get("feature_mode") == "fast":
+        return build_fast_training_frame(store, benchmark, int(spec["trading_days"]))
+    return build_horizon_training_frame(store, benchmark, int(spec["days"]))
+
+
+def current_frame_for_model(store, model_name: str, benchmark: str = "SPY") -> pd.DataFrame:
+    spec = SHORT_HORIZONS[model_name]
+    if spec.get("feature_mode") == "fast":
+        return current_fast_feature_frame(store, benchmark)
+    return current_feature_frame(store, benchmark)
+
+
+def _estimators(include_tree_challenger: bool = False):
     hgb = Pipeline([
         ("imputer", SimpleImputer(strategy="median")),
         ("model", HistGradientBoostingRegressor(
-            max_iter=180, max_leaf_nodes=12, learning_rate=0.05,
-            l2_regularization=0.5, random_state=42,
+            max_iter=180,
+            max_leaf_nodes=12,
+            learning_rate=0.05,
+            l2_regularization=0.5,
+            random_state=RANDOM_STATE,
         )),
     ])
     elastic = Pipeline([
         ("imputer", SimpleImputer(strategy="median")),
         ("scale", StandardScaler()),
-        ("model", ElasticNet(alpha=0.02, l1_ratio=0.25, max_iter=5000, random_state=42)),
+        ("model", ElasticNet(alpha=0.02, l1_ratio=0.25, max_iter=5000, random_state=RANDOM_STATE)),
     ])
-    return hgb, elastic
+    if not include_tree_challenger:
+        return {"hgb": hgb, "elastic": elastic}
+    extra = Pipeline([
+        ("imputer", SimpleImputer(strategy="median")),
+        ("model", ExtraTreesRegressor(
+            n_estimators=180,
+            min_samples_leaf=8,
+            max_features=0.8,
+            n_jobs=-1,
+            random_state=RANDOM_STATE,
+        )),
+    ])
+    return {"hgb": hgb, "elastic": elastic, "extra_trees": extra}
 
 
-def _confidence(n: int) -> str:
+def _confidence(n: int, fast: bool = False) -> str:
+    if fast:
+        return "High" if n >= 5000 else "Moderate" if n >= 1500 else "Low"
     return "High" if n >= 120 else "Moderate" if n >= 60 else "Low"
 
 
@@ -257,14 +507,20 @@ def _journal_spacing_ok(store, model: str, symbol: str, as_of: pd.Timestamp, spa
         return True
 
 
+def _ensemble_weights(names: list[str], fast: bool) -> dict[str, float]:
+    if fast and set(names) >= {"hgb", "elastic", "extra_trees"}:
+        return {"hgb": 0.45, "extra_trees": 0.35, "elastic": 0.20}
+    return {"hgb": 0.65, "elastic": 0.35}
+
+
 def generate_short_horizon_predictions(
     store,
     benchmark: str = "SPY",
     *,
     min_training_rows: int = 40,
-    journal_spacing_days: int = 7,
+    journal_spacing_days: int | None = None,
 ) -> dict:
-    """Train 1M/3M/6M models and journal current forecasts for later live evaluation."""
+    """Train 1D/1W/1M/3M/6M models and journal current forecasts for live grading."""
     today = datetime.now(timezone.utc).date().isoformat()
     try:
         last = store.get_state("short_horizon_learning", "last_generation", {}) or {}
@@ -273,9 +529,6 @@ def generate_short_horizon_predictions(
     except Exception:
         pass
 
-    current = current_feature_frame(store, benchmark)
-    if current.empty:
-        return {"status": "NO_CURRENT_FEATURES", "journaled": 0, "models": {}}
     bench = _price_series(store, benchmark)
     if bench.empty:
         return {"status": "NO_BENCHMARK_HISTORY", "journaled": 0, "models": {}}
@@ -283,35 +536,62 @@ def generate_short_horizon_predictions(
     total_journaled = 0
     model_summary: dict[str, dict] = {}
     for model_name, spec in SHORT_HORIZONS.items():
-        train = build_horizon_training_frame(store, benchmark, int(spec["days"]))
-        if len(train) < int(min_training_rows):
-            model_summary[model_name] = {"status": "INSUFFICIENT_DATA", "training_rows": int(len(train)), "journaled": 0}
+        fast = spec.get("feature_mode") == "fast"
+        features = model_feature_columns(model_name)
+        train = training_frame_for_model(store, model_name, benchmark)
+        current = current_frame_for_model(store, model_name, benchmark)
+        required = max(int(min_training_rows), 800 if fast else int(min_training_rows))
+        if len(train) < required or current.empty:
+            model_summary[model_name] = {
+                "status": "INSUFFICIENT_DATA",
+                "training_rows": int(len(train)),
+                "current_rows": int(len(current)),
+                "minimum_rows": int(required),
+                "journaled": 0,
+            }
             continue
 
-        hgb, elastic = _estimators()
-        min_train = max(30, min(80, len(train) // 2))
-        step = max(1, len(train) // 25)
-        wf_h = expanding_walk_forward(
-            hgb, train, EXPECTED_FEATURES, "target_excess_return",
-            min_train=min_train, step=step,
-        )
-        wf_e = expanding_walk_forward(
-            elastic, train, EXPECTED_FEATURES, "target_excess_return",
-            min_train=min_train, step=step,
-        )
-        hgb.fit(train[EXPECTED_FEATURES], train["target_excess_return"])
-        elastic.fit(train[EXPECTED_FEATURES], train["target_excess_return"])
-        p_h = hgb.predict(current[EXPECTED_FEATURES])
-        p_e = elastic.predict(current[EXPECTED_FEATURES])
-        pred = 0.65 * np.asarray(p_h, dtype=float) + 0.35 * np.asarray(p_e, dtype=float)
-        confidence = _confidence(len(train))
+        estimators = _estimators(include_tree_challenger=fast)
+        min_train = max(500 if fast else 30, min(5000 if fast else 80, len(train) // 2))
+        step = max(1, len(train) // (18 if fast else 25))
+        walk_forward = {}
+        fitted = {}
+        predictions = {}
+        for name, estimator in estimators.items():
+            wf = expanding_walk_forward(
+                estimator,
+                train,
+                features,
+                "target_excess_return",
+                min_train=min_train,
+                step=step,
+            )
+            estimator.fit(train[features], train["target_excess_return"])
+            walk_forward[name] = wf.metrics
+            fitted[name] = estimator
+            predictions[name] = np.asarray(estimator.predict(current[features]), dtype=float)
+
+        weights = _ensemble_weights(list(fitted), fast)
+        pred = np.zeros(len(current), dtype=float)
+        total_weight = 0.0
+        for name, weight in weights.items():
+            if name in predictions:
+                pred += float(weight) * predictions[name]
+                total_weight += float(weight)
+        if total_weight <= 0:
+            model_summary[model_name] = {"status": "ERROR", "training_rows": int(len(train)), "journaled": 0}
+            continue
+        pred /= total_weight
+
+        confidence = _confidence(len(train), fast=fast)
         created_at = _now()
         journaled = 0
+        spacing = int(spec.get("journal_spacing_days", 1)) if journal_spacing_days is None else int(journal_spacing_days)
 
         for i, (_, row) in enumerate(current.iterrows()):
             symbol = str(row["symbol"]).upper()
             as_of = pd.Timestamp(row["as_of"])
-            if not _journal_spacing_ok(store, model_name, symbol, as_of, journal_spacing_days):
+            if not _journal_spacing_ok(store, model_name, symbol, as_of, spacing):
                 continue
             stock = _price_series(store, symbol)
             baseline = _trailing_excess(stock, bench, as_of, int(spec["lookback"]))
@@ -319,8 +599,11 @@ def generate_short_horizon_predictions(
                 "benchmark": benchmark.upper(),
                 "horizon": spec["label"],
                 "horizon_days": int(spec["days"]),
-                "feature_snapshot": {c: _finite(row.get(c)) for c in EXPECTED_FEATURES},
-                "walk_forward": {"hgb": wf_h.metrics, "elastic": wf_e.metrics},
+                "trading_days": int(spec.get("trading_days", 0) or 0),
+                "feature_mode": spec.get("feature_mode"),
+                "feature_snapshot": {c: _finite(row.get(c)) for c in features},
+                "walk_forward": walk_forward,
+                "ensemble_weights": weights,
             }
             with store.connect() as con:
                 con.execute(
@@ -330,11 +613,23 @@ def generate_short_horizon_predictions(
                            baseline_value,baseline_name,evaluation_version)
                        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (
-                        f"short-{today}", symbol, model_name, as_of.isoformat(), int(spec["days"]),
-                        json.dumps(float(pred[i])), confidence, json.dumps(features_payload, default=str),
-                        SHORT_HORIZON_MODEL_VERSION, None, None, None, created_at,
-                        spec["target_type"], float(baseline),
-                        f"Trailing {spec['label']} excess-return baseline", None,
+                        f"short-{today}",
+                        symbol,
+                        model_name,
+                        as_of.isoformat(),
+                        int(spec["days"]),
+                        json.dumps(float(pred[i])),
+                        confidence,
+                        json.dumps(features_payload, default=str),
+                        SHORT_HORIZON_MODEL_VERSION,
+                        None,
+                        None,
+                        None,
+                        created_at,
+                        spec["target_type"],
+                        float(baseline),
+                        f"Trailing {spec['label']} excess-return baseline",
+                        None,
                     ),
                 )
             journaled += 1
@@ -342,10 +637,11 @@ def generate_short_horizon_predictions(
         validation = {
             "horizon": spec["label"],
             "horizon_days": int(spec["days"]),
+            "trading_days": int(spec.get("trading_days", 0) or 0),
+            "feature_mode": spec.get("feature_mode"),
             "training_rows": int(len(train)),
-            "hgb_walk_forward": wf_h.metrics,
-            "elastic_walk_forward": wf_e.metrics,
-            "ensemble_weights": {"hgb": 0.65, "elastic": 0.35},
+            "walk_forward": walk_forward,
+            "ensemble_weights": weights,
             "portfolio_use": "research_only",
         }
         with store.connect() as con:
@@ -355,16 +651,29 @@ def generate_short_horizon_predictions(
                        validation_json,drivers_json,details_json)
                    VALUES(?,?,?,?,?,?,?,?,?,?)""",
                 (
-                    model_name, SHORT_HORIZON_MODEL_VERSION, created_at, "PASS", confidence,
-                    json.dumps({"median_prediction": float(np.nanmedian(pred))}), int(len(train)),
-                    json.dumps(validation, default=str), "[]",
-                    json.dumps({"horizon_days": int(spec["days"]), "portfolio_use": "research_only"}),
+                    model_name,
+                    SHORT_HORIZON_MODEL_VERSION,
+                    created_at,
+                    "PASS",
+                    confidence,
+                    json.dumps({"median_prediction": float(np.nanmedian(pred))}),
+                    int(len(train)),
+                    json.dumps(validation, default=str),
+                    "[]",
+                    json.dumps({
+                        "horizon_days": int(spec["days"]),
+                        "trading_days": int(spec.get("trading_days", 0) or 0),
+                        "portfolio_use": "research_only",
+                    }),
                 ),
             )
         total_journaled += journaled
         model_summary[model_name] = {
-            "status": "PASS", "training_rows": int(len(train)), "journaled": int(journaled),
-            "hgb_walk_forward": wf_h.metrics, "elastic_walk_forward": wf_e.metrics,
+            "status": "PASS",
+            "training_rows": int(len(train)),
+            "journaled": int(journaled),
+            "walk_forward": walk_forward,
+            "ensemble_weights": weights,
         }
 
     summary = {"status": "PASS", "date": today, "journaled": int(total_journaled), "models": model_summary}
