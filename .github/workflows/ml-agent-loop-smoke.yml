@@ -10,7 +10,12 @@ on:
       - 'machine_learning/risk_forecasts.py'
       - 'machine_learning/research_loop.py'
       - 'machine_learning/learning_runner.py'
+      - 'institutional_research/app.py'
+      - 'institutional_research/pages/5_ML_Research_Lab.py'
+      - 'institutional_research/src/ml_research_dashboard.py'
       - 'tests/test_short_horizon_research_loop.py'
+      - 'tests/test_ml_research_dashboard.py'
+      - 'tests/test_streamlit_navigation.py'
       - '.github/workflows/ml-agent-loop-smoke.yml'
   workflow_dispatch:
 
@@ -30,15 +35,23 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
           python -m pip install pytest
-      - name: Compile new ML modules
+      - name: Compile new ML modules and dashboard
         run: |
           python -m py_compile \
             machine_learning/short_horizon.py \
             machine_learning/short_horizon_patch.py \
             machine_learning/risk_forecasts.py \
             machine_learning/research_loop.py \
-            machine_learning/learning_runner.py
+            machine_learning/learning_runner.py \
+            institutional_research/src/ml_research_dashboard.py \
+            institutional_research/pages/5_ML_Research_Lab.py \
+            institutional_research/app.py
       - name: Run focused tests
         env:
           PYTHONPATH: .
-        run: python -m pytest -q tests/test_short_horizon_research_loop.py tests/test_continual_learning.py
+        run: >-
+          python -m pytest -q
+          tests/test_short_horizon_research_loop.py
+          tests/test_continual_learning.py
+          tests/test_ml_research_dashboard.py
+          tests/test_streamlit_navigation.py
