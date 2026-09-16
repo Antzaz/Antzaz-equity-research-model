@@ -13,6 +13,7 @@ def test_streamlit_launcher_exists_and_registers_all_pages():
         "pages/2_Portfolio_Optimization.py",
         "pages/3_Model_Learning.py",
         "pages/4_AI_Optionality.py",
+        "pages/5_ML_Research_Lab.py",
     ]
     for relative in expected:
         assert relative in text
@@ -23,3 +24,9 @@ def test_ai_optionality_is_explicitly_visible_in_navigation():
     text = APP.read_text(encoding="utf-8")
     assert "AI Optionality & Uncertainty" in text
     assert "st.navigation" in text
+
+
+def test_ml_research_lab_is_explicitly_visible_in_navigation():
+    text = APP.read_text(encoding="utf-8")
+    assert "ML Research Lab" in text
+    assert "pages/5_ML_Research_Lab.py" in text
