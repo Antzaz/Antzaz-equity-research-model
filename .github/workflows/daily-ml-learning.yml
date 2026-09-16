@@ -14,6 +14,8 @@ on:
       - 'machine_learning/continual_learning.py'
       - 'machine_learning/short_horizon.py'
       - 'machine_learning/short_horizon_patch.py'
+      - 'machine_learning/risk_forecasts.py'
+      - 'machine_learning/research_loop.py'
       - 'machine_learning/learning_runner.py'
       - 'machine_learning/__init__.py'
       - 'ml_history.py'
