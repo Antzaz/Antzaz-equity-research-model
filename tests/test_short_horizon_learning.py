@@ -10,7 +10,11 @@ import pandas as pd
 import machine_learning  # noqa: F401 - installs learning extensions
 from machine_learning.history_store import HistoryStore
 from machine_learning import continual_learning as cl
-from machine_learning.short_horizon import SHORT_HORIZONS, generate_short_horizon_predictions
+from machine_learning.short_horizon import (
+    SHORT_HORIZONS,
+    SHORT_HORIZON_MODEL_VERSION,
+    generate_short_horizon_predictions,
+)
 
 
 def _price_rows(symbol, dates, values):
@@ -99,7 +103,7 @@ def test_one_month_prediction_matures_against_true_one_month_excess_return():
                 "SELECT realized_value,evaluation_version FROM predictions WHERE model='Expected 1M Excess Return'"
             ).fetchone()
         assert row[0] is not None
-        assert row[1] == "continual-learning-short-v1"
+        assert row[1] == "continual-learning-short-v2"
 
 
 def test_generator_journals_real_1m_3m_6m_targets_from_point_in_time_history():
@@ -126,7 +130,8 @@ def test_generator_journals_real_1m_3m_6m_targets_from_point_in_time_history():
         with store.connect() as con:
             rows = con.execute(
                 """SELECT DISTINCT model,target_type,horizon_days FROM predictions
-                   WHERE model_version='ml-short-horizon-v1'"""
+                   WHERE model_version=?""",
+                (SHORT_HORIZON_MODEL_VERSION,),
             ).fetchall()
         seen = {r[0]: (r[1], r[2]) for r in rows}
         assert seen["Expected 1M Excess Return"] == ("1m_excess_return", 30)
