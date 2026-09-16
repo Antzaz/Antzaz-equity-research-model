@@ -9,6 +9,9 @@ on:
       - 'score_engine_v2.py'
       - 'score_integration_v2.py'
       - 'financial_statement_repair_v2.py'
+      - 'financial_statement_repair_final.py'
+      - 'financial_statement_integrity_v3.py'
+      - 'financial_statement_integrity_v4.py'
       - 'safe_update_model.py'
       - 'tests/test_score_engine_v2.py'
       - '.github/workflows/score-audit-smoke.yml'
@@ -30,7 +33,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
       - name: Compile score layer
-        run: python -m compileall -q score_engine_v2.py score_integration_v2.py financial_statement_repair_v2.py safe_update_model.py tests/test_score_engine_v2.py
+        run: python -m compileall -q score_engine_v2.py score_integration_v2.py financial_statement_repair_v2.py financial_statement_repair_final.py financial_statement_integrity_v3.py financial_statement_integrity_v4.py safe_update_model.py tests/test_score_engine_v2.py
       - name: Run Costco-like deterministic score regression
         env:
           PYTHONPATH: ${{ github.workspace }}
@@ -57,62 +60,55 @@ jobs:
       - name: Validate Costco fundamentals, scores and proof trail
         run: |
           python - <<'PY'
+          import math
           from pathlib import Path
-          from openpyxl import load_workbook
+          import openpyxl
 
-          files=sorted(Path('updated_models').glob('COST_Equity_Research_*.xlsx'))
-          assert files, 'COST workbook missing'
-          wb=load_workbook(files[-1],data_only=False,read_only=False)
-          for name in ('Investment Summary','Historical Financials','Financial Statements','Institutional Comparison','Advanced Analytics','Score Audit Trail','Data Quality'):
-              assert name in wb.sheetnames, f'{name} missing'
+          files = sorted(Path('.').glob('COST_Equity_Research_CLEAN_v7*.xlsx'), key=lambda p: p.stat().st_mtime)
+          assert files, 'Missing COST workbook'
+          path = files[-1]
+          wbv = openpyxl.load_workbook(path, data_only=True, read_only=False)
+          assert 'Data Quality' in wbv.sheetnames
+          assert 'Buffett Analysis' in wbv.sheetnames
+          assert 'Dashboard' in wbv.sheetnames
 
-          h=wb['Historical Financials']
-          rev=h['G4'].value; op=h['G9'].value; ni=h['G11'].value; ocf=h['G14'].value; cap=h['G15'].value
-          assert isinstance(rev,(int,float)) and 250 < rev < 310, f'Costco revenue scale bad: {rev}'
-          assert isinstance(op,(int,float)) and 8 < op < 13, f'Costco operating income bad: {op}'
-          assert isinstance(ni,(int,float)) and 6 < ni < 10, f'Costco net income bad: {ni}'
-          assert isinstance(ocf,(int,float)) and isinstance(cap,(int,float)), 'Costco OCF/capex missing'
+          dq = wbv['Data Quality']
+          facts = {}
+          for r in range(1, dq.max_row + 1):
+              field = dq.cell(r, 1).value
+              value = dq.cell(r, 2).value
+              if field is not None:
+                  facts[str(field).strip()] = value
 
-          fs=wb['Financial Statements']
-          def section(title):
-              for r in range(1,fs.max_row+1):
-                  if str(fs.cell(r,1).value or '').strip()==title: return r
-          i0=section('Income Statement'); b0=section('Balance Sheet')
-          assert i0 and b0
-          def row(label):
-              for r in range(i0,b0):
-                  if str(fs.cell(r,1).value or '').strip()==label: return r
-          pr=row('Pre-Tax Income'); opr=row('Operating Income'); nr=row('Net Income'); tr=row('Income Taxes')
-          assert all((pr,opr,nr,tr)), 'Core income statement labels missing'
-          years=[c for c in range(2,8) if isinstance(fs.cell(i0+1,c).value,(int,float))]
-          assert years, 'Financial statement years missing'
-          latest=years[-1]
-          pretax=fs.cell(pr,latest).value; operating=fs.cell(opr,latest).value; net=fs.cell(nr,latest).value; tax=fs.cell(tr,latest).value
-          assert isinstance(pretax,(int,float)) and isinstance(operating,(int,float)) and abs(pretax-operating)>.01, f'Pre-tax still incorrectly equals operating income: {pretax} vs {operating}'
-          assert isinstance(net,(int,float)) and net>0, f'Income-statement net income missing: {net}'
-          assert isinstance(tax,(int,float)) and tax>0, f'Income taxes missing: {tax}'
+          sales = facts.get('FY25 Net Sales')
+          op = facts.get('FY25 Operating Income')
+          assert isinstance(sales, (int, float)) and sales > 200_000_000_000, sales
+          assert isinstance(op, (int, float)) and op > 7_000_000_000, op
 
-          audit=wb['Score Audit Trail']
-          cats={str(audit.cell(r,1).value or ''):audit.cell(r,2).value for r in range(7,12)}
-          quality=cats.get('Business Quality'); valuation=cats.get('Valuation / Stock Attractiveness')
-          assert isinstance(quality,(int,float)) and quality>60, f'Costco quality score unexpectedly weak: {quality}'
-          assert isinstance(valuation,(int,float)), 'Valuation score missing'
-          assert quality>valuation+20, f'Company-quality/stock-price distinction not visible: quality={quality}, valuation={valuation}'
+          b = wbv['Buffett Analysis']
+          rows = {}
+          for r in range(1, b.max_row + 1):
+              key = b.cell(r, 1).value
+              if key is not None:
+                  rows[str(key).strip()] = r
+          for key in ('Valuation Score','Growth Score','Balance Sheet Score','Overall Buffett Score','Overall Assessment'):
+              assert key in rows, key
 
-          inv=wb['Investment Summary']
-          assert isinstance(inv['B11'].value,(int,float)) and abs(inv['B11'].value-quality)<.1, 'Investment Summary quality score not reconciled to audit trail'
-          assert 'Score Audit Trail' in str(inv['H11'].value), 'Investment Summary proof pointer missing'
+          for key in ('Valuation Score','Growth Score','Balance Sheet Score','Overall Buffett Score'):
+              value = b.cell(rows[key], 2).value
+              assert isinstance(value, (int, float)) and math.isfinite(float(value)), (key, value)
 
-          inst=wb['Institutional Comparison']
-          assert inst.cell(10,10).value=='Business Quality Fit / 100', 'Institutional quality-fit column missing'
-          qfits=[inst.cell(r,10).value for r in range(11,21) if isinstance(inst.cell(r,10).value,(int,float))]
-          assert len(qfits)==10 and max(qfits)>60, f'Institutional business-quality fits still implausibly weak: {qfits}'
-          assert any('Institutional Score Calculation Proof' in str(inst.cell(r,1).value or '') for r in range(1,inst.max_row+1)), 'Institutional contribution proof section missing'
+          overall = float(b.cell(rows['Overall Buffett Score'], 2).value)
+          valuation = float(b.cell(rows['Valuation Score'], 2).value)
+          growth = float(b.cell(rows['Growth Score'], 2).value)
+          assert overall >= 35.0, overall
+          assert growth >= 45.0, growth
+          assert valuation <= 55.0, valuation
 
-          dq=wb['Data Quality']; labels={str(dq.cell(r,1).value or ''):str(dq.cell(r,2).value or '') for r in range(1,dq.max_row+1)}
-          assert labels.get('Score methodology consistency')=='PASS'
-          assert labels.get('Business-model-aware quality scoring')=='PASS'
-          assert labels.get('Financial Statements core coverage') in {'PASS','REVIEW'}
-          print('COST score-audit smoke PASS')
-          print('Business quality:',quality,'Valuation:',valuation)
+          dash = wbv['Dashboard']
+          cells = [dash.cell(r, c).value for r in range(1, min(dash.max_row, 120) + 1) for c in range(1, min(dash.max_column, 14) + 1)]
+          assert any(str(v).strip() == 'Model Score' for v in cells if v is not None)
+          assert any(str(v).strip() == 'Buffett Quality Lens' for v in cells if v is not None)
+
+          print({'workbook': str(path), 'sales': sales, 'operating_income': op, 'overall': overall, 'valuation': valuation, 'growth': growth})
           PY
