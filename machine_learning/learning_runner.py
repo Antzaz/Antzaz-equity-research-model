@@ -1,9 +1,15 @@
 from __future__ import annotations
 
-"""CLI entrypoint that runs the installed continual-learning extensions.
+"""CLI entrypoint for the governed continual-learning research stack.
 
 Use this instead of executing continual_learning.py directly so package-level integration
-hooks (including 1M/3M/6M research horizons) are guaranteed to be installed first.
+hooks are guaranteed to be installed first. The runner now covers:
+
+- existing 12M expected-return and earnings-surprise feedback;
+- research-only 1D/1W/1M/3M/6M return horizons;
+- forward volatility and drawdown context models;
+- live forecast maturation and champion/challenger governance;
+- the bounded weekly autonomous challenger-research loop.
 """
 
 import argparse
