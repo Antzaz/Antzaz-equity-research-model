@@ -87,7 +87,9 @@ def _future_volatility(returns: pd.Series, n: int) -> pd.Series:
 def _future_drawdown(prices: pd.Series, n: int) -> pd.Series:
     px = pd.to_numeric(prices, errors="coerce")
     future_min = px.shift(-1).iloc[::-1].rolling(int(n)).min().iloc[::-1]
-    return future_min / px - 1.0
+    # Drawdown is a loss measure. If every future observation is above today's price,
+    # the economically correct forward drawdown is 0%, not a positive return.
+    return (future_min / px - 1.0).clip(upper=0.0)
 
 
 def build_risk_training_frame(store, benchmark: str = "SPY", *, max_rows: int = 60000) -> pd.DataFrame:
