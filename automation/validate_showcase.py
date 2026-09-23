@@ -35,6 +35,7 @@ FORBIDDEN_KEYS = {
     "transactions",
     "privatenotes",
     "credentials",
+    "decisionid",
 }
 
 

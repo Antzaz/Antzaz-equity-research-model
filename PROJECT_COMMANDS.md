@@ -139,3 +139,25 @@ cd "$HOME\Documents\Antzaz-investment-research-showcase"; gh repo create Antzaz-
 - Streamlit private app: `institutional_research/live_dashboard.py`
 - Friend access: invite as Streamlit viewer, not GitHub collaborator
 - Resume/public app: deploy `app.py` from the separate public showcase repository
+
+
+## Offline investment loop
+
+Run the private portfolio/accountability stack:
+
+```powershell
+cd institutional_research
+python run_research.py
+python -m streamlit run app.py
+```
+
+Initialize private inputs when needed:
+
+```powershell
+Copy-Item transaction_ledger_template.csv transaction_ledger.csv
+Copy-Item portfolio_decision_journal_template.csv portfolio_decision_journal.csv
+Copy-Item fundamental_scenarios_template.csv fundamental_scenarios.csv
+Copy-Item benchmark_sector_history_template.csv benchmark_sector_history.csv
+```
+
+Company-model accountability sheets are generated through the guarded research runner; do not publish the local research_data histories or private transaction/journal files.
