@@ -797,25 +797,47 @@ def custom_thesis_scenarios(path: str | Path, holdings: pd.DataFrame) -> pd.Data
 
 
 def expected_return_decomposition(holdings: pd.DataFrame, bridge: pd.DataFrame) -> tuple[pd.DataFrame,pd.DataFrame]:
+    """Reconcile research-derived expected return into non-overlapping components.
+
+    Fair-value convergence already embeds the research model's operating-growth assumptions,
+    so adding forecast growth separately would double count it. The portfolio decomposition is:
+    valuation convergence + dividends + net share reduction + confidence shrinkage.
+    """
     if holdings.empty or bridge is None or bridge.empty:
         return pd.DataFrame(),pd.DataFrame()
     df=holdings[["Ticker","Weight"]].merge(bridge,on="Ticker",how="left")
     rows=[]
     for _,r in df.iterrows():
         total=_num(r.get("ConfidenceAdjustedExpectedReturn"))
-        growth=_num(r.get("BaseGrowthProxy"),0.0) or 0.0
+        convergence=_num(r.get("ValuationConvergenceReturn"))
+        if convergence is None:
+            # Backwards-compatible fallback for older bridge fixtures/workbooks.
+            convergence=_num(r.get("BaseGrowthProxy"),0.0) or 0.0
         div=_num(r.get("DividendYield"),0.0) or 0.0
         buyback=_num(r.get("NetBuybackYield"),0.0) or 0.0
-        residual=total-growth-div-buyback if total is not None else None
-        rows.append({"Ticker":r["Ticker"],"Weight":r["Weight"],"ExpectedReturn":total,"FundamentalGrowth":growth,"DividendYield":div,"NetBuybackYield":buyback,"ValuationNormalizationResidual":residual})
+        raw=_num(r.get("RawExpectedReturn"))
+        if raw is None:
+            raw=convergence+div+buyback
+        shrink=(total-raw) if total is not None and raw is not None else None
+        rows.append({
+            "Ticker":r["Ticker"],"Weight":r["Weight"],"ExpectedReturn":total,
+            "ValuationConvergence":convergence,"DividendYield":div,
+            "NetBuybackYield":buyback,"ConfidenceShrinkage":shrink,
+            "RawExpectedReturn":raw,
+        })
     detail=pd.DataFrame(rows)
     summary=[]
-    for col,label in [("FundamentalGrowth","Expected fundamental growth"),("DividendYield","Dividend yield"),("NetBuybackYield","Net buyback yield"),("ValuationNormalizationResidual","Valuation / other residual"),("ExpectedReturn","Total confidence-adjusted expected return")]:
+    for col,label in [
+        ("ValuationConvergence","Valuation convergence"),
+        ("DividendYield","Dividend yield"),
+        ("NetBuybackYield","Net share-reduction / buyback yield"),
+        ("ConfidenceShrinkage","Confidence shrinkage adjustment"),
+        ("ExpectedReturn","Total confidence-adjusted expected return"),
+    ]:
         valid=detail.dropna(subset=[col])
         value=float((valid["Weight"]*valid[col]).sum()) if not valid.empty else None
         summary.append({"Component":label,"PortfolioContribution":value})
     return detail,pd.DataFrame(summary)
-
 
 def transaction_cost_rebalance(
     optimizer_weights: pd.DataFrame,

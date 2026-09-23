@@ -98,7 +98,10 @@ def test_research_to_sizing_and_expected_return_budget_is_coherent():
 
     detail, summary = expected_return_decomposition(holdings, bridge)
     aaa = detail[detail["Ticker"] == "AAA"].iloc[0]
-    assert aaa["ValuationNormalizationResidual"] == pytest.approx(0.03)
+    assert aaa["ValuationConvergence"] == pytest.approx(0.08)
+    assert aaa["DividendYield"] == pytest.approx(0.01)
+    assert aaa["NetBuybackYield"] == pytest.approx(0.02)
+    assert aaa["ConfidenceShrinkage"] == pytest.approx(0.03)
     total = summary.loc[
         summary["Component"] == "Total confidence-adjusted expected return",
         "PortfolioContribution",
