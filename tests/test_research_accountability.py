@@ -119,9 +119,9 @@ def test_sotp_requires_explicit_multiples(tmp_path, monkeypatch):
 
 
 def test_display_path_is_non_recursive(tmp_path: Path):
-    inside=BASE / "research_data" / "TEST" / "sample.csv"
-    shown=_display_path(inside)
+    inside=ra.BASE / "research_data" / "TEST" / "sample.csv"
+    shown=ra._display_path(inside)
     assert "research_data" in shown
     assert shown.endswith("sample.csv")
     outside=tmp_path / "x.csv"
-    assert _display_path(outside).endswith("x.csv")
+    assert ra._display_path(outside).endswith("x.csv")
