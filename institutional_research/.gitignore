@@ -11,3 +11,6 @@ outputs/
 __pycache__/
 *.pyc
 .venv/
+transaction_ledger.csv
+benchmark_sector_history.csv
+fundamental_scenarios.csv
