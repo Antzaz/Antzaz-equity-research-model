@@ -219,8 +219,9 @@ class ResearchHub(tk.Tk):
                 fn()
                 ok = True
             except Exception as exc:
-                self.emit(f"ERROR: {exc}")
-                self.after(0, lambda: messagebox.showerror("Research Hub", str(exc)))
+                message = str(exc)
+                self.emit(f"ERROR: {message}")
+                self.after(0, lambda msg=message: messagebox.showerror("Research Hub", msg))
             finally:
                 self.after(0, lambda: self.set_busy(False, "Ready" if ok else "Task failed — see log"))
 
