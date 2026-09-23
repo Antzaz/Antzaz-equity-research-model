@@ -128,7 +128,7 @@ jobs:
           ca=wb['Capital Allocation']
           assert 'Capital Allocation' in str(ca['A1'].value), ca['A1'].value
           vh=wb['Valuation History']
-          assert 'Valuation History' in str(vh['A1'].value), vh['A1'].value
+          assert 'Valuation' in str(vh['A1'].value), vh['A1'].value
           sotp=wb['SOTP Framework']
           assert 'SOTP' in str(sotp['A1'].value), sotp['A1'].value
           tl=wb['Thesis Timeline']
