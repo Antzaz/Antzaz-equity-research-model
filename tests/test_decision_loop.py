@@ -125,3 +125,54 @@ def test_rebalance_cost_gate():
     assert len(out)==1
     assert out.iloc[0]["EstimatedCostBps"]>0
     assert out.iloc[0]["Decision"] in {"REBALANCE","HOLD / NO TRADE"}
+
+
+def test_custom_thesis_scenario_and_liquidity_haircut(tmp_path):
+    holdings=pd.DataFrame([
+        {"Ticker":"AAA","Weight":0.60,"RiskContributionPct":0.70,"MarketValue":60000},
+        {"Ticker":"BBB","Weight":0.40,"RiskContributionPct":0.30,"MarketValue":40000},
+    ])
+    bridge=pd.DataFrame([
+        {"Ticker":"AAA","ExpectedAlpha":0.12,"Confidence":0.9,"CurrentPrice":100,"BearValue":75},
+        {"Ticker":"BBB","ExpectedAlpha":0.06,"Confidence":0.8,"CurrentPrice":100,"BearValue":90},
+    ])
+    liquidity=pd.DataFrame([
+        {"Ticker":"AAA","EstimatedDaysToLiquidate":20.0},
+        {"Ticker":"BBB","EstimatedDaysToLiquidate":2.0},
+    ])
+    sized=dl.position_sizing_ranges(
+        holdings,bridge,max_position=.25,liquidity=liquidity,max_days_to_liquidate=5.0
+    )
+    by=sized.set_index("Ticker")
+    assert by.loc["AAA","LiquidityFactor"] < by.loc["BBB","LiquidityFactor"]
+    assert by.loc["AAA","SuggestedMidpoint"] < .25
+
+    path=tmp_path/"fundamental_scenarios.csv"
+    pd.DataFrame([
+        {"Scenario":"AI capex boom","Ticker":"AAA","Shock":0.20,"Notes":"explicit"},
+        {"Scenario":"AI capex boom","Ticker":"BBB","Shock":0.10,"Notes":"explicit"},
+        {"Scenario":"Recession","Ticker":"AAA","Shock":-0.25,"Notes":"explicit"},
+        {"Scenario":"Recession","Ticker":"BBB","Shock":-0.15,"Notes":"explicit"},
+    ]).to_csv(path,index=False)
+    out=dl.custom_thesis_scenarios(path,holdings)
+    portfolio=out[(out["Scenario"]=="AI capex boom") & (out["Ticker"].isna())].iloc[0]
+    assert abs(portfolio["PortfolioShock"]-.16)<1e-12
+
+
+def test_forecast_accuracy_influences_research_confidence(tmp_path):
+    path=tmp_path/"AAA_Equity_Research_20260923_120000.xlsx"
+    _research_book(path)
+    data_dir=tmp_path/"research_data"/"AAA"
+    data_dir.mkdir(parents=True)
+    pd.DataFrame([
+        {"Metric":"Revenue","Observations":4,"MeanAbsoluteError":0.02},
+        {"Metric":"FCF","Observations":3,"MeanAbsoluteError":0.05},
+    ]).to_csv(data_dir/"forecast_accuracy_summary.csv",index=False)
+    bridge=dl.research_expected_return_bridge(
+        ["AAA"],tmp_path,{"AAA":{"dividendYield":0.01}},
+        benchmark_expected_return=0.08,convergence_years=3,
+    )
+    row=bridge.iloc[0]
+    assert row["ForecastTrackRecordStatus"]=="PASS"
+    assert row["ForecastAccuracyObservations"]==7
+    assert row["ForecastAccuracyScore"]>0.7

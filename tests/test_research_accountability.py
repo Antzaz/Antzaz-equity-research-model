@@ -111,7 +111,7 @@ def test_sotp_requires_explicit_multiples(tmp_path, monkeypatch):
     assert first["valid"] == 0
     path=first["path"]
     df=pd.read_csv(path)
-    df["Multiple"]=[5.0,7.0,2.0][:len(df)]
+    df["Multiple"]=[5.0+i for i in range(len(df))]
     df.to_csv(path,index=False)
     second=ra.ensure_sotp_framework(wb,"TEST")
     assert second["valid"] >= 2

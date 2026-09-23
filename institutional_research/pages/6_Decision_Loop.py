@@ -61,6 +61,7 @@ else:
     st.info("Expected-alpha budget appears once research workbooks provide usable expected returns.")
 
 scenarios=read("fundamental_research_scenarios")
+custom=read("custom_thesis_scenarios")
 st.subheader("Bottom-up research scenarios")
 if scenarios.empty:
     st.info("No company-model bear/base/bull (or P10/P90) valuation coverage is available yet.")
@@ -68,6 +69,12 @@ else:
     portfolio_rows=scenarios[scenarios["Ticker"].isna()] if "Ticker" in scenarios else scenarios
     st.dataframe(portfolio_rows,use_container_width=True,hide_index=True)
     st.dataframe(scenarios,use_container_width=True,hide_index=True)
+
+st.subheader("Explicit thesis scenarios")
+if custom.empty:
+    st.info("Copy fundamental_scenarios_template.csv to fundamental_scenarios.csv to add explicit per-company shocks such as AI capex boom, recession, rates or USD scenarios. Missing shocks are not inferred.")
+else:
+    st.dataframe(custom,use_container_width=True,hide_index=True)
 
 decomp=read("expected_return_decomposition_summary")
 st.subheader("Expected-return decomposition")

@@ -545,20 +545,45 @@ def _workbook_research_snapshot(path: Path):
         out["DataQualityFail"]=fail
     if "Forecast Accountability" in wb.sheetnames:
         ws=wb["Forecast Accountability"]
-        # Pull the first and last base revenue forecasts from current snapshot.
-        forecasts=[]
+        by_metric={"FCF":[],"Revenue":[]}
         for r in range(7,min(ws.max_row,40)+1):
-            if str(ws.cell(r,2).value or "")=="Revenue":
-                year=_num(ws.cell(r,1).value); value=_num(ws.cell(r,3).value)
-                if year and value is not None: forecasts.append((int(year),value))
+            metric=str(ws.cell(r,2).value or "").strip()
+            if metric not in by_metric:
+                continue
+            year=_num(ws.cell(r,1).value); value=_num(ws.cell(r,3).value)
+            if year and value is not None and value>0:
+                by_metric[metric].append((int(year),value))
+        forecasts=by_metric["FCF"] if len(by_metric["FCF"])>=2 else by_metric["Revenue"]
         if len(forecasts)>=2 and forecasts[0][1]>0:
             y0,v0=forecasts[0]; y1,v1=forecasts[-1]
             out["BaseFCFCAGRProxy"]=(v1/v0)**(1/max(1,y1-y0))-1
+            out["BaseGrowthProxySource"]="FCF" if len(by_metric["FCF"])>=2 else "Revenue fallback"
     if "Capital Allocation" in wb.sheetnames:
         ws=wb["Capital Allocation"]
         r=_find_row(ws,"Latest net share reduction")
         if r: out["NetBuybackYield"]=_num(ws.cell(r,2).value)
     return out
+
+
+def _forecast_track_record(root: str | Path, ticker: str) -> dict:
+    path=Path(root)/"research_data"/str(ticker).upper()/"forecast_accuracy_summary.csv"
+    if not path.exists():
+        return {"score":0.50,"mae":None,"observations":0,"status":"INSUFFICIENT_HISTORY"}
+    try:
+        df=pd.read_csv(path)
+    except Exception:
+        return {"score":0.50,"mae":None,"observations":0,"status":"REVIEW"}
+    if df.empty or "MeanAbsoluteError" not in df.columns:
+        return {"score":0.50,"mae":None,"observations":0,"status":"INSUFFICIENT_HISTORY"}
+    errors=pd.to_numeric(df["MeanAbsoluteError"],errors="coerce").dropna()
+    obs_series=pd.to_numeric(df.get("Observations",pd.Series(1,index=df.index)),errors="coerce").fillna(1)
+    observations=int(obs_series.sum())
+    if errors.empty:
+        return {"score":0.50,"mae":None,"observations":observations,"status":"INSUFFICIENT_HISTORY"}
+    weights=np.maximum(1,obs_series.reindex(errors.index).to_numpy(float))
+    mae=float(np.average(errors.to_numpy(float),weights=weights))
+    score=float(max(.20,min(1.0,1-mae/.25)))
+    return {"score":score,"mae":mae,"observations":observations,"status":"PASS" if observations>=3 else "LIMITED_HISTORY"}
 
 
 def research_expected_return_bridge(
@@ -585,7 +610,8 @@ def research_expected_return_bridge(
             quality=min(quality,0.25)
         score=_num(snap.get("OverallScore"))
         score_conf=0.5 if score is None else min(1,max(0,score/100))
-        confidence=min(1,max(.15,.70*quality+.30*score_conf))
+        track=_forecast_track_record(root,ticker)
+        confidence=min(1,max(.15,.55*quality+.20*score_conf+.25*track["score"]))
         adjusted=benchmark_expected_return+confidence*(raw-benchmark_expected_return) if raw is not None else None
         rows.append({
             "Ticker":ticker,"Workbook":str(path) if path else None,
@@ -596,7 +622,12 @@ def research_expected_return_bridge(
             "DividendYield":dividend,
             "BaseGrowthProxy":_num(snap.get("BaseFCFCAGRProxy")),
             "NetBuybackYield":_num(snap.get("NetBuybackYield")),
+            "BaseGrowthProxySource":snap.get("BaseGrowthProxySource"),
             "DataQualityScore":quality if path else None,
+            "ForecastAccuracyScore":track["score"] if path else None,
+            "ForecastMAE":track["mae"] if path else None,
+            "ForecastAccuracyObservations":track["observations"] if path else 0,
+            "ForecastTrackRecordStatus":track["status"] if path else "NO_WORKBOOK",
             "ModelView":snap.get("ModelView"),
             "SourceStatus":"PASS" if path and raw is not None else "REVIEW",
         })
@@ -608,11 +639,14 @@ def position_sizing_ranges(
     research_bridge: pd.DataFrame,
     max_position: float,
     half_width: float=0.025,
+    liquidity: pd.DataFrame | None=None,
+    max_days_to_liquidate: float=5.0,
 ) -> pd.DataFrame:
     if holdings.empty:
         return pd.DataFrame()
     h=holdings.copy().set_index("Ticker")
     r=research_bridge.set_index("Ticker") if research_bridge is not None and not research_bridge.empty else pd.DataFrame()
+    liq=liquidity.set_index("Ticker") if liquidity is not None and not liquidity.empty and "Ticker" in liquidity else pd.DataFrame()
     rows=[]
     for ticker,row in h.iterrows():
         current=_num(row.get("Weight"),0.0) or 0.0
@@ -627,8 +661,15 @@ def position_sizing_ranges(
             alpha=None; conf=0.0; downside=.30
         opportunity=0.0 if alpha is None else max(0,min(1,(alpha+.02)/.14))
         downside_penalty=max(.35,1-min(.65,downside))
-        target=max_position*opportunity*conf*downside_penalty
-        # Risk-heavy names get a modest deterministic haircut rather than a hard optimizer override.
+        liquidity_days=None
+        liquidity_factor=1.0
+        if not liq.empty and ticker in liq.index and "EstimatedDaysToLiquidate" in liq.columns:
+            liquidity_days=_num(liq.loc[ticker,"EstimatedDaysToLiquidate"])
+            if liquidity_days is not None and liquidity_days>max_days_to_liquidate:
+                liquidity_factor=max(.40,min(1.0,max_days_to_liquidate/liquidity_days))
+        target=max_position*opportunity*conf*downside_penalty*liquidity_factor
+        # RiskContributionPct is covariance-based, so this guardrail incorporates the
+        # holding's volatility and correlation with the rest of the portfolio.
         if current>0 and risk/current>1.35:
             target*=0.85
         lower=max(0,target-half_width)
@@ -637,8 +678,9 @@ def position_sizing_ranges(
         rows.append({
             "Ticker":ticker,"CurrentWeight":current,"RiskContribution":risk,
             "ExpectedAlpha":alpha,"ResearchConfidence":conf,"DownsideReference":downside,
+            "LiquidityDays":liquidity_days,"LiquidityFactor":liquidity_factor,
             "SuggestedMidpoint":target,"SuggestedMin":lower,"SuggestedMax":upper,"RangeStatus":status,
-            "Method":"confidence-adjusted alpha × downside × risk-overweight guardrail",
+            "Method":"confidence-adjusted alpha × downside × liquidity × covariance-based risk guardrail",
         })
     return pd.DataFrame(rows)
 
@@ -679,6 +721,45 @@ def research_fundamental_scenarios(holdings: pd.DataFrame, bridge: pd.DataFrame)
         rows.append({"Scenario":scenario,"PortfolioShock":portfolio,"CoveredWeight":covered,"UncoveredWeight":max(0,1-covered),"Method":"company-model valuation / current price"})
         for t,w,shock,contrib in contributions:
             rows.append({"Scenario":scenario,"Ticker":t,"Weight":w,"SecurityShock":shock,"Contribution":contrib,"CoveredWeight":covered,"Method":"company-model valuation / current price"})
+    return pd.DataFrame(rows)
+
+
+def custom_thesis_scenarios(path: str | Path, holdings: pd.DataFrame) -> pd.DataFrame:
+    """Aggregate explicit company-level thesis shocks; shocks are never inferred from beta."""
+    path=Path(path)
+    if not path.exists() or holdings is None or holdings.empty:
+        return pd.DataFrame()
+    try:
+        raw=pd.read_csv(path,comment="#")
+    except Exception:
+        return pd.DataFrame()
+    required={"Scenario","Ticker","Shock"}
+    if raw.empty or not required.issubset(raw.columns):
+        return pd.DataFrame()
+    raw["Ticker"]=raw["Ticker"].astype(str).str.upper().str.strip()
+    raw["Shock"]=pd.to_numeric(raw["Shock"],errors="coerce")
+    weights=holdings.set_index("Ticker")["Weight"].to_dict()
+    rows=[]
+    for scenario,part in raw.dropna(subset=["Shock"]).groupby("Scenario"):
+        covered=0.0; total=0.0; details=[]
+        for _,row in part.iterrows():
+            t=row["Ticker"]
+            if t not in weights:
+                continue
+            w=float(weights[t]); shock=float(row["Shock"]); contrib=w*shock
+            covered+=w; total+=contrib
+            details.append({
+                "Scenario":scenario,"Ticker":t,"Weight":w,"SecurityShock":shock,
+                "Contribution":contrib,"Notes":row.get("Notes"),
+                "Method":"explicit local thesis-scenario input",
+            })
+        if not details:
+            continue
+        rows.append({
+            "Scenario":scenario,"PortfolioShock":total,"CoveredWeight":covered,
+            "UncoveredWeight":max(0.0,1-covered),"Method":"explicit local thesis-scenario input",
+        })
+        rows.extend(details)
     return pd.DataFrame(rows)
 
 

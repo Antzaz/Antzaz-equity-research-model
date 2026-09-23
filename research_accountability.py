@@ -384,6 +384,11 @@ def ensure_forecast_accountability(wb, ticker):
     history = _append_forecast_snapshot(ticker, current) if not current.empty else pd.DataFrame()
     actuals = _historical(wb)
     detail, summary = _forecast_accuracy(history, actuals)
+    data_dir = _ticker_dir(ticker)
+    if not detail.empty:
+        detail.to_csv(data_dir / "forecast_accuracy.csv", index=False)
+    if not summary.empty:
+        summary.to_csv(data_dir / "forecast_accuracy_summary.csv", index=False)
 
     ws = _sheet(wb, "Forecast Accountability")
     _title(ws, f"{ticker} — Forecast Accountability", "Point-in-time model forecasts are preserved across builds and compared with actual reported results only after those actuals exist.")
@@ -587,6 +592,10 @@ def ensure_capital_allocation(wb, ticker, info):
             "Repurchases": abs(repurchases.get(year)) if _num(repurchases.get(year)) is not None else None,
             "Dividends": abs(dividends.get(year)) if _num(dividends.get(year)) is not None else None,
             "M&A": abs(acquisitions.get(year)) if _num(acquisitions.get(year)) is not None else None,
+            "RepurchasesLessSBC": (
+                abs(repurchases.get(year)) - (_num(h.get("SBC"), 0.0) or 0.0)
+                if _num(repurchases.get(year)) is not None else None
+            ),
             "DilutedShares": shares,
             "ApproxInvestedCapital": invested,
             "ROIC": nopat / invested if nopat is not None and invested not in (None, 0) else None,
@@ -605,12 +614,16 @@ def ensure_capital_allocation(wb, ticker, info):
     ws = _sheet(wb, "Capital Allocation")
     _title(ws, f"{ticker} — Capital Allocation", "Tracks where cash is deployed and whether incremental operating capital appears to earn above the company's cost of capital. Statement-derived approximations are labeled explicitly.")
     _section(ws, 5, "Capital Allocation History")
-    _header(ws, 6, ["Year", "FCF", "Capex", "Repurchases", "Dividends", "M&A", "Net Share Reduction", "ROIC"])
+    _header(ws, 6, ["Year", "FCF", "Capex", "Repurchases", "SBC", "Repurchases − SBC", "Dividends", "M&A", "Net Share Reduction", "ROIC"])
     for rr, (_, row) in enumerate(df.iterrows(), 7):
-        vals = [int(row["Year"]), row["FCF"], row["Capex"], row["Repurchases"], row["Dividends"], row["M&A"], row.get("NetShareReduction"), row.get("ROIC")]
+        vals = [
+            int(row["Year"]), row["FCF"], row["Capex"], row["Repurchases"], row["SBC"],
+            row["RepurchasesLessSBC"], row["Dividends"], row["M&A"],
+            row.get("NetShareReduction"), row.get("ROIC")
+        ]
         for c, v in enumerate(vals, 1): ws.cell(rr, c, None if pd.isna(v) else v)
-        for c in (2,3,4,5,6): ws.cell(rr, c).number_format = FMT_BN
-        for c in (7,8): ws.cell(rr, c).number_format = FMT_PCT
+        for c in (2,3,4,5,6,7,8): ws.cell(rr, c).number_format = FMT_BN
+        for c in (9,10): ws.cell(rr, c).number_format = FMT_PCT
 
     start = max(18, ws.max_row + 3)
     _section(ws, start, "Capital-Efficiency Summary")
@@ -627,7 +640,7 @@ def ensure_capital_allocation(wb, ticker, info):
 
     status = "PASS" if incremental_roic is not None else "REVIEW"
     _quality_row(wb, "Capital-allocation / incremental ROIC coverage", status, "Incremental ROIC is calculated only when comparable NOPAT and invested-capital history is available; otherwise the sheet remains a cash-allocation audit.")
-    for col, width in {"A":28, "B":18, "C":18, "D":18, "E":18, "F":18, "G":20, "H":16}.items(): ws.column_dimensions[col].width = width
+    for col, width in {"A":16, "B":16, "C":16, "D":18, "E":16, "F":20, "G":16, "H":16, "I":20, "J":16}.items(): ws.column_dimensions[col].width = width
     ws.freeze_panes = "A7"
     return {"history": df, "incremental_roic": incremental_roic, "wacc": wacc}
 

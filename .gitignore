@@ -26,3 +26,6 @@ research_data/*/estimate_history.csv
 research_data/*/sotp_assumptions.csv
 research_data/*/thesis_timeline.csv
 institutional_research/benchmark_sector_history.csv
+institutional_research/fundamental_scenarios.csv
+research_data/*/forecast_accuracy.csv
+research_data/*/forecast_accuracy_summary.csv

@@ -32,6 +32,7 @@ from src.decision_loop import (
     position_sizing_ranges,
     thesis_budget,
     research_fundamental_scenarios,
+    custom_thesis_scenarios,
     expected_return_decomposition,
     transaction_cost_rebalance,
 )
@@ -325,9 +326,15 @@ def main():
         research_bridge,
         max_position=float(constraints_cfg.get("max_position", 0.25)),
         half_width=float(decision_cfg.get("position_range_half_width", 0.025)),
+        liquidity=liquidity,
+        max_days_to_liquidate=float(constraints_cfg.get("max_days_to_liquidate", 5.0)),
     )
     thesis_budget_table = thesis_budget(holdings, research_bridge)
     fundamental_scenarios = research_fundamental_scenarios(holdings, research_bridge)
+    custom_fundamental_scenarios = custom_thesis_scenarios(
+        BASE / "fundamental_scenarios.csv",
+        holdings,
+    )
     expected_return_detail, expected_return_summary = expected_return_decomposition(holdings, research_bridge)
     rebalance_costs = transaction_cost_rebalance(
         optimizer_weights=portfolio_opt.get("weights"),
@@ -472,6 +479,7 @@ def main():
         "position_sizing_ranges": sizing,
         "thesis_budget": thesis_budget_table,
         "fundamental_research_scenarios": fundamental_scenarios,
+        "custom_thesis_scenarios": custom_fundamental_scenarios,
         "expected_return_decomposition": expected_return_detail,
         "expected_return_decomposition_summary": expected_return_summary,
         "rebalance_cost_analysis": rebalance_costs,

@@ -1,0 +1,8 @@
+# Copy to fundamental_scenarios.csv and replace/add explicit thesis shocks.
+# Shock is a decimal return assumption for that company in that named scenario.
+Scenario,Ticker,Shock,Notes
+AI capex boom,GOOGL,0.15,Example only - replace with your research view
+US recession,GOOGL,-0.20,Example only - replace with your research view
+Rates +200bp,GOOGL,-0.12,Example only - replace with your research view
+USD -15%,GOOGL,0.05,Example only - replace with your research view
+AI monetization disappointment,GOOGL,-0.25,Example only - replace with your research view

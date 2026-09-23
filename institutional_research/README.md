@@ -93,11 +93,12 @@ Copy the templates rather than inventing missing history:
 ```powershell
 Copy-Item transaction_ledger_template.csv transaction_ledger.csv
 Copy-Item portfolio_decision_journal_template.csv portfolio_decision_journal.csv
+Copy-Item fundamental_scenarios_template.csv fundamental_scenarios.csv
 # Only when you have point-in-time benchmark sector data:
 Copy-Item benchmark_sector_history_template.csv benchmark_sector_history.csv
 ```
 
-If these files are absent, the related analytics remain REVIEW/unavailable rather than substituting current holdings or current benchmark weights.
+If these files are absent, the related analytics remain REVIEW/unavailable rather than substituting current holdings or current benchmark weights. Position-sizing ranges also apply an explicit liquidity haircut when estimated liquidation days exceed the configured limit, while RiskContributionPct already carries the covariance/correlation effect of the holding inside the current portfolio.
 
 ### Valuation
 - simplified reverse DCF / market-implied FCF growth
