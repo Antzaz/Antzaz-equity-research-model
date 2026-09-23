@@ -16,3 +16,12 @@ institutional_research/portfolio.csv
 institutional_research/outputs/
 .live_cache/
 .equity_live_cache/
+institutional_research/transaction_ledger.csv
+institutional_research/portfolio_decision_journal.csv
+institutional_research/expected_returns.csv
+institutional_research/benchmark_weights.csv
+institutional_research/portfolio_thesis.xlsx
+research_data/*/forecast_history.csv
+research_data/*/estimate_history.csv
+research_data/*/sotp_assumptions.csv
+research_data/*/thesis_timeline.csv

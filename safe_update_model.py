@@ -25,6 +25,7 @@ import update_model
 import advanced_analytics_v2
 import institutional_lenses
 import research_extensions
+import research_accountability
 import score_integration_v2
 import decision_view_v2
 from financial_statement_integrity_v4 import repair_financial_statements_v4 as repair_financial_statements
@@ -292,6 +293,10 @@ def _safe_research_extensions(wb,ticker,info=None):
     except Exception as exc: print(f"Warning: final Data Quality controls failed: {exc}")
     try: ensure_decision_view(wb,ticker)
     except Exception as exc: print(f"Warning: Decision View finalization failed: {exc}")
+    try:
+        research_accountability.apply_research_accountability(wb,ticker,info or {})
+    except Exception as exc:
+        print(f"Warning: research accountability extensions failed: {exc}")
     return result
 update_model.ensure_research_extensions=_safe_research_extensions
 
