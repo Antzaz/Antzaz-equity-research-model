@@ -130,7 +130,7 @@ jobs:
           vh=wb['Valuation History']
           assert 'Valuation' in str(vh['A1'].value), vh['A1'].value
           sotp=wb['SOTP Framework']
-          assert 'SOTP' in str(sotp['A1'].value), sotp['A1'].value
+          assert 'Sum-of-the-Parts' in str(sotp['A1'].value), sotp['A1'].value
           tl=wb['Thesis Timeline']
           assert 'Thesis' in str(tl['A1'].value), tl['A1'].value
           print('Offline accountability sheets validated')
