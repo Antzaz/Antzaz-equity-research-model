@@ -241,8 +241,8 @@ def write_accuracy_csv(root,ticker,summary):
 def ensure_forecast_accountability(wb,ticker,history,actuals,current):
     ws=_new_sheet(wb,"Forecast Accountability")
     _title(ws,f"{ticker} — Forecast Accountability",
-           "Stored forecasts are graded only after the corresponding fiscal-year actual exists. Model and consensus errors remain separate so analyst/model calibration can be compared.",9)
-    _section(ws,5,"Current Forward Forecast Snapshot",9)
+           "Stored forecasts are graded only after the corresponding fiscal-year actual exists. Model and consensus errors remain separate so analyst/model calibration can be compared.",10)
+    _section(ws,5,"Current Forward Forecast Snapshot",10)
     _header(ws,6,["Fiscal Year","Metric","Model Forecast","Consensus","Model vs Consensus","30D Revision","90D Revision","Dispersion","Providers"])
     rr=7
     for row in current.get("estimates",[]):
@@ -255,7 +255,7 @@ def ensure_forecast_accountability(wb,ticker,history,actuals,current):
         for c in (5,6,7,8): ws.cell(rr,c).number_format=FMT_PCT
         rr+=1
     records=forecast_accuracy_records(history,actuals); summary=forecast_accuracy_summary(records)
-    start=max(rr+2,18); _section(ws,start,"Matured Forecast Scorecard",9)
+    start=max(rr+2,18); _section(ws,start,"Matured Forecast Scorecard",10)
     _header(ws,start+1,["Metric","Forecast Type","Forecast Vintages","Mature Fiscal Years","Mean Absolute Error","Median Absolute Error","Bias","Direction Accuracy","Status","Interpretation"])
     r=start+2
     for row in summary:
@@ -272,7 +272,7 @@ def ensure_forecast_accountability(wb,ticker,history,actuals,current):
         vals=[row["CapturedAt"],row["FiscalYear"],row["Metric"],row["ForecastType"],row["Forecast"],row["Actual"],row["Error"],row["AbsoluteError"],row["DirectionCorrect"]]
         for c,v in enumerate(vals,1): ws.cell(i,c,v)
         ws.cell(i,7).number_format=FMT_PCT; ws.cell(i,8).number_format=FMT_PCT
-    for c,w in {"A":24,"B":13,"C":20,"D":16,"E":16,"F":16,"G":16,"H":18,"I":45}.items(): ws.column_dimensions[c].width=w
+    for c,w in {"A":24,"B":13,"C":20,"D":16,"E":16,"F":16,"G":16,"H":18,"I":16,"J":45}.items(): ws.column_dimensions[c].width=w
     ws.freeze_panes="A7"; return {"records":records,"summary":summary}
 
 
