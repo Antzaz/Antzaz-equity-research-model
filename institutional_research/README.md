@@ -69,7 +69,35 @@ This is a first-pass public-data liquidity screen, not an institutional transact
 - analyst forecast-error tracking
 - optional portfolio decision journal template
 
-Static-weight attribution is a research diagnostic. True realized attribution requires transaction history and point-in-time weights.
+Static-weight attribution remains available as a research diagnostic.
+
+## Realized portfolio & decision loop
+
+The offline/private portfolio can now close the loop from research to realized outcomes:
+
+- optional `transaction_ledger.csv` reconstructs daily positions, cash and point-in-time weights;
+- true TWR removes explicit deposits/withdrawals and MWR/XIRR uses dated external cash flows;
+- raw closes plus provider dividends/splits are used for transaction accounting when available;
+- realized security contribution uses actual historical weights rather than today's weights;
+- optional `benchmark_sector_history.csv` unlocks Brinson allocation / selection / interaction attribution without backfilling today's benchmark sector weights;
+- decision-journal entries are evaluated at 3M / 6M / 12M and summarized by decision and conviction;
+- the latest local equity-research workbook for each holding feeds a confidence-shrunk expected return into the optimizer unless a manual expected return overrides it;
+- position-sizing ranges compare capital weight, risk contribution, model expected alpha, downside and research confidence;
+- thesis-budget diagnostics compare capital weight, risk weight and expected-alpha weight;
+- bottom-up portfolio scenarios aggregate company-model bear/base/P90 valuations rather than applying one portfolio beta;
+- expected return is decomposed into fundamental growth, dividend yield, net buyback yield and valuation/other residual;
+- transaction-cost-aware rebalancing compares expected annual benefit with an explicit spread + ADV impact estimate.
+
+Copy the templates rather than inventing missing history:
+
+```powershell
+Copy-Item transaction_ledger_template.csv transaction_ledger.csv
+Copy-Item portfolio_decision_journal_template.csv portfolio_decision_journal.csv
+# Only when you have point-in-time benchmark sector data:
+Copy-Item benchmark_sector_history_template.csv benchmark_sector_history.csv
+```
+
+If these files are absent, the related analytics remain REVIEW/unavailable rather than substituting current holdings or current benchmark weights.
 
 ### Valuation
 - simplified reverse DCF / market-implied FCF growth

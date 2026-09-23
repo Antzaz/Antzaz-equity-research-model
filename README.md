@@ -33,7 +33,13 @@ The generated workbook includes:
 - leadership, workforce and governance research;
 - same-sector alternative-company screening;
 - a 10-lens institutional investment-style comparison;
-- a consolidated research workbench and data-quality controls.
+- a consolidated research workbench and data-quality controls;
+- point-in-time Forecast Accountability with forecast-vs-actual error and bias tracking;
+- Earnings & Revisions history across model builds;
+- Capital Allocation with incremental-ROIC / WACC diagnostics where statement depth supports it;
+- Historical Valuation context from annual fundamentals and year-end market prices;
+- an evidence-gated SOTP Framework driven by explicit local segment multiples;
+- a durable Thesis Timeline for catalysts, falsification events and model snapshots.
 
 ### Cross-sector modeling contract
 
@@ -125,3 +131,8 @@ Each row shows the public investment lens, a transparent fit score, data coverag
 GitHub Actions runs syntax/policy tests plus representative live workbook builds. In addition to issuer-specific tests, the cross-sector contract validates software, semiconductors, banks, insurance, REITs, energy, utilities, pharma, industrials and consumer companies for core-sheet presence, statement-profile suitability, valuation gates, final Data Quality state and broken formula references.
 
 Generated workbooks, agent run reports, private portfolio files, local Streamlit secrets and runtime caches are excluded from Git tracking. Durable public KPI history under `research_data/` is retained for longitudinal thesis monitoring.
+
+
+## Closed-loop portfolio research
+
+The private `institutional_research` layer now supports a transaction-ledger truth layer, TWR/MWR, point-in-time attribution, optional point-in-time Brinson attribution, research-workbook expected-return integration, transparent sizing ranges, thesis-budget diagnostics, company-model portfolio scenarios, expected-return decomposition, transaction-cost-aware rebalancing and decision-journal outcome analytics. These additions are private/offline only and are not exported to the recruiter-safe public showcase.
