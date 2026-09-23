@@ -1,5 +1,3 @@
-# Copy to benchmark_sector_history.csv only when you have point-in-time benchmark sector data.
+# Copy to benchmark_sector_history.csv only when you have real point-in-time benchmark sector data.
 # Return is the sector return for that date/period in decimal form; Weight is the benchmark sector weight at the start of the period.
 Date,Sector,Weight,Return
-2026-01-05,Information Technology,0.30,0.001
-2026-01-05,Financials,0.13,-0.002

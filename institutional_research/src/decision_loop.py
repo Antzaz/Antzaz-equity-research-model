@@ -371,7 +371,10 @@ def brinson_sector_attribution(
     path=Path(benchmark_sector_history_path)
     if not path.exists() or point_in_time_weights.empty:
         return pd.DataFrame()
-    bench=pd.read_csv(path)
+    try:
+        bench=pd.read_csv(path, comment="#")
+    except (pd.errors.ParserError, UnicodeDecodeError, OSError, ValueError):
+        return pd.DataFrame()
     required={"Date","Sector","Weight","Return"}
     if not required.issubset(set(bench.columns)):
         return pd.DataFrame()

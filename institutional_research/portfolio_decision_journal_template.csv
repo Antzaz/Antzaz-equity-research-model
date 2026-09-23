@@ -1,2 +1,2 @@
+# Copy to portfolio_decision_journal.csv and add real decisions below the header.
 DecisionID,Date,Ticker,Decision,OldWeight,NewWeight,ExpectedReturn,Conviction,Sector,ThesisCategory,Catalyst,PrimaryReason,KeyRisk,WhatWouldChangeMyMind,ReviewDate,OutcomeNotes
-D001,2026-08-09,GOOGL,Example - Buy / Add / Trim / Hold,0.00,0.00,,,"Communication Services",AI monetization,Next earnings,Replace with your reason,Replace with the main risk,Define falsification condition,,

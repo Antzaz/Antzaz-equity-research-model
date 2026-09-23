@@ -160,3 +160,37 @@ def test_decision_journal_learning_by_sector_and_category(tmp_path):
     sector=learning[(learning["Dimension"]=="Sector") & (learning["Group"]=="Technology")]
     assert not sector.empty
     assert sector["AverageDecisionAlpha"].iloc[0]>0
+
+
+def test_brinson_loader_accepts_commented_template(tmp_path):
+    from src.decision_loop import brinson_sector_attribution
+    p=tmp_path/"benchmark_sector_history.csv"
+    p.write_text(
+        "# Copy to benchmark_sector_history.csv only when you have point-in-time benchmark sector data.\n"
+        "# Return is the sector return for that date/period.\n"
+        "Date,Sector,Weight,Return\n"
+        "2026-01-05,Technology,0.60,0.02\n"
+        "2026-01-05,Other,0.40,0.01\n",
+        encoding="utf-8",
+    )
+    weights=pd.DataFrame([
+        {"Date":pd.Timestamp("2026-01-02"),"Ticker":"AAA","Weight":0.60},
+        {"Date":pd.Timestamp("2026-01-02"),"Ticker":"BBB","Weight":0.40},
+        {"Date":pd.Timestamp("2026-01-05"),"Ticker":"AAA","Weight":0.60},
+        {"Date":pd.Timestamp("2026-01-05"),"Ticker":"BBB","Weight":0.40},
+    ])
+    prices=pd.DataFrame(
+        {"AAA":[100,102],"BBB":[100,101]},
+        index=pd.to_datetime(["2026-01-02","2026-01-05"]),
+    )
+    out=brinson_sector_attribution(weights,prices,{"AAA":"Technology","BBB":"Other"},p)
+    assert not out.empty
+    assert {"Allocation","Selection","Interaction","TotalActiveContribution"}.issubset(out.columns)
+
+
+def test_brinson_loader_malformed_optional_csv_does_not_crash(tmp_path):
+    from src.decision_loop import brinson_sector_attribution
+    p=tmp_path/"benchmark_sector_history.csv"
+    p.write_text("# instruction line\nDate,Sector,Weight,Return\nbad,row,with,too,many,columns\n",encoding="utf-8")
+    out=brinson_sector_attribution(pd.DataFrame(),pd.DataFrame(),{},p)
+    assert out.empty

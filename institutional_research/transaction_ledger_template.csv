@@ -1,7 +1,5 @@
-# Copy to transaction_ledger.csv and replace the examples with your actual broker/account history.
+# Copy to transaction_ledger.csv and add your ACTUAL broker/account history below the header.
 # DEPOSIT/WITHDRAW are external cash flows. BUY/SELL are internal portfolio transactions.
 # ReferencePrice is optional and is used for implementation-shortfall diagnostics.
 # If you record DIVIDEND/SPLIT manually, provider corporate actions for the same ticker/date are not double-counted.
 Date,Ticker,Action,Shares,Price,Fees,CashFlow,Currency,DecisionID,ReferencePrice,SplitRatio,Notes
-2026-01-02,,DEPOSIT,,,,10000,EUR,FUNDING,,,Example external funding
-2026-01-02,GOOGL,BUY,10,200,1,,USD,D001,198,,Example trade
