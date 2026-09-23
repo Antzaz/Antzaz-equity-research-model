@@ -83,7 +83,12 @@ jobs:
           ticker=os.environ['TICKER']
           path=sorted(Path('updated_models').glob(f'{ticker}_Equity_Research_*.xlsx'))[-1]
           wb=load_workbook(path,data_only=False,read_only=False)
-          required={'Company Data','Historical Financials','Financial Statements','Segment Analysis','Data Quality','Investment Summary','Decision View'}
+          required={
+              'Company Data','Historical Financials','Financial Statements','Segment Analysis',
+              'Data Quality','Investment Summary','Decision View',
+              'Forecast Accountability','Earnings & Revisions','Capital Allocation',
+              'Valuation History','SOTP Framework','Thesis Timeline',
+          }
           assert required.issubset(wb.sheetnames),(ticker,sorted(required-set(wb.sheetnames)))
           policy=workbook_policy(wb,ticker)
 
@@ -94,6 +99,14 @@ jobs:
           assert checks.get('Company classification freshness',('',''))[0] in {'PASS','REVIEW'},(ticker,checks.get('Company classification freshness'))
           assert checks.get('Company product/profile coverage',('',''))[0] in {'PASS','REVIEW'},(ticker,checks.get('Company product/profile coverage'))
           assert checks.get('Segment Analysis public-data coverage',('',''))[0] in {'PASS','REVIEW'},(ticker,checks.get('Segment Analysis public-data coverage'))
+          for offline_check in (
+              'Forecast-accountability history',
+              'Capital-allocation diagnostics',
+              'Historical valuation context',
+              'SOTP framework',
+          ):
+              assert offline_check in checks,(ticker,offline_check,'missing from Data Quality')
+              assert checks[offline_check][0] in {'PASS','REVIEW'},(ticker,offline_check,checks[offline_check])
           if not policy.reverse_dcf_allowed:
               assert checks.get('Valuation-model reliability gate',('',''))[0]=='REVIEW',(ticker,policy.key,checks.get('Valuation-model reliability gate'))
 
