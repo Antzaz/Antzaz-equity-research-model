@@ -290,3 +290,26 @@ The automatic research expected-return bridge decomposes expected return into:
 - confidence shrinkage based on data quality, model score and historical forecast accuracy.
 
 Manual `expected_returns.csv` remains authoritative when you provide it.
+
+
+## Offline investment-decision loop
+
+The private portfolio layer can now close the loop from company research to realized outcomes. These files stay local and are ignored by Git:
+
+```powershell
+Copy-Item transaction_ledger_template.csv transaction_ledger.csv
+Copy-Item portfolio_decision_journal_template.csv portfolio_decision_journal.csv
+Copy-Item fundamental_scenarios_template.csv fundamental_scenarios.csv
+Copy-Item benchmark_sector_history_template.csv benchmark_sector_history.csv
+```
+
+After populating the private files, run:
+
+```powershell
+python run_research.py
+python -m streamlit run app.py
+```
+
+The **Realized Portfolio** page shows point-in-time positions, TWR, MWR/XIRR, realized security contribution and Brinson attribution when historical benchmark-sector data are supplied. The **Research Decision Loop** page links private company workbooks to confidence-adjusted expected returns, position-sizing ranges, capital/risk/expected-alpha budgets, bottom-up scenarios, transaction-cost-aware rebalance gates and matured decision-journal outcomes.
+
+The company workbook itself contains private/offline accountability layers such as **Forecast Accountability**, **Earnings & Revisions**, **Capital Allocation**, **Valuation History**, **SOTP Framework** and **Thesis Timeline**. These are not exported to the public recruiter showcase.

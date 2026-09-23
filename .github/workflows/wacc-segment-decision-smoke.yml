@@ -7,6 +7,7 @@ on:
       - 'agent/**'
     paths:
       - 'safe_update_model.py'
+      - 'research_accountability.py'
       - 'wacc_engine.py'
       - 'costco_segment_analysis.py'
       - 'decision_view_v2.py'
@@ -46,7 +47,12 @@ jobs:
           assert files, 'COST workbook missing'
           path=files[-1]
           wb=load_workbook(path,data_only=False,read_only=False)
-          for name in ('Decision View','Cost of Capital','Investment Summary','Score Audit Trail','Segment Analysis','Three-Case Scenarios','Data Quality'):
+          for name in (
+              'Decision View','Cost of Capital','Investment Summary','Score Audit Trail',
+              'Segment Analysis','Three-Case Scenarios','Data Quality',
+              'Forecast Accountability','Earnings & Revisions','Capital Allocation',
+              'Valuation History','SOTP Framework','Thesis Timeline',
+          ):
               assert name in wb.sheetnames, f'{name} missing'
 
           # WACC must be company-specific and reconcile from components.
@@ -115,6 +121,19 @@ jobs:
           assert checks.get('Company-specific WACC calculation')=='PASS', checks.get('Company-specific WACC calculation')
           assert checks.get('Segment Analysis public-data coverage')=='PASS', checks.get('Segment Analysis public-data coverage')
           assert checks.get('Decision-view score reconciliation')=='PASS', checks.get('Decision-view score reconciliation')
+
+          # Offline accountability layers must be present on the guarded production build.
+          fa=wb['Forecast Accountability']
+          assert 'Forecast Accountability' in str(fa['A1'].value), fa['A1'].value
+          ca=wb['Capital Allocation']
+          assert 'Capital Allocation' in str(ca['A1'].value), ca['A1'].value
+          vh=wb['Valuation History']
+          assert 'Valuation' in str(vh['A1'].value), vh['A1'].value
+          sotp=wb['SOTP Framework']
+          assert 'Sum-of-the-Parts' in str(sotp['A1'].value), sotp['A1'].value
+          tl=wb['Thesis Timeline']
+          assert 'Thesis' in str(tl['A1'].value), tl['A1'].value
+          print('Offline accountability sheets validated')
 
           print('COST WACC/segment/decision smoke PASS')
           print('Workbook:',path)

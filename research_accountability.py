@@ -137,10 +137,15 @@ def _ticker_dir(ticker):
 
 
 def _display_path(path: Path) -> str:
+    """Return a stable human-readable private path without recursing or exposing more than needed."""
+    p=Path(path)
     try:
-        return _display_path(path)
+        return str(p.resolve().relative_to(BASE.resolve()))
     except Exception:
-        return str(path)
+        try:
+            return str(p.relative_to(BASE))
+        except Exception:
+            return str(p)
 
 
 def _historical(wb):
