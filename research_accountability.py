@@ -800,7 +800,7 @@ def ensure_sotp_framework(wb, ticker):
         ("Net debt / (net cash)", net_debt, "Company Data; negative net debt increases equity value"),
         ("SOTP equity value", equity, "Segment total less net debt"),
         ("SOTP value / share", per_share, "Requires diluted shares"),
-        ("Assumption file", str(path.relative_to(BASE)), "Local/private input; ignored by Git"),
+        ("Assumption file", _display_path(path), "Local/private input; ignored by Git"),
     ]
     _header(ws, start + 1, ["Metric", "Value", "Interpretation"])
     for rr, row in enumerate(summary, start + 2):
@@ -852,7 +852,7 @@ def ensure_thesis_timeline(wb, ticker):
             ws.cell(rr, c, row.get(col))
             ws.cell(rr, c).alignment = Alignment(wrap_text=True, vertical="top")
     ws["A39"] = "Local input"
-    ws["B39"] = str(path.relative_to(BASE))
+    ws["B39"] = _display_path(path)
     ws["B39"].font = Font(color="008000")
     _quality_row(wb, "Thesis / catalyst chronology", "PASS" if len(df) >= 1 else "REVIEW", f"{len(df)} durable thesis event(s) stored locally. Manual events should include expected vs actual evidence and thesis impact.")
     for col, width in {"A":15, "B":18, "C":48, "D":34, "E":34, "F":18, "G":50, "H":45}.items(): ws.column_dimensions[col].width = width
