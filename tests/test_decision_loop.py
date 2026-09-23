@@ -23,7 +23,7 @@ def test_realized_portfolio_reconstructs_twr_and_mwr():
         {"Date":"2026-01-02","Ticker":"AAA","Action":"BUY","Shares":10,"Price":100,"Fees":0,"CashFlow":np.nan,"Currency":"USD","DecisionID":"D1","ReferencePrice":100,"SplitRatio":np.nan,"Notes":""},
     ])
     ledger["Date"]=pd.to_datetime(ledger["Date"])
-    prices=pd.DataFrame({"AAA":[100,105,110]},index=pd.to_datetime(["2026-01-02","2026-01-05","2026-01-06"]))
+    prices=pd.DataFrame({"AAA":[100,105,110]},index=pd.to_datetime(["2026-01-02","2026-07-02","2027-01-04"]))
     bench=pd.Series([100,101,102],index=prices.index)
     out=build_realized_portfolio(ledger,prices,bench,{})
     s=out["summary"]
