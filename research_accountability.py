@@ -136,6 +136,13 @@ def _ticker_dir(ticker):
     return path
 
 
+def _display_path(path: Path) -> str:
+    try:
+        return _display_path(path)
+    except Exception:
+        return str(path)
+
+
 def _historical(wb):
     if "Historical Financials" not in wb.sheetnames:
         return pd.DataFrame()
