@@ -29,3 +29,4 @@ institutional_research/benchmark_sector_history.csv
 institutional_research/fundamental_scenarios.csv
 research_data/*/forecast_accuracy.csv
 research_data/*/forecast_accuracy_summary.csv
+research_data/*/forecast_history.json
