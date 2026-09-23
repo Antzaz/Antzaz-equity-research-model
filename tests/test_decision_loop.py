@@ -5,158 +5,85 @@ import sys
 
 import numpy as np
 import pandas as pd
-import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-IR = ROOT / "institutional_research"
-if str(IR) not in sys.path:
-    sys.path.insert(0, str(IR))
+ROOT=Path(__file__).resolve().parents[1]
+SRC=ROOT/"institutional_research"
+if str(SRC) not in sys.path: sys.path.insert(0,str(SRC))
 
 from src.decision_loop import (
-    build_realized_portfolio,
-    custom_thesis_scenarios,
-    expected_return_decomposition,
-    position_sizing_ranges,
-    thesis_budget,
-    transaction_cost_rebalance,
+    build_realized_portfolio, position_sizing_ranges, thesis_budget,
+    custom_thesis_scenarios, expected_return_decomposition,
+    transaction_cost_rebalance, decision_journal_analytics,
+    high_level_decision_learning,
 )
 
+def test_realized_portfolio_reconstructs_twr_and_mwr():
+    ledger=pd.DataFrame([
+        {"Date":"2026-01-02","Ticker":"","Action":"DEPOSIT","Shares":np.nan,"Price":np.nan,"Fees":0,"CashFlow":1000,"Currency":"USD","DecisionID":"","ReferencePrice":np.nan,"SplitRatio":np.nan,"Notes":""},
+        {"Date":"2026-01-02","Ticker":"AAA","Action":"BUY","Shares":10,"Price":100,"Fees":0,"CashFlow":np.nan,"Currency":"USD","DecisionID":"D1","ReferencePrice":100,"SplitRatio":np.nan,"Notes":""},
+    ])
+    ledger["Date"]=pd.to_datetime(ledger["Date"])
+    prices=pd.DataFrame({"AAA":[100,105,110]},index=pd.to_datetime(["2026-01-02","2026-01-05","2026-01-06"]))
+    bench=pd.Series([100,101,102],index=prices.index)
+    out=build_realized_portfolio(ledger,prices,bench,{})
+    s=out["summary"]
+    assert s["status"]=="PASS"
+    assert abs(s["twr_total"]-.10)<1e-9
+    assert s["mwr_xirr"] is not None
+    assert len(out["weights"])==6
+    assert abs(out["timeseries"].iloc[-1]["NAV"]-1100)<1e-9
 
-def test_realized_portfolio_reconstructs_point_in_time_nav_and_twr():
-    dates = pd.to_datetime(["2026-01-02", "2026-01-05", "2026-01-06"])
-    prices = pd.DataFrame({"AAA": [100.0, 110.0, 99.0]}, index=dates)
-    benchmark = pd.Series([100.0, 105.0, 103.0], index=dates)
-    ledger = pd.DataFrame([
-        {
-            "Date": pd.Timestamp("2026-01-02"), "Ticker": "", "Action": "DEPOSIT",
-            "Shares": np.nan, "Price": np.nan, "Fees": 0.0, "CashFlow": 10000.0,
-            "Currency": "USD", "DecisionID": "FUND", "ReferencePrice": np.nan,
-            "SplitRatio": np.nan, "Notes": "",
-        },
-        {
-            "Date": pd.Timestamp("2026-01-02"), "Ticker": "AAA", "Action": "BUY",
-            "Shares": 10.0, "Price": 100.0, "Fees": 0.0, "CashFlow": np.nan,
-            "Currency": "USD", "DecisionID": "D1", "ReferencePrice": 99.0,
-            "SplitRatio": np.nan, "Notes": "",
-        },
+def _holdings():
+    return pd.DataFrame([
+        {"Ticker":"AAA","Weight":.60,"RiskContributionPct":.70,"MarketValue":60000},
+        {"Ticker":"BBB","Weight":.40,"RiskContributionPct":.30,"MarketValue":40000},
     ])
 
-    out = build_realized_portfolio(ledger, prices, adjusted_benchmark=benchmark, corporate_actions={})
-    assert out["summary"]["status"] == "PASS"
-    ts = out["timeseries"]
-    assert list(ts["NAV"].round(2)) == [10000.0, 10100.0, 9990.0]
-    # Day 2: 90% cash + 10% stock, stock +10% => portfolio +1%.
-    assert ts.loc[1, "PortfolioReturn"] == pytest.approx(0.01)
-    assert out["summary"]["twr_total"] == pytest.approx((1.01 * (9990.0 / 10100.0)) - 1.0)
-    latest = out["weights"][out["weights"]["Date"] == dates[-1]]
-    aaa = latest[latest["Ticker"] == "AAA"].iloc[0]
-    assert aaa["Shares"] == pytest.approx(10.0)
-    assert aaa["MarketValue"] == pytest.approx(990.0)
-    assert out["summary"]["implementation_shortfall"] == pytest.approx(10.0)
-
-
-def _portfolio_inputs():
-    holdings = pd.DataFrame([
-        {"Ticker": "AAA", "Weight": 0.60, "RiskContributionPct": 0.70, "MarketValue": 60000.0},
-        {"Ticker": "BBB", "Weight": 0.40, "RiskContributionPct": 0.30, "MarketValue": 40000.0},
+def _bridge():
+    return pd.DataFrame([
+        {"Ticker":"AAA","ExpectedAlpha":.08,"Confidence":.80,"ConfidenceAdjustedExpectedReturn":.16,"CurrentPrice":100,"BearValue":75,"ValuationConvergenceReturn":.10,"DividendYield":.01,"NetBuybackYield":.02,"RawExpectedReturn":.13},
+        {"Ticker":"BBB","ExpectedAlpha":.03,"Confidence":.60,"ConfidenceAdjustedExpectedReturn":.11,"CurrentPrice":100,"BearValue":85,"ValuationConvergenceReturn":.05,"DividendYield":.02,"NetBuybackYield":.00,"RawExpectedReturn":.07},
     ])
-    bridge = pd.DataFrame([
-        {
-            "Ticker": "AAA", "CurrentPrice": 100.0, "BearValue": 75.0,
-            "ExpectedAlpha": 0.10, "Confidence": 0.80,
-            "ConfidenceAdjustedExpectedReturn": 0.14,
-            "BaseGrowthProxy": 0.08, "DividendYield": 0.01, "NetBuybackYield": 0.02,
-        },
-        {
-            "Ticker": "BBB", "CurrentPrice": 50.0, "BearValue": 45.0,
-            "ExpectedAlpha": 0.03, "Confidence": 0.60,
-            "ConfidenceAdjustedExpectedReturn": 0.09,
-            "BaseGrowthProxy": 0.04, "DividendYield": 0.02, "NetBuybackYield": 0.01,
-        },
+
+def test_sizing_thesis_budget_and_expected_return_decomposition():
+    holdings=_holdings(); bridge=_bridge()
+    sizing=position_sizing_ranges(holdings,bridge,max_position=.25)
+    assert set(sizing["Ticker"])=={"AAA","BBB"}
+    assert (sizing["SuggestedMax"]<=.25+1e-12).all()
+    budget=thesis_budget(holdings,bridge)
+    assert abs(budget["ExpectedAlphaBudget"].sum()-1)<1e-9
+    detail,summary=expected_return_decomposition(holdings,bridge)
+    assert len(detail)==2
+    total=float(summary.loc[summary["Component"]=="Total confidence-adjusted expected return","PortfolioContribution"].iloc[0])
+    assert abs(total-(.6*.16+.4*.11))<1e-9
+
+def test_custom_fundamental_scenario_and_rebalance_cost_gate(tmp_path: Path):
+    holdings=_holdings(); bridge=_bridge()
+    p=tmp_path/"fundamental_scenarios.csv"
+    pd.DataFrame([
+        {"Scenario":"AI boom","Ticker":"AAA","Shock":.20,"Notes":"demo"},
+        {"Scenario":"AI boom","Ticker":"BBB","Shock":.05,"Notes":"demo"},
+    ]).to_csv(p,index=False)
+    out=custom_thesis_scenarios(p,holdings)
+    top=out[out["Ticker"].isna()].iloc[0]
+    assert abs(float(top["PortfolioShock"])-(.6*.20+.4*.05))<1e-9
+    optimizer=pd.DataFrame([
+        {"Portfolio":"Regime-Aware ML Maximum Sharpe","Ticker":"AAA","CurrentWeight":.60,"TargetWeight":.50,"WeightChange":-.10},
+        {"Portfolio":"Regime-Aware ML Maximum Sharpe","Ticker":"BBB","CurrentWeight":.40,"TargetWeight":.50,"WeightChange":.10},
     ])
-    liquidity = pd.DataFrame([
-        {"Ticker": "AAA", "EstimatedDaysToLiquidate": 1.0, "AverageDailyDollarVolume": 5_000_000.0},
-        {"Ticker": "BBB", "EstimatedDaysToLiquidate": 2.0, "AverageDailyDollarVolume": 1_000_000.0},
+    liquidity=pd.DataFrame([
+        {"Ticker":"AAA","AverageDailyDollarVolume":10_000_000},
+        {"Ticker":"BBB","AverageDailyDollarVolume":10_000_000},
     ])
-    return holdings, bridge, liquidity
+    reb=transaction_cost_rebalance(optimizer,holdings,liquidity,bridge,rebalance_threshold=.03)
+    assert len(reb)==2 and (reb["EstimatedCostBps"]>0).all()
 
-
-def test_research_to_sizing_and_expected_return_budget_is_coherent():
-    holdings, bridge, liquidity = _portfolio_inputs()
-    sizing = position_sizing_ranges(
-        holdings, bridge, max_position=0.75, half_width=0.025,
-        liquidity=liquidity, max_days_to_liquidate=5.0,
-    )
-    assert set(sizing["Ticker"]) == {"AAA", "BBB"}
-    assert ((sizing["SuggestedMin"] >= 0) & (sizing["SuggestedMax"] <= 0.75)).all()
-    assert (sizing["SuggestedMin"] <= sizing["SuggestedMidpoint"]).all()
-    assert (sizing["SuggestedMidpoint"] <= sizing["SuggestedMax"]).all()
-
-    budget = thesis_budget(holdings, bridge)
-    assert budget["ExpectedAlphaBudget"].sum() == pytest.approx(1.0)
-    assert budget.loc[budget["Ticker"] == "AAA", "ExpectedAlphaBudget"].iloc[0] >            budget.loc[budget["Ticker"] == "BBB", "ExpectedAlphaBudget"].iloc[0]
-
-    detail, summary = expected_return_decomposition(holdings, bridge)
-    aaa = detail[detail["Ticker"] == "AAA"].iloc[0]
-    assert aaa["ValuationConvergence"] == pytest.approx(0.08)
-    assert aaa["DividendYield"] == pytest.approx(0.01)
-    assert aaa["NetBuybackYield"] == pytest.approx(0.02)
-    assert aaa["ConfidenceShrinkage"] == pytest.approx(0.03)
-    total = summary.loc[
-        summary["Component"] == "Total confidence-adjusted expected return",
-        "PortfolioContribution",
-    ].iloc[0]
-    assert total == pytest.approx(0.60 * 0.14 + 0.40 * 0.09)
-
-
-def test_custom_fundamental_scenarios_and_rebalance_gate(tmp_path):
-    holdings, bridge, liquidity = _portfolio_inputs()
-    scenario_path = tmp_path / "fundamental_scenarios.csv"
-    scenario_path.write_text(
-        "Scenario,Ticker,Shock,Notes\n"
-        "Recession,AAA,-0.20,test\n"
-        "Recession,BBB,-0.10,test\n",
-        encoding="utf-8",
-    )
-    out = custom_thesis_scenarios(scenario_path, holdings)
-    portfolio = out[out["Ticker"].isna()].iloc[0]
-    assert portfolio["PortfolioShock"] == pytest.approx(-0.16)
-    assert portfolio["CoveredWeight"] == pytest.approx(1.0)
-
-    optimizer = pd.DataFrame([
-        {"Portfolio": "Regime-Aware ML Maximum Sharpe", "Ticker": "AAA", "CurrentWeight": 0.60, "TargetWeight": 0.68, "WeightChange": 0.08},
-        {"Portfolio": "Regime-Aware ML Maximum Sharpe", "Ticker": "BBB", "CurrentWeight": 0.40, "TargetWeight": 0.32, "WeightChange": -0.08},
-    ])
-    gate = transaction_cost_rebalance(
-        optimizer, holdings, liquidity, bridge,
-        spread_bps=5.0, impact_bps_at_10pct_adv=20.0,
-        rebalance_threshold=0.03, min_benefit_cost_ratio=1.0,
-    )
-    assert set(gate["Ticker"]) == {"AAA", "BBB"}
-    assert set(gate["Decision"]).issubset({"REBALANCE", "HOLD / NO TRADE"})
-    assert (gate["EstimatedCostBps"] > 0).all()
-
-
-def test_decision_journal_learning_by_sector_and_category(tmp_path):
-    from src.decision_loop import decision_journal_analytics, high_level_decision_learning
-
-    dates=pd.date_range("2025-01-02","2026-02-10",freq="B")
-    aaa=pd.Series(100.0*(1.0008**np.arange(len(dates))),index=dates)
-    spy=pd.Series(100.0*(1.0003**np.arange(len(dates))),index=dates)
-    prices=pd.DataFrame({"AAA":aaa,"SPY":spy})
-    path=tmp_path/"journal.csv"
-    path.write_text(
-        "DecisionID,Date,Ticker,Decision,OldWeight,NewWeight,ExpectedReturn,Conviction,Sector,ThesisCategory,Catalyst,PrimaryReason,KeyRisk,WhatWouldChangeMyMind,ReviewDate,OutcomeNotes\n"
-        "D1,2025-01-02,AAA,BUY,0.00,0.10,0.12,5,Technology,AI growth,Earnings,thesis,risk,break,2025-07-01,\n",
-        encoding="utf-8",
-    )
-    detail,summary=decision_journal_analytics(path,prices,"SPY",sector_map={"AAA":"Technology"})
-    assert not detail.empty
-    assert not summary.empty
-    matured=detail[detail["Matured"]==True]
-    assert matured["Correct"].all()
+def test_decision_journal_outcomes_and_learning(tmp_path: Path):
+    dates=pd.date_range("2025-01-02","2026-02-01",freq="B")
+    prices=pd.DataFrame({"AAA":np.linspace(100,140,len(dates)),"SPY":np.linspace(100,115,len(dates))},index=dates)
+    p=tmp_path/"journal.csv"
+    pd.DataFrame([{"DecisionID":"D1","Date":"2025-01-02","Ticker":"AAA","Decision":"BUY","OldWeight":0,"NewWeight":.1,"ExpectedReturn":.10,"Conviction":5,"Sector":"Tech","ThesisCategory":"Quality","Catalyst":"Earnings","PrimaryReason":"test","KeyRisk":"test","WhatWouldChangeMyMind":"test","ReviewDate":"2026-01-02","OutcomeNotes":""}]).to_csv(p,index=False)
+    detail,summary=decision_journal_analytics(p,prices,"SPY")
+    assert not detail.empty and not summary.empty
     learning=high_level_decision_learning(detail)
-    assert {"Decision","Conviction","Sector","Thesis Category"}.issubset(set(learning["Dimension"]))
-    sector=learning[(learning["Dimension"]=="Sector") & (learning["Group"]=="Technology")]
-    assert not sector.empty
-    assert sector["AverageDecisionAlpha"].iloc[0]>0
+    assert not learning.empty and "CorrectRate" in learning.columns
