@@ -137,3 +137,23 @@ def test_sotp_uses_sector_appropriate_direct_value_mode_for_bank(tmp_path):
     ws=wb["SOTP Framework"]
     assert ws["D6"].value=="Analyst Segment Value"
     assert ws["E7"].value=='=IFERROR(D7,"")'
+
+
+def test_same_day_forecast_refresh_replaces_snapshot(tmp_path):
+    from offline_equity_extensions import _load_history
+
+    root=tmp_path/"research_data"
+    wb=_build_workbook()
+    ensure_offline_equity_extensions(
+        wb,"TEST",research_root=root,persist_history=True,
+        captured_at="2026-01-01T08:00:00+00:00"
+    )
+    wb["Expectations & Consensus"]["C7"]=130.0
+    ensure_offline_equity_extensions(
+        wb,"TEST",research_root=root,persist_history=True,
+        captured_at="2026-01-01T16:00:00+00:00"
+    )
+    history=_load_history(root,"TEST")
+    assert len(history["snapshots"])==1
+    revenue=next(x for x in history["snapshots"][0]["estimates"] if x["Metric"]=="Revenue")
+    assert revenue["Consensus"]==130.0

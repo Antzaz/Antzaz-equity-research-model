@@ -595,7 +595,8 @@ def _forecast_track_record(root: str | Path, ticker: str) -> dict:
         return {"score":0.50,"mae":None,"observations":0,"status":"INSUFFICIENT_HISTORY"}
     errors=pd.to_numeric(df["MeanAbsoluteError"],errors="coerce").dropna()
     obs_series=pd.to_numeric(df.get("Observations",pd.Series(1,index=df.index)),errors="coerce").fillna(1)
-    observations=int(obs_series.sum())
+    mature_years=pd.to_numeric(df.get("MatureFiscalYears",obs_series),errors="coerce").fillna(0)
+    observations=int(mature_years.max()) if len(mature_years) else 0
     if errors.empty:
         return {"score":0.50,"mae":None,"observations":observations,"status":"INSUFFICIENT_HISTORY"}
     weights=np.maximum(1,obs_series.reindex(errors.index).to_numpy(float))

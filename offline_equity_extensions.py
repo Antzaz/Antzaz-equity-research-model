@@ -157,9 +157,21 @@ def _snapshot_key(s):
 
 
 def persist_forecast_snapshot(root,ticker,payload):
+    """Persist at most one canonical forecast vintage per calendar day.
+
+    Re-running research/ML on the same day replaces that day's snapshot rather than
+    creating pseudo-independent observations that would inflate forecast-accuracy confidence.
+    """
     data=_load_history(root,ticker); snaps=data["snapshots"]
-    changed=not snaps or _snapshot_key(snaps[-1])!=_snapshot_key(payload)
     path=_history_path(root,ticker); path.parent.mkdir(parents=True,exist_ok=True)
+    capture_day=str(payload.get("captured_at") or "")[:10]
+    if snaps and str(snaps[-1].get("captured_at") or "")[:10]==capture_day:
+        changed=_snapshot_key(snaps[-1])!=_snapshot_key(payload)
+        if changed:
+            snaps[-1]=payload
+            path.write_text(json.dumps(data,indent=2,ensure_ascii=False,default=str)+"\n",encoding="utf-8")
+        return path,changed
+    changed=not snaps or _snapshot_key(snaps[-1])!=_snapshot_key(payload)
     if changed:
         snaps.append(payload)
         path.write_text(json.dumps(data,indent=2,ensure_ascii=False,default=str)+"\n",encoding="utf-8")
@@ -210,6 +222,7 @@ def forecast_accuracy_summary(records):
         if not errs: continue
         out.append({
             "Metric":metric,"ForecastType":kind,"Observations":len(errs),
+            "MatureFiscalYears":len({int(x["FiscalYear"]) for x in rows}),
             "MeanAbsoluteError":sum(errs)/len(errs),"MedianAbsoluteError":statistics.median(errs),
             "Bias":sum(signed)/len(signed),"DirectionAccuracy":sum(dirs)/len(dirs) if dirs else None,
         })
@@ -218,7 +231,7 @@ def forecast_accuracy_summary(records):
 
 def write_accuracy_csv(root,ticker,summary):
     path=Path(root)/str(ticker).upper()/"forecast_accuracy_summary.csv"; path.parent.mkdir(parents=True,exist_ok=True)
-    fields=["Metric","ForecastType","Observations","MeanAbsoluteError","MedianAbsoluteError","Bias","DirectionAccuracy"]
+    fields=["Metric","ForecastType","Observations","MatureFiscalYears","MeanAbsoluteError","MedianAbsoluteError","Bias","DirectionAccuracy"]
     with path.open("w",newline="",encoding="utf-8") as f:
         w=csv.DictWriter(f,fieldnames=fields); w.writeheader()
         for row in summary: w.writerow({k:row.get(k) for k in fields})
@@ -243,14 +256,14 @@ def ensure_forecast_accountability(wb,ticker,history,actuals,current):
         rr+=1
     records=forecast_accuracy_records(history,actuals); summary=forecast_accuracy_summary(records)
     start=max(rr+2,18); _section(ws,start,"Matured Forecast Scorecard",9)
-    _header(ws,start+1,["Metric","Forecast Type","Observations","Mean Absolute Error","Median Absolute Error","Bias","Direction Accuracy","Status","Interpretation"])
+    _header(ws,start+1,["Metric","Forecast Type","Forecast Vintages","Mature Fiscal Years","Mean Absolute Error","Median Absolute Error","Bias","Direction Accuracy","Status","Interpretation"])
     r=start+2
     for row in summary:
-        status="PASS" if row["Observations"]>=3 else "REVIEW"
-        vals=[row["Metric"],row["ForecastType"],row["Observations"],row["MeanAbsoluteError"],row["MedianAbsoluteError"],row["Bias"],row["DirectionAccuracy"],status,"More observations improve calibration confidence."]
+        status="PASS" if row["MatureFiscalYears"]>=3 else "REVIEW"
+        vals=[row["Metric"],row["ForecastType"],row["Observations"],row["MatureFiscalYears"],row["MeanAbsoluteError"],row["MedianAbsoluteError"],row["Bias"],row["DirectionAccuracy"],status,"Confidence should follow unique matured fiscal years, not repeated model runs."]
         for c,v in enumerate(vals,1): ws.cell(r,c,v)
-        for c in (4,5,6,7): ws.cell(r,c).number_format=FMT_PCT
-        ws.cell(r,8).fill=_status_fill(status); ws.cell(r,8).font=Font(bold=True); r+=1
+        for c in (5,6,7,8): ws.cell(r,c).number_format=FMT_PCT
+        ws.cell(r,9).fill=_status_fill(status); ws.cell(r,9).font=Font(bold=True); r+=1
     if not summary:
         ws.cell(r,1,"REVIEW"); ws.cell(r,2,"No matured stored forecast yet. This becomes meaningful after a forecasted fiscal year reports."); ws.cell(r,1).fill=_fill(GOLD)
     d=r+3; _section(ws,d,"Forecast-vs-Actual Detail",9)
