@@ -7,6 +7,7 @@ from pathlib import Path
 import csv
 import json
 import math
+import re
 import statistics
 
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -362,8 +363,17 @@ def ensure_capital_allocation(wb,ticker,info=None):
         if abs(dcap)>1e-9:inc=dn/dcap
     wacc=None
     if "Cost of Capital" in wb.sheetnames:
-        r=_find_contains(wb["Cost of Capital"],["base wacc"])
-        if r:wacc=_num(wb["Cost of Capital"].cell(r,2).value)
+        cws=wb["Cost of Capital"]
+        r=_find_contains(cws,["base wacc"])
+        if r:
+            wacc=_num(cws.cell(r,2).value)
+        if wacc is None:
+            for rr in range(1,cws.max_row+1):
+                if str(cws.cell(rr,1).value or "").strip().lower()=="base":
+                    candidate=_num(cws.cell(rr,2).value)
+                    if candidate is not None and 0<candidate<.50:
+                        wacc=candidate
+                        break
     spread=roic-wacc if roic is not None and wacc is not None else None
     latest=rows[-1] if rows else {}; market_cap=_num(wb["Company Data"]["B10"].value) if "Company Data" in wb.sheetnames else None
     buyback_yield=latest.get("Buybacks")/market_cap if latest.get("Buybacks") is not None and market_cap not in (None,0) else None
@@ -438,27 +448,46 @@ def ensure_valuation_history(wb,ticker):
 
 
 def _segment_rows(wb):
-    if "Segment Analysis" not in wb.sheetnames:return []
+    """Extract the latest issuer-reported segment-revenue column without estimating values."""
+    if "Segment Analysis" not in wb.sheetnames:
+        return []
     ws=wb["Segment Analysis"]; header=None; year_cols={}
-    for r in range(1,min(ws.max_row,45)+1):
+    for r in range(1,min(ws.max_row,50)+1):
+        first=str(ws.cell(r,1).value or "").strip().lower()
         years={}
-        for c in range(2,min(ws.max_column,14)+1):
-            v=_num(ws.cell(r,c).value)
-            if v is not None and 2000<=int(v)<=2100 and float(v)==int(v):years[int(v)]=c
-        if len(years)>=2:
-            header=r;year_cols=years;break
-    if header is None:return []
-    latest=max(year_cols);col=year_cols[latest];out=[];blanks=0
-    for r in range(header+1,min(ws.max_row,header+35)+1):
-        name=str(ws.cell(r,1).value or "").strip()
+        for col in range(2,min(ws.max_column,18)+1):
+            raw=ws.cell(r,col).value
+            value=_num(raw)
+            if value is not None and 2000<=int(value)<=2100 and float(value)==int(value):
+                years[int(value)]=col
+                continue
+            text=str(raw or "").strip()
+            match=re.search(r"\b(20\d{2})\b",text)
+            if match and ("revenue" in text.lower() or first in {"segment","business line / revenue group"}):
+                years[int(match.group(1))]=col
+        # Prefer the reportable-segment table. Business-line tables are only a fallback.
+        if years and ("segment" in first or first=="business line / revenue group"):
+            header=r; year_cols=years
+            if "segment" in first:
+                break
+    if header is None or not year_cols:
+        return []
+    latest=max(year_cols); col=year_cols[latest]; out=[]; blanks=0
+    for rr in range(header+1,min(ws.max_row,header+40)+1):
+        name=str(ws.cell(rr,1).value or "").strip()
         if not name:
             blanks+=1
-            if blanks>=3:break
+            if blanks>=3: break
             continue
         blanks=0
-        if any(x in name.lower() for x in ("source","revenue by business","business line","total","consolidated")):continue
-        revenue=_num(ws.cell(r,col).value)
-        if revenue is not None and revenue>0:out.append({"Segment":name,"FiscalYear":latest,"Revenue":revenue})
+        low=name.lower()
+        if any(x in low for x in ("source & data quality","revenue by business","business line / revenue group","total","consolidated")):
+            if "revenue by business" in low or "source & data quality" in low:
+                break
+            continue
+        revenue=_num(ws.cell(rr,col).value)
+        if revenue is not None and revenue>0:
+            out.append({"Segment":name,"FiscalYear":latest,"Revenue":revenue})
     return out
 
 
