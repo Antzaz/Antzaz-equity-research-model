@@ -11,6 +11,7 @@ on:
       - 'cross_sector_runtime.py'
       - 'sector_score_policy.py'
       - 'commodity_safe_runner.py'
+      - 'offline_equity_extensions.py'
       - 'ai_growth_research.py'
       - 'issuer_statement_profiles.py'
       - 'full_financial_statements_v3.py'

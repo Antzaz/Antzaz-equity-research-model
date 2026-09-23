@@ -11,6 +11,7 @@ import re
 import statistics
 
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from business_model_registry import workbook_policy
 
 NAVY="17365D"; BLUE="2F75B5"; WHITE="FFFFFF"; GREY="666666"
 GREEN="E2F0D9"; GOLD="FFF2CC"; RED="FCE4D6"; INPUT="FFF2CC"
@@ -493,44 +494,65 @@ def _segment_rows(wb):
 
 def ensure_sotp_framework(wb,ticker):
     ws=_new_sheet(wb,"SOTP Framework")
+    policy=workbook_policy(wb,ticker)
+    direct_value_mode=policy.key in {"bank","insurance","capital_markets","reit","insurance_conglomerate"}
+    input_label="Analyst Segment Value" if direct_value_mode else "Analyst EV / Revenue"
+    note=(f"{policy.label}: use a sourced direct segment value and document the sector-appropriate basis."
+          if direct_value_mode else
+          "Operating-company cross-check: reliable segment revenue can be paired with a sourced analyst EV/Revenue assumption.")
     _title(ws,f"{ticker} — Segment / Sum-of-the-Parts Framework",
-           "SOTP is enabled only when reliable numeric segment revenue exists. Segment multiples are analyst inputs and never overwrite the primary DCF automatically.",10)
-    segs=_segment_rows(wb); _section(ws,5,"Segment Valuation",10)
-    _header(ws,6,["Segment","Fiscal Year","Revenue","Analyst EV / Revenue","Implied Segment EV","Notes / Rationale","Input Status","Source Status","Weight","Decision Use"])
+           note+" SOTP never overwrites the primary valuation automatically.",10)
+    segs=_segment_rows(wb)
+    _section(ws,5,"Segment Valuation",10)
+    _header(ws,6,["Segment","Fiscal Year","Reported Segment Revenue / Scale Metric",input_label,
+                  "Implied Segment Value","Notes / Rationale","Input Status","Source Status","Weight","Decision Use"])
     for i,seg in enumerate(segs,7):
-        ws.cell(i,1,seg["Segment"]);ws.cell(i,2,seg["FiscalYear"]);ws.cell(i,3,seg["Revenue"]);ws.cell(i,3).number_format=FMT_BN
-        ws.cell(i,4,None);ws.cell(i,4).fill=_fill(INPUT);ws.cell(i,4).number_format=FMT_MULT
-        ws.cell(i,5,f'=IFERROR(C{i}*D{i},"")');ws.cell(i,5).number_format=FMT_BN
-        ws.cell(i,6,"Enter a defensible segment multiple and source/rationale before using this output.")
-        ws.cell(i,7,"REVIEW — analyst input required");ws.cell(i,7).fill=_fill(GOLD)
-        ws.cell(i,8,"PASS — issuer segment revenue")
-        end=6+len(segs)
-        ws.cell(i,9,f'=IFERROR(E{i}/SUM(E7:E{end}),"")');ws.cell(i,9).number_format=FMT_PCT
-        ws.cell(i,10,"Cross-check only; primary DCF remains authoritative.")
-    start=max(8+len(segs),15);_section(ws,start,"SOTP Bridge",10)
+        ws.cell(i,1,seg["Segment"]); ws.cell(i,2,seg["FiscalYear"]); ws.cell(i,3,seg["Revenue"]); ws.cell(i,3).number_format=FMT_BN
+        ws.cell(i,4,None); ws.cell(i,4).fill=_fill(INPUT); ws.cell(i,4).number_format=FMT_BN if direct_value_mode else FMT_MULT
+        ws.cell(i,5,f'=IFERROR(D{i},"")' if direct_value_mode else f'=IFERROR(C{i}*D{i},"")'); ws.cell(i,5).number_format=FMT_BN
+        ws.cell(i,6,("Enter sourced segment value and state the valuation basis (e.g. P/TBV, NAV, normalized earnings)."
+                     if direct_value_mode else
+                     "Enter a defensible segment EV/Revenue multiple and source/rationale."))
+        ws.cell(i,7,"REVIEW — analyst input required"); ws.cell(i,7).fill=_fill(GOLD)
+        ws.cell(i,8,"PASS — issuer segment scale metric")
+        endrow=6+len(segs)
+        ws.cell(i,9,f'=IFERROR(E{i}/SUM(E7:E{endrow}),"")'); ws.cell(i,9).number_format=FMT_PCT
+        ws.cell(i,10,"Cross-check only; primary valuation remains authoritative.")
+    start=max(8+len(segs),15)
+    _section(ws,start,"SOTP Bridge",10)
     _header(ws,start+1,["Metric","Value","Status","Interpretation","Caveat"])
     net_cash=shares=price=None
     if "Company Data" in wb.sheetnames:
-        d=wb["Company Data"];cash=_num(d["B12"].value);debt=_num(d["B13"].value)
-        net_cash=cash-debt if cash is not None and debt is not None else None;shares=_num(d["B9"].value);price=_num(d["B8"].value)
+        d=wb["Company Data"]; cash=_num(d["B12"].value); debt=_num(d["B13"].value)
+        net_cash=cash-debt if cash is not None and debt is not None else None
+        shares=_num(d["B9"].value); price=_num(d["B8"].value)
     total_formula=f'=SUM(E7:E{6+len(segs)})' if segs else None
+    equity_formula=(f'=IFERROR(B{start+2},"")' if direct_value_mode else f'=IFERROR(B{start+2}+B{start+3},"")') if segs else None
     bridge=[
-        ("Segment Enterprise Value",total_formula,"REVIEW","Sum of segment EVs","Requires analyst-entered segment multiples"),
-        ("Net Cash / (Debt)",net_cash,"PASS" if net_cash is not None else "REVIEW","Balance-sheet bridge","From Company Data"),
-        ("SOTP Equity Value",f'=IFERROR(B{start+2}+B{start+3},"")' if segs else None,"REVIEW","Enterprise value plus net cash","Cross-check only"),
-        ("SOTP Value / Share",f'=IFERROR(B{start+4}/{shares},"")' if segs and shares not in (None,0) else None,"REVIEW","Equity value / diluted shares","Not used in primary valuation"),
+        ("Segment Value Sum",total_formula,"REVIEW","Sum of analyst-supported segment values","Requires explicit analyst inputs"),
+        ("Net Cash / (Debt)",net_cash,"PASS" if net_cash is not None else "REVIEW","Balance-sheet bridge",
+         "For bank/insurance/REIT direct-value mode this is context only and is not automatically added."),
+        ("SOTP Equity Value",equity_formula,"REVIEW","Indicative cross-check","Direct-value mode assumes analyst segment inputs are already equity-value appropriate."),
+        ("SOTP Value / Share",f'=IFERROR(B{start+4}/{shares},"")' if segs and shares not in (None,0) else None,
+         "REVIEW","Indicative value / diluted shares","Not used in primary valuation"),
         ("Current Price",price,"PASS" if price is not None else "REVIEW","Market reference","Current snapshot"),
+        ("Business Model",policy.label,"PASS","Valuation routing",f"Primary valuation: {policy.primary_valuation}"),
     ]
     for idx,(label,value,status,interp,caveat) in enumerate(bridge,start+2):
-        ws.cell(idx,1,label);ws.cell(idx,2,value);ws.cell(idx,2).number_format=FMT_PRICE if "Share" in label or label=="Current Price" else FMT_BN
-        ws.cell(idx,3,status);ws.cell(idx,3).fill=_status_fill(status);ws.cell(idx,3).font=Font(bold=True)
-        ws.cell(idx,4,interp);ws.cell(idx,5,caveat)
+        ws.cell(idx,1,label); ws.cell(idx,2,value)
+        if isinstance(value,(int,float)) or (isinstance(value,str) and value.startswith("=")):
+            ws.cell(idx,2).number_format=FMT_PRICE if "Share" in label or label=="Current Price" else FMT_BN
+        ws.cell(idx,3,status); ws.cell(idx,3).fill=_status_fill(status); ws.cell(idx,3).font=Font(bold=True)
+        ws.cell(idx,4,interp); ws.cell(idx,5,caveat); ws.cell(idx,5).alignment=Alignment(wrap_text=True)
     if not segs:
-        ws["A7"]="REVIEW";ws["B7"]="No reliable numeric segment revenue table was detected. SOTP remains disabled rather than fabricating segment economics."
-        ws["A7"].fill=_fill(GOLD);ws.merge_cells("B7:J8");ws["B7"].alignment=Alignment(wrap_text=True,vertical="top")
-    for c,w in {"A":34,"B":14,"C":16,"D":20,"E":20,"F":58,"G":25,"H":23,"I":14,"J":38}.items():ws.column_dimensions[c].width=w
-    ws.freeze_panes="A7";return {"segments":len(segs),"status":"REVIEW — multiples required" if segs else "REVIEW"}
-
+        ws["A7"]="REVIEW"
+        ws["B7"]="No reliable numeric segment scale table was detected. SOTP remains disabled rather than fabricating segment economics."
+        ws["A7"].fill=_fill(GOLD); ws.merge_cells("B7:J8"); ws["B7"].alignment=Alignment(wrap_text=True,vertical="top")
+    for col,width in {"A":34,"B":14,"C":23,"D":22,"E":20,"F":65,"G":25,"H":25,"I":14,"J":38}.items():
+        ws.column_dimensions[col].width=width
+    ws.freeze_panes="A7"
+    return {"segments":len(segs),"status":"REVIEW — analyst inputs required" if segs else "REVIEW",
+            "policy":policy.key,"direct_value_mode":direct_value_mode}
 
 def _timeline_events(history,current):
     events=[];snaps=history.get("snapshots",[])

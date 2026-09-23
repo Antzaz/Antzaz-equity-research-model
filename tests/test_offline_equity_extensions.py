@@ -122,3 +122,18 @@ def test_first_forecast_run_does_not_claim_accuracy(tmp_path):
     assert out["matured_forecast_records"]==0
     ws=wb["Forecast Accountability"]
     assert any("No matured stored forecast" in str(ws.cell(r,2).value or "") for r in range(1,ws.max_row+1))
+
+
+def test_sotp_uses_sector_appropriate_direct_value_mode_for_bank(tmp_path):
+    wb=_build_workbook()
+    wb["Company Data"]["B6"]="Financial Services"
+    wb["Company Data"]["B7"]="Banks - Diversified"
+    out=ensure_offline_equity_extensions(
+        wb,"TESTBANK",research_root=tmp_path/"r",persist_history=False,
+        captured_at="2026-01-01T00:00:00+00:00"
+    )
+    assert out["sotp"]["policy"]=="bank"
+    assert out["sotp"]["direct_value_mode"] is True
+    ws=wb["SOTP Framework"]
+    assert ws["D6"].value=="Analyst Segment Value"
+    assert ws["E7"].value=='=IFERROR(D7,"")'
