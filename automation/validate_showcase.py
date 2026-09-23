@@ -36,6 +36,13 @@ FORBIDDEN_KEYS = {
     "privatenotes",
     "credentials",
     "decisionid",
+    "referenceprice",
+    "splitratio",
+    "cashflow",
+    "transactionnotional",
+    "implementationshortfall",
+    "mwrxirr",
+    "fees",
 }
 
 
