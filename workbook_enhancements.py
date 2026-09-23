@@ -23,6 +23,7 @@ import yfinance as yf
 from bs4 import BeautifulSoup
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
+from offline_equity_extensions import ensure_offline_equity_extensions
 
 try:
     from pypdf import PdfReader
@@ -573,6 +574,17 @@ def apply_workbook_enhancements(workbook_path: str | Path, ticker: str) -> dict:
     path = Path(workbook_path)
     wb = load_workbook(path)
     info = _safe_info(ticker)
+    try:
+        offline_extension_result = ensure_offline_equity_extensions(
+            wb,
+            ticker,
+            info,
+            research_root=Path(__file__).resolve().parent / "research_data",
+            persist_history=not bool(__import__("os").getenv("GITHUB_ACTIONS")),
+        )
+    except Exception as exc:
+        offline_extension_result = {"error": str(exc)}
+        print(f"Warning: offline equity extensions failed during workbook polish: {exc}")
     evidence = _collect_public_evidence(wb, ticker, info)
     _patch_leadership_sheet(wb, evidence)
     _patch_summary_sheets(wb, evidence)
@@ -588,6 +600,7 @@ def apply_workbook_enhancements(workbook_path: str | Path, ticker: str) -> dict:
         "annual_filing": evidence.get("annual_filing"),
         "officer_count": evidence.get("officer_count"),
         "hidden_support_sheets": [name for name in BACKEND_SHEETS_TO_HIDE if name in wb.sheetnames],
+        "offline_equity_extensions": offline_extension_result,
         "enhanced_at": datetime.now().astimezone().isoformat(timespec="seconds"),
     }
 

@@ -40,6 +40,7 @@ from commodity_valuation_v3 import (
 from deal_analysis import ensure_deal_analysis
 from google_segment_analysis import ensure_google_segment_analysis
 from institutional_overrides import install_institutional_overrides
+from offline_equity_extensions import ensure_offline_equity_extensions
 from peer_quality_overrides import install_peer_quality_overrides
 from source_audit_v2 import apply_source_audit_fixes
 
@@ -102,6 +103,22 @@ def _research_extensions_with_deals(wb, ticker, info=None):
         ensure_deal_analysis(wb, ticker, info or {})
     except Exception as exc:
         print(f"Warning: Deals & Transactions refresh failed: {exc}")
+    try:
+        offline = ensure_offline_equity_extensions(
+            wb,
+            ticker,
+            info or {},
+            research_root=safe.BASE / "research_data",
+            persist_history=not bool(__import__("os").getenv("GITHUB_ACTIONS")),
+        )
+        print(
+            "Offline accountability extensions: "
+            f"forecast_snapshots={offline.get('forecast_snapshots',0)}, "
+            f"matured={offline.get('matured_forecast_records',0)}, "
+            f"sotp_segments={(offline.get('sotp') or {}).get('segments',0)}"
+        )
+    except Exception as exc:
+        print(f"Warning: offline research accountability extensions failed: {exc}")
     try:
         audit=apply_source_audit_fixes(wb,ticker)
         print(
