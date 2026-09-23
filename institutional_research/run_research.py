@@ -348,10 +348,12 @@ def main():
         min_benefit_cost_ratio=float(decision_cfg.get("minimum_benefit_cost_ratio", 1.5)),
     )
 
+    decision_sector_map = {t: (info.get(t) or {}).get("sector") or "Unknown" for t in historical_tickers}
     decision_detail, decision_summary = decision_journal_analytics(
         BASE / "portfolio_decision_journal.csv",
         prices,
         benchmark,
+        sector_map=decision_sector_map,
     )
     decision_learning = high_level_decision_learning(decision_detail)
 

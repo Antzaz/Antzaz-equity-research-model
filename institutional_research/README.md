@@ -263,3 +263,30 @@ Commercial or academic-quality sources may include CRSP/Compustat, FactSet, Bloo
 - allocation / selection / interaction attribution
 - realized turnover and implementation shortfall
 - decision-journal outcome analytics
+
+
+### Research → portfolio decision loop
+
+The offline dashboard now exposes two additional private pages:
+
+- **Realized Portfolio** — reconstructs point-in-time positions from `transaction_ledger.csv`, calculates TWR/MWR, realized security contribution and optional Brinson allocation/selection/interaction.
+- **Research Decision Loop** — links the newest local company workbooks to expected returns, confidence, position-size ranges, capital/risk/alpha budgets, fundamental scenarios, transaction-cost-aware rebalance gates and decision-journal learning.
+
+Optional private inputs:
+
+```powershell
+Copy-Item transaction_ledger_template.csv transaction_ledger.csv
+Copy-Item portfolio_decision_journal_template.csv portfolio_decision_journal.csv
+Copy-Item fundamental_scenarios_template.csv fundamental_scenarios.csv
+Copy-Item benchmark_sector_history_template.csv benchmark_sector_history.csv
+```
+
+The decision journal supports optional `Sector`, `ThesisCategory` and `Catalyst` fields. Mature 3M/6M/12M outcomes are summarized by decision type, conviction bucket, sector and thesis category.
+
+The automatic research expected-return bridge decomposes expected return into:
+- annualized convergence from current price toward the latest local base fair value;
+- dividend yield;
+- bounded net share-reduction / buyback yield from the Capital Allocation sheet;
+- confidence shrinkage based on data quality, model score and historical forecast accuracy.
+
+Manual `expected_returns.csv` remains authoritative when you provide it.

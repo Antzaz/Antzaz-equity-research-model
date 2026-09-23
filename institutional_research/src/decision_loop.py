@@ -434,7 +434,12 @@ def _price_on_or_before(series: pd.Series, date):
     return (s.index[pos],float(s.iloc[pos])) if pos>=0 else (None,None)
 
 
-def decision_journal_analytics(path: str | Path, adjusted_prices: pd.DataFrame, benchmark: str) -> tuple[pd.DataFrame,pd.DataFrame]:
+def decision_journal_analytics(
+    path: str | Path,
+    adjusted_prices: pd.DataFrame,
+    benchmark: str,
+    sector_map: dict[str,str] | None=None,
+) -> tuple[pd.DataFrame,pd.DataFrame]:
     path=Path(path)
     if not path.exists() or adjusted_prices is None or adjusted_prices.empty:
         return pd.DataFrame(),pd.DataFrame()
@@ -443,8 +448,10 @@ def decision_journal_analytics(path: str | Path, adjusted_prices: pd.DataFrame, 
         return pd.DataFrame(),pd.DataFrame()
     df["Date"]=pd.to_datetime(df["Date"],errors="coerce")
     df["Ticker"]=df["Ticker"].astype(str).str.upper().str.strip()
-    df["Decision"]=df["Decision"].astype(str).str.upper()
+    df["Decision"]=df["Decision"].astype(str).str.upper().str.strip()
+    sector_map=sector_map or {}
     rows=[]
+    horizon_days={"3M":91,"6M":182,"12M":365}
     for _,r in df.dropna(subset=["Date"]).iterrows():
         t=r["Ticker"]
         if t not in adjusted_prices.columns or benchmark not in adjusted_prices.columns:
@@ -453,7 +460,7 @@ def decision_journal_analytics(path: str | Path, adjusted_prices: pd.DataFrame, 
         _,start_b=_price_on_or_after(adjusted_prices[benchmark],r["Date"])
         if start_date is None or start_px in (None,0) or start_b in (None,0):
             continue
-        for label,days in [("3M",91),("6M",182),("12M",365)]:
+        for label,days in horizon_days.items():
             end_target=start_date+pd.Timedelta(days=days)
             end_date,end_px=_price_on_or_before(adjusted_prices[t],end_target)
             _,end_b=_price_on_or_before(adjusted_prices[benchmark],end_target)
@@ -461,31 +468,38 @@ def decision_journal_analytics(path: str | Path, adjusted_prices: pd.DataFrame, 
             if end_px is None or end_b is None:
                 continue
             security=end_px/start_px-1; benchret=end_b/start_b-1; active=security-benchret
-            decision=str(r["Decision"])
-            sellish=("SELL" in decision or "TRIM" in decision)
+            decision=str(r["Decision"]); sellish=("SELL" in decision or "TRIM" in decision)
             decision_alpha=-active if sellish else active
+            expected=_num(r.get("ExpectedReturn"))
+            expected_horizon=(1+expected)**(days/365.25)-1 if expected is not None and expected>-1 else None
+            expected_error=security-expected_horizon if expected_horizon is not None else None
+            sector=str(r.get("Sector") or sector_map.get(t) or "Unknown")
+            thesis_category=str(r.get("ThesisCategory") or "Unclassified")
             rows.append({
-                "Date":r["Date"],"Ticker":t,"Decision":r["Decision"],"Horizon":label,
+                "Date":r["Date"],"Ticker":t,"Sector":sector,"ThesisCategory":thesis_category,
+                "Catalyst":r.get("Catalyst"),"Decision":r["Decision"],"Horizon":label,
                 "StartDate":start_date,"EndDate":end_date,"Matured":bool(matured),
                 "SecurityReturn":security,"BenchmarkReturn":benchret,"ActiveReturn":active,
                 "DecisionAlpha":decision_alpha,"Correct":bool(decision_alpha>0) if matured else None,
-                "ExpectedReturn":_num(r.get("ExpectedReturn")),
+                "ExpectedReturn":expected,"ExpectedHorizonReturn":expected_horizon,
+                "ExpectedReturnError":expected_error,
                 "Conviction":_num(r.get("Conviction")),
+                "OldWeight":_num(r.get("OldWeight")),"NewWeight":_num(r.get("NewWeight")),
+                "SizingChange":(_num(r.get("NewWeight"))-_num(r.get("OldWeight"))) if _num(r.get("NewWeight")) is not None and _num(r.get("OldWeight")) is not None else None,
                 "PrimaryReason":r.get("PrimaryReason"),"KeyRisk":r.get("KeyRisk"),
                 "WhatWouldChangeMyMind":r.get("WhatWouldChangeMyMind"),
+                "ReviewDate":r.get("ReviewDate"),"OutcomeNotes":r.get("OutcomeNotes"),
             })
     detail=pd.DataFrame(rows)
     matured=detail[detail["Matured"]==True].copy() if not detail.empty else pd.DataFrame()
     if matured.empty:
         return detail,pd.DataFrame()
     summary=matured.groupby(["Horizon","Decision"],as_index=False).agg(
-        Decisions=("Correct","count"),
-        CorrectRate=("Correct","mean"),
-        AverageDecisionAlpha=("DecisionAlpha","mean"),
-        MedianDecisionAlpha=("DecisionAlpha","median"),
+        Decisions=("Correct","count"),CorrectRate=("Correct","mean"),
+        AverageDecisionAlpha=("DecisionAlpha","mean"),MedianDecisionAlpha=("DecisionAlpha","median"),
+        AverageExpectedReturnError=("ExpectedReturnError","mean"),
     )
     return detail,summary
-
 
 def _find_row(ws, labels):
     if isinstance(labels,str): labels=[labels]
@@ -562,6 +576,10 @@ def _workbook_research_snapshot(path: Path):
         ws=wb["Capital Allocation"]
         r=_find_row(ws,"Latest net share reduction")
         if r: out["NetBuybackYield"]=_num(ws.cell(r,2).value)
+    if "Valuation History" in wb.sheetnames:
+        ws=wb["Valuation History"]
+        r=_find_row(ws,"Forward P/E")
+        if r: out["ValuationHistoryPercentile"]=_num(ws.cell(r,4).value)
     return out
 
 
@@ -593,18 +611,31 @@ def research_expected_return_bridge(
     benchmark_expected_return: float=0.08,
     convergence_years: float=3.0,
 ) -> pd.DataFrame:
+    """Translate company research into confidence-shrunk portfolio expected returns.
+
+    The bridge keeps the components explicit:
+    - valuation convergence from current price toward base fair value;
+    - dividend yield;
+    - net share reduction / buyback yield when the Capital Allocation sheet supports it.
+
+    Forecast track record, workbook data quality and the current investment score determine
+    confidence. Manual expected_returns.csv can still override these automatic inputs later.
+    """
     rows=[]
+    horizon=max(.25,float(convergence_years))
     for ticker in tickers:
         path=find_latest_workbook(root,ticker)
         snap=_workbook_research_snapshot(path) if path else {}
-        price=_num(snap.get("Price"))
-        base=_num(snap.get("BaseValue"))
-        bear=_num(snap.get("BearValue"))
-        bull=_num(snap.get("BullValue"))
+        price=_num(snap.get("Price")); base=_num(snap.get("BaseValue"))
+        bear=_num(snap.get("BearValue")); bull=_num(snap.get("BullValue"))
         dividend=_num((info.get(ticker) or {}).get("dividendYield"),0.0) or 0.0
-        raw=None
+        net_buyback=_num(snap.get("NetBuybackYield"),0.0) or 0.0
+        # Bound share-count changes so one noisy implied-shares observation cannot dominate.
+        net_buyback=max(-.05,min(.05,net_buyback))
+        convergence=None
         if price and base and price>0 and base>0:
-            raw=(base/price)**(1/max(.25,float(convergence_years)))-1+dividend
+            convergence=(base/price)**(1/horizon)-1
+        raw=(convergence+dividend+net_buyback) if convergence is not None else None
         quality=_num(snap.get("DataQualityScore"),0.45)
         if _num(snap.get("DataQualityFail"),0)>0:
             quality=min(quality,0.25)
@@ -616,13 +647,15 @@ def research_expected_return_bridge(
         rows.append({
             "Ticker":ticker,"Workbook":str(path) if path else None,
             "CurrentPrice":price,"BearValue":bear,"BaseValue":base,"BullValue":bull,
+            "ValuationConvergenceYears":horizon,
+            "ValuationConvergenceReturn":convergence,
+            "DividendYield":dividend,"NetBuybackYield":net_buyback,
             "RawExpectedReturn":raw,"Confidence":confidence if raw is not None else 0.0,
             "ConfidenceAdjustedExpectedReturn":adjusted,
             "ExpectedAlpha":adjusted-benchmark_expected_return if adjusted is not None else None,
-            "DividendYield":dividend,
             "BaseGrowthProxy":_num(snap.get("BaseFCFCAGRProxy")),
-            "NetBuybackYield":_num(snap.get("NetBuybackYield")),
             "BaseGrowthProxySource":snap.get("BaseGrowthProxySource"),
+            "ValuationHistoryPercentile":_num(snap.get("ValuationHistoryPercentile")),
             "DataQualityScore":quality if path else None,
             "ForecastAccuracyScore":track["score"] if path else None,
             "ForecastMAE":track["mae"] if path else None,
@@ -630,9 +663,9 @@ def research_expected_return_bridge(
             "ForecastTrackRecordStatus":track["status"] if path else "NO_WORKBOOK",
             "ModelView":snap.get("ModelView"),
             "SourceStatus":"PASS" if path and raw is not None else "REVIEW",
+            "Method":"annualized base-value convergence + dividend yield + bounded net share-reduction yield, then confidence shrinkage",
         })
     return pd.DataFrame(rows)
-
 
 def position_sizing_ranges(
     holdings: pd.DataFrame,
@@ -838,15 +871,34 @@ def transaction_cost_rebalance(
 
 
 def high_level_decision_learning(decision_detail: pd.DataFrame) -> pd.DataFrame:
+    """Summarize where the analyst's decisions have actually added or lost value."""
     if decision_detail is None or decision_detail.empty:
         return pd.DataFrame()
     x=decision_detail[decision_detail["Matured"]==True].copy()
     if x.empty:
         return pd.DataFrame()
-    x["ConvictionBucket"]=pd.cut(pd.to_numeric(x["Conviction"],errors="coerce"),bins=[-np.inf,2.5,3.5,np.inf],labels=["Low","Medium","High"])
-    return x.groupby(["Horizon","ConvictionBucket"],observed=True,as_index=False).agg(
-        Decisions=("DecisionAlpha","count"),
-        CorrectRate=("Correct","mean"),
-        AverageDecisionAlpha=("DecisionAlpha","mean"),
-        MedianDecisionAlpha=("DecisionAlpha","median"),
+    x["ConvictionBucket"]=pd.cut(
+        pd.to_numeric(x["Conviction"],errors="coerce"),
+        bins=[-np.inf,2.5,3.5,np.inf],labels=["Low","Medium","High"],
     )
+    frames=[]
+    dimensions=[
+        ("Decision","Decision"),
+        ("Conviction","ConvictionBucket"),
+        ("Sector","Sector"),
+        ("Thesis Category","ThesisCategory"),
+    ]
+    for label,col in dimensions:
+        if col not in x.columns or x[col].dropna().empty:
+            continue
+        g=x.groupby(["Horizon",col],observed=True,dropna=False).agg(
+            Decisions=("DecisionAlpha","count"),
+            CorrectRate=("Correct","mean"),
+            AverageDecisionAlpha=("DecisionAlpha","mean"),
+            MedianDecisionAlpha=("DecisionAlpha","median"),
+            AverageExpectedReturnError=("ExpectedReturnError","mean"),
+        ).reset_index().rename(columns={col:"Group"})
+        g.insert(0,"Dimension",label)
+        frames.append(g)
+    return pd.concat(frames,ignore_index=True) if frames else pd.DataFrame()
+

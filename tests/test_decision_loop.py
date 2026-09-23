@@ -132,3 +132,28 @@ def test_custom_fundamental_scenarios_and_rebalance_gate(tmp_path):
     assert set(gate["Ticker"]) == {"AAA", "BBB"}
     assert set(gate["Decision"]).issubset({"REBALANCE", "HOLD / NO TRADE"})
     assert (gate["EstimatedCostBps"] > 0).all()
+
+
+def test_decision_journal_learning_by_sector_and_category(tmp_path):
+    from src.decision_loop import decision_journal_analytics, high_level_decision_learning
+
+    dates=pd.date_range("2025-01-02","2026-02-10",freq="B")
+    aaa=pd.Series(100.0*(1.0008**np.arange(len(dates))),index=dates)
+    spy=pd.Series(100.0*(1.0003**np.arange(len(dates))),index=dates)
+    prices=pd.DataFrame({"AAA":aaa,"SPY":spy})
+    path=tmp_path/"journal.csv"
+    path.write_text(
+        "DecisionID,Date,Ticker,Decision,OldWeight,NewWeight,ExpectedReturn,Conviction,Sector,ThesisCategory,Catalyst,PrimaryReason,KeyRisk,WhatWouldChangeMyMind,ReviewDate,OutcomeNotes\n"
+        "D1,2025-01-02,AAA,BUY,0.00,0.10,0.12,5,Technology,AI growth,Earnings,thesis,risk,break,2025-07-01,\n",
+        encoding="utf-8",
+    )
+    detail,summary=decision_journal_analytics(path,prices,"SPY",sector_map={"AAA":"Technology"})
+    assert not detail.empty
+    assert not summary.empty
+    matured=detail[detail["Matured"]==True]
+    assert matured["Correct"].all()
+    learning=high_level_decision_learning(detail)
+    assert {"Decision","Conviction","Sector","Thesis Category"}.issubset(set(learning["Dimension"]))
+    sector=learning[(learning["Dimension"]=="Sector") & (learning["Group"]=="Technology")]
+    assert not sector.empty
+    assert sector["AverageDecisionAlpha"].iloc[0]>0
