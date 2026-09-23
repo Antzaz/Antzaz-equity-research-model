@@ -161,3 +161,25 @@ Copy-Item benchmark_sector_history_template.csv benchmark_sector_history.csv
 ```
 
 Company-model accountability sheets are generated through the guarded research runner; do not publish the local research_data histories or private transaction/journal files.
+
+
+## Windows desktop Research Hub
+
+One-time installation:
+
+    cd "C:\Users\Antza\Documents\Antzaz-equity-research-model"
+    git pull
+    .\install_desktop_app.bat
+
+This creates **Antzaz Research Hub** on the Windows Desktop. From then on, double-click the shortcut instead of typing launch commands.
+
+The launcher automatically:
+
+- switches to `main` and runs `git pull --ff-only origin main`;
+- updates Python dependencies only when requirements files change;
+- refreshes and opens the private Portfolio Dashboard;
+- runs Full Equity Research for an entered ticker;
+- runs Workbook Only for an entered ticker;
+- opens the latest generated workbook after equity research completes.
+
+Private/offline files remain local and gitignored.
