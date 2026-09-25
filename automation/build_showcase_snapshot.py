@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "institutional_research" / "outputs" / "latest"
 THESIS_PATH = ROOT / "institutional_research" / "portfolio_thesis_public.json"
 DEST = ROOT / "showcase" / "data" / "portfolio_snapshot.json"
+ML_DB = ROOT / "ml_data" / "ml_history.sqlite"
 
 
 def _read_csv(name: str) -> list[dict]:
@@ -355,6 +356,85 @@ def _reverse_dcf(holding_rows: list[dict]) -> list[dict]:
     return out
 
 
+
+def _public_ml_results(holding_rows: list[dict]) -> dict:
+    """Export recruiter-safe latest ML predictions without exposing ticker symbols."""
+    if not ML_DB.exists() or ML_DB.stat().st_size == 0:
+        return {"status": "UNAVAILABLE", "as_of": None, "predictions": [], "registry": []}
+    try:
+        import sqlite3
+        con = sqlite3.connect(ML_DB)
+        con.row_factory = sqlite3.Row
+        lookup = _lookup_by_ticker(holding_rows)
+        model_names = [
+            "Expected 1M Excess Return",
+            "Expected 3M Excess Return",
+            "Expected 6M Excess Return",
+            "Expected 12M Excess Return",
+            "Consensus / Earnings Surprise",
+        ]
+        placeholders = ",".join("?" for _ in model_names)
+        rows = con.execute(
+            f"""SELECT p.symbol,p.model,p.as_of,p.horizon_days,p.prediction,p.confidence,
+                       p.model_version,p.created_at
+                FROM predictions p
+                JOIN (
+                    SELECT symbol,model,MAX(id) AS max_id
+                    FROM predictions
+                    WHERE model IN ({placeholders})
+                    GROUP BY symbol,model
+                ) x ON p.id=x.max_id
+                ORDER BY p.symbol,p.horizon_days,p.model""",
+            tuple(model_names),
+        ).fetchall()
+        predictions = []
+        for row in rows:
+            holding = lookup.get(str(row["symbol"] or "").upper())
+            if not holding:
+                continue
+            pred = _float(row["prediction"])
+            if pred is None:
+                try:
+                    raw = json.loads(row["prediction"])
+                    pred = _float(raw.get("prediction") if isinstance(raw, dict) else raw)
+                except Exception:
+                    pred = None
+            if pred is None:
+                continue
+            predictions.append({
+                "company": holding["company"],
+                "model": row["model"],
+                "as_of": row["as_of"],
+                "horizon_days": row["horizon_days"],
+                "prediction": pred,
+                "confidence": row["confidence"],
+                "model_version": row["model_version"],
+            })
+
+        registry = []
+        try:
+            for row in con.execute(
+                """SELECT model,status,matured_predictions,mae,baseline_mae,skill_vs_baseline,
+                          directional_accuracy,information_coefficient,calibration_score,
+                          drift_ratio,influence_multiplier,last_evaluated
+                   FROM model_registry ORDER BY model"""
+            ).fetchall():
+                registry.append({k: row[k] for k in row.keys() if row[k] is not None})
+        except Exception:
+            registry = []
+        con.close()
+        as_of = max((str(x.get("as_of") or "") for x in predictions), default=None)
+        return {
+            "status": "LIVE" if predictions else "AWAITING_PREDICTIONS",
+            "as_of": as_of,
+            "benchmark": "SPY",
+            "prediction_definition": "Expected excess return versus benchmark; positive values imply modeled outperformance.",
+            "predictions": predictions,
+            "registry": registry,
+        }
+    except Exception as exc:
+        return {"status": "UNAVAILABLE", "as_of": None, "predictions": [], "registry": [], "note": type(exc).__name__}
+
 def _timeseries() -> list[dict]:
     rows = _read_csv("portfolio_timeseries")
     out = []
@@ -427,6 +507,7 @@ def main():
         "historical_stress": _historical_stress(),
         "rolling_risk": _rolling_risk(),
         "reverse_dcf": _reverse_dcf(holding_rows),
+        "ml": _public_ml_results(holding_rows),
         "timeseries": timeseries,
     }
     DEST.parent.mkdir(parents=True, exist_ok=True)
