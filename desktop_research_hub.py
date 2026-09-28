@@ -19,8 +19,10 @@ import webbrowser
 
 ROOT = Path(__file__).resolve().parent
 IR = ROOT / "institutional_research"
+MACRO_ROOT = ROOT.parent / "Antzaz-global-macro-lab"
 STATE_FILE = ROOT / ".desktop_launcher_state.json"
 PORTFOLIO_URL = "http://localhost:8501"
+MACRO_URL = "http://localhost:8502"
 TICKER_RE = re.compile(r"^[A-Z0-9.\-]{1,10}$")
 
 
@@ -54,7 +56,7 @@ def requirement_fingerprint(paths: list[Path] | None = None) -> str:
     return h.hexdigest()
 
 
-def portfolio_server_running(host: str = "127.0.0.1", port: int = 8501) -> bool:
+def server_running(host: str = "127.0.0.1", port: int = 8501) -> bool:
     try:
         with socket.create_connection((host, port), timeout=0.35):
             return True
@@ -75,8 +77,8 @@ class ResearchHub(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Antzaz Research Hub")
-        self.geometry("920x680")
-        self.minsize(780, 580)
+        self.geometry("1180x700")
+        self.minsize(980, 600)
         self.configure(bg="#0b1220")
         self.log_queue: queue.Queue[str] = queue.Queue()
         self.busy = False
@@ -130,8 +132,21 @@ class ResearchHub(tk.Tk):
         b.pack(fill="x")
         self.task_buttons.append(b)
 
+        macro = ttk.Frame(top, style="Card.TFrame", padding=18)
+        macro.pack(side="left", fill="both", expand=True, padx=8)
+        ttk.Label(macro, text="Bonds & Macro", style="CardTitle.TLabel").pack(anchor="w")
+        ttk.Label(
+            macro,
+            text="Open the Global Macro & Multi-Asset Lab for rates, bonds, credit, regimes and asset behavior.",
+            style="CardText.TLabel",
+            wraplength=300,
+        ).pack(anchor="w", pady=(4, 12))
+        bm = ttk.Button(macro, text="Open Bonds & Macro Dashboard", style="Accent.TButton", command=self.open_macro)
+        bm.pack(fill="x")
+        self.task_buttons.append(bm)
+
         equity = ttk.Frame(top, style="Card.TFrame", padding=18)
-        equity.pack(side="left", fill="both", expand=True, padx=(8, 0))
+        equity.pack(side="left", fill="both", expand=True, padx=(0, 0))
         ttk.Label(equity, text="Equity Research", style="CardTitle.TLabel").pack(anchor="w")
         ttk.Label(
             equity,
@@ -310,7 +325,7 @@ class ResearchHub(tk.Tk):
         py = python_executable()
         self.emit("Refreshing institutional portfolio research…")
         self._run([py, "run_research.py"], cwd=IR)
-        if portfolio_server_running():
+        if server_running(port=8501):
             self.emit("Portfolio server is already running. Opening it in your browser.")
             webbrowser.open(PORTFOLIO_URL)
             return
@@ -323,13 +338,51 @@ class ResearchHub(tk.Tk):
             stderr=subprocess.DEVNULL,
         )
         for _ in range(40):
-            if portfolio_server_running():
+            if server_running(port=8501):
                 webbrowser.open(PORTFOLIO_URL)
                 self.emit("Portfolio dashboard opened.")
                 return
             time.sleep(0.25)
         webbrowser.open(PORTFOLIO_URL)
         self.emit("Streamlit was started. The browser may need a few more seconds to connect.")
+
+    def open_macro(self):
+        self.run_task("Opening Bonds & Macro dashboard", self._macro_task)
+
+    def _macro_task(self):
+        if not MACRO_ROOT.exists():
+            raise RuntimeError(
+                f"Global Macro project not found at {MACRO_ROOT}. "
+                "Expected C:\\Users\\Antza\\Documents\\Antzaz-global-macro-lab."
+            )
+        self.emit("Updating Global Macro & Multi-Asset Lab from GitHub…")
+        self._run(["git", "pull", "--ff-only", "origin", "main"], cwd=MACRO_ROOT)
+        macro_python = MACRO_ROOT / ".venv" / "Scripts" / "python.exe"
+        if not macro_python.exists():
+            raise RuntimeError(
+                "The macro lab virtual environment is missing. Run setup_windows.bat in "
+                f"{MACRO_ROOT} once, then open it from Research Hub again."
+            )
+        if server_running(port=8502):
+            self.emit("Bonds & Macro server is already running. Opening it in your browser.")
+            webbrowser.open(MACRO_URL)
+            return
+        self.emit("Starting Bonds & Macro dashboard on port 8502…")
+        subprocess.Popen(
+            [str(macro_python), "-m", "streamlit", "run", "app.py", "--server.port", "8502"],
+            cwd=str(MACRO_ROOT),
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        for _ in range(40):
+            if server_running(port=8502):
+                webbrowser.open(MACRO_URL)
+                self.emit("Bonds & Macro dashboard opened.")
+                return
+            time.sleep(0.25)
+        webbrowser.open(MACRO_URL)
+        self.emit("Bonds & Macro dashboard was started. The browser may need a few more seconds to connect.")
 
     def _get_ticker(self) -> str:
         return normalize_ticker(self.ticker.get())
