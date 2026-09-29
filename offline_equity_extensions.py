@@ -351,8 +351,14 @@ def ensure_capital_allocation(wb,ticker,info=None):
         a=actuals[year]; buy=_fs_value(wb,["repurchase","common stock repurchased","payments for repurchase"],year)
         div=_fs_value(wb,["dividends paid","payments of dividends","common dividends"],year)
         acq=_fs_value(wb,["acquisition","business acquisitions"],year); debtpay=_fs_value(wb,["repayments of debt","debt repayments"],year)
-        debt=_fs_value(wb,["total debt"],year); equity=_fs_value(wb,["total equity","stockholders' equity"],year)
-        cash=_fs_value(wb,["cash and cash equivalents","cash & cash equivalents"],year)
+        debt=_fs_value(wb,["total debt"],year)
+        if debt is None:
+            short_debt=_fs_value(wb,["short-term debt","current portion long-term debt"],year)
+            long_debt=_fs_value(wb,["long-term debt"],year)
+            if short_debt is not None or long_debt is not None:
+                debt=(short_debt or 0)+(long_debt or 0)
+        equity=_fs_value(wb,["total equity","stockholders' equity"],year)
+        cash=_fs_value(wb,["cash + short-term investments","cash and cash equivalents","cash & cash equivalents"],year)
         invested=debt+equity-cash if None not in (debt,equity,cash) else None
         nopat=a["OperatingIncome"]*(1-tax) if a["OperatingIncome"] is not None else None
         prev=actuals.get(year-1,{}).get("Shares"); shares=a.get("Shares")
