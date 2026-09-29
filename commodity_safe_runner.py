@@ -39,6 +39,7 @@ from commodity_valuation_v3 import (
 )
 from deal_analysis import ensure_deal_analysis
 from google_segment_analysis import ensure_google_segment_analysis
+from nvidia_segment_analysis import ensure_nvidia_segment_analysis
 from institutional_overrides import install_institutional_overrides
 from offline_equity_extensions import ensure_offline_equity_extensions
 from peer_quality_overrides import install_peer_quality_overrides
@@ -82,8 +83,11 @@ def _commodity_aware_decision(wb, ticker):
 
 
 def _verified_segment_with_alphabet(wb, ticker):
-    if str(ticker or "").upper().strip() in {"GOOG", "GOOGL"}:
+    symbol=str(ticker or "").upper().strip()
+    if symbol in {"GOOG", "GOOGL"}:
         return ensure_google_segment_analysis(wb, ticker)
+    if symbol=="NVDA":
+        return ensure_nvidia_segment_analysis(wb, ticker)
     return _ORIGINAL_VERIFIED_SEGMENT(wb, ticker)
 
 
