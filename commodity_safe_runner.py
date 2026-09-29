@@ -43,6 +43,7 @@ from institutional_overrides import install_institutional_overrides
 from offline_equity_extensions import ensure_offline_equity_extensions
 from peer_quality_overrides import install_peer_quality_overrides
 from source_audit_v2 import apply_source_audit_fixes
+from supply_chain_intelligence import ensure_supply_chain_intelligence
 
 
 # Install business-model routing after safe_update_model has installed its guarded wrappers, but
@@ -119,6 +120,15 @@ def _research_extensions_with_deals(wb, ticker, info=None):
         )
     except Exception as exc:
         print(f"Warning: offline research accountability extensions failed: {exc}")
+    try:
+        supply = ensure_supply_chain_intelligence(wb, ticker, info or {})
+        print(
+            "Supply-chain intelligence: "
+            f"status={supply.get('status')}, suppliers={supply.get('supplier_count',0)}, "
+            f"high_dependency={supply.get('high_dependency_count',0)}"
+        )
+    except Exception as exc:
+        print(f"Warning: supply-chain intelligence refresh failed: {exc}")
     try:
         audit=apply_source_audit_fixes(wb,ticker)
         print(
