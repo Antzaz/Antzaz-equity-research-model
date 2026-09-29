@@ -50,7 +50,7 @@ SPECIALIST_MARKET_SOURCES={
     "smartphone_shipments":{"provider":"IDC","url":"https://www.idc.com/promo/smartphone-market-share/","purpose":"Worldwide smartphone shipment share","source_type":"Specialist industry research"},
     "semiconductor_market":{"provider":"WSTS","url":"https://www.wsts.org/","purpose":"Semiconductor market size and industry-cycle context","source_type":"Industry association / market statistics"},
     "pc_shipments":{"provider":"IDC","url":"https://www.idc.com/promo/pc-market-share/","purpose":"PC shipment and vendor-share context","source_type":"Specialist industry research"},
-    "mobile_os":{"provider":"StatCounter","url":"https://gs.statcounter.com/os-market-share/mobile/worldwide","purpose":"Mobile operating-system usage-share context","source_type":"Specialist web-usage measurement"},
+    "nvidia_aib_share":{"provider":"Jon Peddie Research","url":"https://www.jonpeddie.com/news/q126-pc-graphics-add-in-board-shipments-decreased-0-6-from-last-quarter-to-12-million-units-with-a-cagr-to-2029-of-3-3/","purpose":"NVIDIA discrete PC graphics add-in-board market-position context","source_type":"Specialist industry research"},\n    "mobile_os":{"provider":"StatCounter","url":"https://gs.statcounter.com/os-market-share/mobile/worldwide","purpose":"Mobile operating-system usage-share context","source_type":"Specialist web-usage measurement"},
 }
 
 PROFESSIONAL_FRAMEWORK_SOURCES={
