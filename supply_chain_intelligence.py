@@ -105,6 +105,30 @@ def _latest_regulatory_filing(ticker):
         return None
     return None
 
+def _secondary_supplier_records(ticker,max_suppliers):
+    """Secondary SEC-derived discovery fallback when primary extraction is sparse."""
+    symbol=str(ticker or "").upper().strip()
+    if not symbol: return []
+    url=f"https://www.sampoq.com/stock/{symbol}/supply-chain"
+    text=_fetch_text(url,timeout=10)
+    if not text: return []
+    match=re.search(r"\bSuppliers\s+\d+\s+(.*?)(?=\bNames it as a customer\b|\bNames it as a supplier\b|\bCustomers\s+\d+|\bData as of\b|$)",text,re.I|re.S)
+    if not match: return []
+    section=_clean(match.group(1)); rows=[]; seen=set()
+    for hit in NAME_PATTERN.finditer(section):
+        name=_clean(hit.group(1)).strip(" ,.;:")
+        norm=re.sub(r"[^a-z0-9]+"," ",name.lower()).strip()
+        if not norm or norm in seen or name in STOP_NAMES or len(name)>100: continue
+        seen.add(norm)
+        rows.append(SupplierEvidence(
+            name,"Supplier / input provider","Secondary — SEC-derived",40.0,30.0,
+            "No specific risk flag in secondary evidence",
+            "Named by a public supply-chain dataset derived from SEC filings; verify the primary filing for investment-critical use.",
+            url,"SEC-derived supply-chain aggregator"
+        ))
+        if len(rows)>=max_suppliers: break
+    return rows
+
 def _candidate_sources(wb,ticker,info):
     sources=[]
     direct=_latest_regulatory_filing(ticker)
@@ -200,6 +224,10 @@ def collect_supplier_evidence(wb,ticker,info=None,max_suppliers=MAX_SUPPLIERS):
                 prior=found.get(norm)
                 if prior is None or (rec.importance_score+rec.dependency_score)>(prior.importance_score+prior.dependency_score):
                     found[norm]=rec
+    if len(found)<max_suppliers:
+        for rec in _secondary_supplier_records(ticker,max_suppliers-len(found)):
+            norm=re.sub(r"[^a-z0-9]+"," ",rec.supplier.lower()).strip()
+            if norm and norm not in found: found[norm]=rec
     rows=sorted(found.values(),key=lambda x:(x.importance_score+x.dependency_score,x.dependency_score),reverse=True)
     return rows[:max_suppliers]
 
