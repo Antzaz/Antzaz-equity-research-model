@@ -237,9 +237,23 @@ def _narrative_segment_candidates(raw_html):
             vals=_parse_list(m.group(1))
             if len(vals)>len(best): best=vals
     return best
+def _valid_segment_name(name):
+    s=_clean_text(name).replace("&amp;","&").strip(" ,.;:-")
+    low=s.lower()
+    if not s or len(s)>80 or len(s)<2: return None
+    if any(b==low or low.startswith(b+" ") for b in BLACKLIST): return None
+    # Reject broken HTML/narrative fragments and sentence-like candidates.
+    if any(x in low for x in (" and our "," revenue was "," consists of "," includes ","segment revenues")): return None
+    if s.count('"')%2 or s.count("(")!=s.count(")"): return None
+    words=s.split()
+    if len(words)>8: return None
+    return s
+
 def _discover_segments(tables,raw_html=None):
     table_names=_table_segment_candidates(tables); narrative=_narrative_segment_candidates(raw_html); out=[]; keys=set()
     for name in narrative+table_names:
+        name=_valid_segment_name(name)
+        if not name: continue
         key=_label_key(name)
         if key and key not in keys: out.append(name); keys.add(key)
     return out[:15]
@@ -312,7 +326,7 @@ def _write_sheet(wb,ticker,years,segments,business,url,auto_status):
 def ensure_segment_analysis_v2(wb,ticker,headers):
     ticker=ticker.upper(); raw_html,url=_latest_10k_html(ticker,headers); tables,parser_status=_tables(raw_html); cfg=CONFIGS.get(ticker,{})
     configured=list(cfg.get("segments",[])); discovered=_discover_segments(tables,raw_html); seg_labels=[]; seg_keys=set()
-    for lab in configured+discovered:
+    for lab in discovered+configured:
         key=_label_key(lab)
         if lab and key and key not in seg_keys: seg_labels.append(lab); seg_keys.add(key)
     bus_labels=list(dict.fromkeys(cfg.get("business",[]))); labels=list(dict.fromkeys(seg_labels+bus_labels)); extracted=_extract_known(tables,labels) if labels else {}; total=_company_revenue(wb); raw_rev={}
