@@ -36,25 +36,7 @@ NAME_PATTERN=re.compile(
     rf"\b([A-Z][A-Za-z0-9&.'\-]+(?:\s+[A-Z][A-Za-z0-9&.'\-]+){{0,5}}(?:\s+{LEGAL_SUFFIX})?)\b"
 )
 
-NVDA_CURRENT_SUPPLIERS = [
-    ("Taiwan Semiconductor Manufacturing Company Limited", "Wafer foundry", 100, 90, "Geopolitical / geographic; Capacity / availability"),
-    ("Samsung Electronics Co., Ltd.", "Wafer foundry; memory", 90, 75, "Capacity / availability"),
-    ("SK Hynix Inc.", "Memory", 85, 70, "Capacity / availability"),
-    ("Micron Technology, Inc.", "Memory", 85, 70, "Capacity / availability"),
-    ("Hon Hai Precision Industry Co., Ltd.", "Assembly, testing and packaging", 75, 55, "Geopolitical / geographic"),
-    ("Wistron Corporation", "Assembly, testing and packaging", 70, 50, "Geopolitical / geographic"),
-    ("Fabrinet", "Assembly, testing and packaging", 65, 45, "Geopolitical / geographic"),
-]
-NVDA_2026_10K = "https://www.sec.gov/Archives/edgar/data/1045810/000104581026000021/nvda-20260125.htm"
-
-def _verified_ticker_records(ticker):
-    if str(ticker or "").upper() != "NVDA": return []
-    evidence = ("NVIDIA's fiscal 2026 Form 10-K explicitly names foundries, memory suppliers, "
-                "and independent subcontractors / contract manufacturers in its manufacturing section.")
-    return [SupplierEvidence(name, relationship, "Disclosed", importance, dependency, risk, evidence,
-                             NVDA_2026_10K, "Regulatory / annual filing", "FY2026")
-            for name,relationship,importance,dependency,risk in NVDA_CURRENT_SUPPLIERS]
-\nSTOP_NAMES={
+STOP_NAMES={
     "United States","Annual Report","Form 10","Form 10 K","Item","Company","Group",
     "Supply Chain","Risk Factors","December","January","February","March","April","May",
     "June","July","August","September","October","November",
@@ -104,8 +86,29 @@ def _filing_sources(wb):
             out.append((urls[0],"Regulatory / annual filing"))
     return list(dict.fromkeys(out))[:3]
 
+def _latest_regulatory_filing(ticker):
+    """Resolve the latest annual filing directly from SEC for any US-listed issuer."""
+    try:
+        headers={"User-Agent":"Antzaz Equity Research educational research contact research@example.com"}
+        tickers=requests.get("https://www.sec.gov/files/company_tickers.json",headers=headers,timeout=20).json()
+        cik=None
+        for item in tickers.values():
+            if str(item.get("ticker","")).upper()==str(ticker or "").upper():
+                cik=str(item["cik_str"]).zfill(10); break
+        if not cik: return None
+        subs=requests.get(f"https://data.sec.gov/submissions/CIK{cik}.json",headers=headers,timeout=20).json()
+        recent=subs.get("filings",{}).get("recent",{})
+        for form,acc,doc in zip(recent.get("form",[]),recent.get("accessionNumber",[]),recent.get("primaryDocument",[])):
+            if form in {"10-K","20-F","40-F"}:
+                return f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc.replace('-','')}/{doc}"
+    except Exception:
+        return None
+    return None
+
 def _candidate_sources(wb,ticker,info):
     sources=[]
+    direct=_latest_regulatory_filing(ticker)
+    if direct: sources.append((direct,"Regulatory / annual filing"))
     for url,kind in _filing_sources(wb): sources.append((url,kind))
     issuer=issuer_sources(ticker,(info or {}).get("website"))
     for key in ("annual_reports","filings","investor","financial_reports","company_website"):
