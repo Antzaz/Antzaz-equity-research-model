@@ -44,7 +44,10 @@ BUSINESS_MARKET_SHARE_SNAPSHOTS = {
     "AMZN": [
         {"metric": "Cloud infrastructure services share", "share": 0.28, "period": "1Q26", "basis": "Worldwide cloud infrastructure services", "method": "Estimated by specialist research", "source_key": "cloud_infrastructure"},
     ],
-    "NVDA": [\n        {"metric": "Discrete PC graphics AIB shipment share", "share": 0.90, "period": "1Q26", "basis": "Worldwide PC graphics add-in-board unit shipments", "method": "Specialist market research", "source_key": "nvidia_aib_share"},\n    ],\n    "AAPL": [
+    "NVDA": [
+        {"metric": "Discrete PC graphics AIB shipment share", "share": 0.90, "period": "1Q26", "basis": "Worldwide PC graphics add-in-board unit shipments", "method": "Specialist market research", "source_key": "nvidia_aib_share"},
+    ],
+    "AAPL": [
         {"metric": "Worldwide smartphone shipment share", "share": 0.210, "period": "1Q26", "basis": "Worldwide smartphone unit shipments", "method": "Estimated by specialist research", "source_key": "smartphone_shipments"},
     ],
 }
