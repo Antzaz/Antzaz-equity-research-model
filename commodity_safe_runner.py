@@ -44,6 +44,7 @@ from offline_equity_extensions import ensure_offline_equity_extensions
 from peer_quality_overrides import install_peer_quality_overrides
 from source_audit_v2 import apply_source_audit_fixes
 from supply_chain_intelligence import ensure_supply_chain_intelligence
+from numeric_coverage_audit import ensure_numeric_coverage_audit
 
 
 # Install business-model routing after safe_update_model has installed its guarded wrappers, but
@@ -130,6 +131,11 @@ def _research_extensions_with_deals(wb, ticker, info=None):
         )
     except Exception as exc:
         print(f"Warning: supply-chain intelligence refresh failed: {exc}")
+    try:
+        coverage=ensure_numeric_coverage_audit(wb,ticker)
+        print(f"Numeric coverage audit: blanks={coverage.get('blank_numeric_fields',0)}, review={coverage.get('review_fields',0)}")
+    except Exception as exc:
+        print(f"Warning: numeric coverage audit failed: {exc}")
     try:
         audit=apply_source_audit_fixes(wb,ticker)
         print(
