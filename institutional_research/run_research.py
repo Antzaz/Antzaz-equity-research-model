@@ -19,6 +19,7 @@ from src.stress import beta_stress_test
 from src.forecast_tracker import analyze_forecasts
 from src.export import write_outputs
 from src.portfolio_optimization import build_portfolio_optimization
+from src.short_horizon_rf import write_portfolio_rf_forecast
 from src.decision_loop import (
     load_transaction_ledger,
     ledger_tickers,
@@ -75,6 +76,16 @@ def main():
     portfolio = load_portfolio(portfolio_path)
     benchmark = config["benchmark"].upper()
     tickers = portfolio["Ticker"].tolist()
+    print("Updating next-week Random Forest portfolio price paths...")
+    try:
+        rf_forecast, rf_meta = write_portfolio_rf_forecast(
+            tickers, BASE / "outputs", period=config.get("history_period", "5y"), horizon=5
+        )
+        print(f"Random Forest forecasts: status={rf_meta.get('status')}, rows={len(rf_forecast)}")
+    except Exception as exc:
+        rf_forecast=pd.DataFrame()
+        rf_meta={"status":"ERROR","error":repr(exc)}
+        print(f"WARNING Random Forest forecast unavailable: {exc}")
 
     # Optional transaction history can contain securities no longer held. Include them in
     # market history so realized performance is not survivorship-truncated to today's holdings.
@@ -407,6 +418,7 @@ def main():
     )
 
     summaries = {
+        "random_forest_next_week": rf_meta,
         "portfolio": {
             **risk_summary,
             **relative,
@@ -452,6 +464,7 @@ def main():
 
     tables = {
         "holdings_analysis": holdings,
+        "random_forest_next_week": rf_forecast,
         "portfolio_timeseries": port_series,
         "correlation_matrix": correlation_out,
         "covariance_matrix": covariance_out,
