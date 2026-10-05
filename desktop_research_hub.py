@@ -64,6 +64,11 @@ def server_running(host: str = "127.0.0.1", port: int = 8501) -> bool:
         return False
 
 
+def open_dashboard_once(url: str) -> None:
+    """Open one browser tab; Streamlit itself must not auto-open another."""
+    webbrowser.open_new_tab(url)
+
+
 def latest_workbook(ticker: str) -> Path | None:
     candidates = sorted(
         (ROOT / "updated_models").glob(f"{ticker}_Equity_Research_*.xlsx"),
@@ -327,11 +332,11 @@ class ResearchHub(tk.Tk):
         self._run([py, "run_research.py"], cwd=IR)
         if server_running(port=8501):
             self.emit("Portfolio server is already running. Opening it in your browser.")
-            webbrowser.open(PORTFOLIO_URL)
+            open_dashboard_once(PORTFOLIO_URL)
             return
         self.emit("Starting Streamlit portfolio dashboard…")
         subprocess.Popen(
-            [py, "-m", "streamlit", "run", "app.py"],
+            [py, "-m", "streamlit", "run", "app.py", "--server.headless", "true", "--browser.gatherUsageStats", "false"],
             cwd=str(IR),
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             stdout=subprocess.DEVNULL,
@@ -365,11 +370,11 @@ class ResearchHub(tk.Tk):
             )
         if server_running(port=8502):
             self.emit("Bonds & Macro server is already running. Opening it in your browser.")
-            webbrowser.open(MACRO_URL)
+            open_dashboard_once(MACRO_URL)
             return
         self.emit("Starting Bonds & Macro dashboard on port 8502…")
         subprocess.Popen(
-            [str(macro_python), "-m", "streamlit", "run", "app.py", "--server.port", "8502"],
+            [str(macro_python), "-m", "streamlit", "run", "app.py", "--server.port", "8502", "--server.headless", "true", "--browser.gatherUsageStats", "false"],
             cwd=str(MACRO_ROOT),
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             stdout=subprocess.DEVNULL,
