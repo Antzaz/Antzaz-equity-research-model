@@ -368,6 +368,11 @@ class ResearchHub(tk.Tk):
                 "The macro lab virtual environment is missing. Run setup_windows.bat in "
                 f"{MACRO_ROOT} once, then open it from Research Hub again."
             )
+        self.emit("Checking macro data health…")
+        try:
+            self._run([str(macro_python), "-m", "global_macro_lab.cli", "status"], cwd=MACRO_ROOT)
+        except Exception as exc:
+            self.emit(f"Macro status check warning: {exc}")
         if server_running(port=8502):
             self.emit("Bonds & Macro server is already running. Opening it in your browser.")
             open_dashboard_once(MACRO_URL)
