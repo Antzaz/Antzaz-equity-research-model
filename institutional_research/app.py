@@ -21,6 +21,7 @@ PAGES = [
     ("pages/4_AI_Optionality.py", "AI Optionality & Uncertainty", "🤖", False),
     ("pages/5_Realized_Portfolio.py", "Realized Portfolio", "🧾", False),
     ("pages/6_Decision_Loop.py", "Research Decision Loop", "🔁", False),
+    ("pages/7_RF_Weekly_Forecast.py", "Next-Week RF Forecast", "🌲", False),
 ]
 
 missing = [relative for relative, *_ in PAGES if not (BASE / relative).exists()]
