@@ -21,6 +21,17 @@ if not defined PYTHON (
 set "PYTHONW=%PYTHON:python.exe=pythonw.exe%"
 if not exist "%PYTHONW%" set "PYTHONW=%PYTHON%"
 
+set "MACRO_DIR=%~dp0..\Antzaz-global-macro-lab"
+if not exist "%MACRO_DIR%\global_macro_lab\cli.py" (
+  echo Cloning local Macro and Bonds project...
+  git clone https://github.com/Antzaz/Antzaz-global-macro-lab.git "%MACRO_DIR%"
+  if errorlevel 1 echo WARNING: Macro clone failed. You can retry this installer later.
+)
+if exist "%MACRO_DIR%\setup_windows.bat" if not exist "%MACRO_DIR%\.venv\Scripts\python.exe" (
+  echo Installing Macro and Bonds Python environment...
+  call "%MACRO_DIR%\setup_windows.bat"
+)
+
 set "SCRIPT=%CD%\desktop_research_hub.py"
 
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
@@ -43,5 +54,6 @@ if errorlevel 1 (
 echo.
 echo Installed: Antzaz Research Hub
 echo A shortcut has been created on your Windows Desktop.
-echo Double-click it from now on. It will update from GitHub automatically.
+echo Double-click it from now on. Use Sync All Data ^(Online^) to refresh research and macro data.
+echo Local dashboards open using saved data without requiring a GitHub connection.
 pause
