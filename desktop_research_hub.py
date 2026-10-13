@@ -332,6 +332,7 @@ class ResearchHub(tk.Tk):
             macro_python = MACRO_ROOT / ".venv" / "Scripts" / "python.exe"
             if macro_python.exists():
                 self._run([str(macro_python), "-m", "global_macro_lab.cli", "refresh"], cwd=MACRO_ROOT)
+                self._run([str(macro_python), "-m", "global_macro_lab.cli", "build"], cwd=MACRO_ROOT)
             else:
                 self.emit("Macro environment missing: run setup_windows.bat.")
         else:
