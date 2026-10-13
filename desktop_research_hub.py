@@ -91,7 +91,7 @@ class ResearchHub(tk.Tk):
         self._build_styles()
         self._build_ui()
         self.after(100, self._drain_log_queue)
-        self.after(250, lambda: self.run_task("Checking GitHub for the latest version", self._update_only))
+        self.emit("Offline-first: use Sync All Data when connected; dashboards can open from saved local data.")
 
     def _build_styles(self):
         style = ttk.Style(self)
@@ -117,7 +117,7 @@ class ResearchHub(tk.Tk):
         ttk.Label(outer, text="Antzaz Research Hub", style="Title.TLabel").pack(anchor="w")
         ttk.Label(
             outer,
-            text="Private/offline launcher • automatically updates from GitHub main before running research",
+            text="Local research hub • open saved dashboards offline • sync code and data on demand",
             style="Sub.TLabel",
         ).pack(anchor="w", pady=(2, 16))
 
@@ -186,6 +186,9 @@ class ResearchHub(tk.Tk):
         ttk.Button(controls, text="Open Project Folder", style="Normal.TButton", command=lambda: os.startfile(ROOT)).pack(side="left", padx=8)
         ttk.Button(controls, text="Open Latest Workbook", style="Normal.TButton", command=self.open_latest_workbook).pack(side="left")
         self.task_buttons.append(refresh)
+        sync = ttk.Button(controls, text="Sync All Data (Online)", style="Accent.TButton", command=lambda: self.run_task("Syncing local projects and data", self._sync_all))
+        sync.pack(side="left", padx=8)
+        self.task_buttons.append(sync)
 
         status_card = ttk.Frame(outer, style="Card.TFrame", padding=12)
         status_card.pack(fill="x", pady=(0, 10))
@@ -322,14 +325,27 @@ class ResearchHub(tk.Tk):
     def _update_only(self):
         self._prepare_latest()
 
+    def _sync_all(self):
+        self._prepare_latest()
+        if MACRO_ROOT.exists():
+            self._run(["git", "pull", "--ff-only", "origin", "main"], cwd=MACRO_ROOT)
+            macro_python = MACRO_ROOT / ".venv" / "Scripts" / "python.exe"
+            if macro_python.exists():
+                self._run([str(macro_python), "-m", "global_macro_lab.cli", "refresh"], cwd=MACRO_ROOT)
+            else:
+                self.emit("Macro environment missing: run setup_windows.bat.")
+        else:
+            self.emit("Macro repository missing: run install_desktop_app.bat.")
+        self.emit("Refreshing portfolio research and saved forecast data…")
+        self._run([python_executable(), "run_research.py"], cwd=IR)
+        self.emit("Sync complete. Local data is available for offline dashboard use.")
+
     def open_portfolio(self):
         self.run_task("Opening latest portfolio dashboard", self._portfolio_task)
 
     def _portfolio_task(self):
-        self._prepare_latest()
         py = python_executable()
-        self.emit("Refreshing institutional portfolio research…")
-        self._run([py, "run_research.py"], cwd=IR)
+        self.emit("Opening locally saved portfolio data. Use Sync All Data to refresh when online.")
         if server_running(port=8501):
             self.emit("Portfolio server is already running. Opening it in your browser.")
             open_dashboard_once(PORTFOLIO_URL)
@@ -344,11 +360,11 @@ class ResearchHub(tk.Tk):
         )
         for _ in range(40):
             if server_running(port=8501):
-                webbrowser.open(PORTFOLIO_URL)
+                open_dashboard_once(PORTFOLIO_URL)
                 self.emit("Portfolio dashboard opened.")
                 return
             time.sleep(0.25)
-        webbrowser.open(PORTFOLIO_URL)
+        open_dashboard_once(PORTFOLIO_URL)
         self.emit("Streamlit was started. The browser may need a few more seconds to connect.")
 
     def open_macro(self):
@@ -360,8 +376,7 @@ class ResearchHub(tk.Tk):
                 f"Global Macro project not found at {MACRO_ROOT}. "
                 "Expected C:\\Users\\Antza\\Documents\\Antzaz-global-macro-lab."
             )
-        self.emit("Updating Global Macro & Multi-Asset Lab from GitHub…")
-        self._run(["git", "pull", "--ff-only", "origin", "main"], cwd=MACRO_ROOT)
+        self.emit("Opening locally stored macro data; use Sync All Data for updates.")
         macro_python = MACRO_ROOT / ".venv" / "Scripts" / "python.exe"
         if not macro_python.exists():
             raise RuntimeError(
@@ -387,11 +402,11 @@ class ResearchHub(tk.Tk):
         )
         for _ in range(40):
             if server_running(port=8502):
-                webbrowser.open(MACRO_URL)
+                open_dashboard_once(MACRO_URL)
                 self.emit("Bonds & Macro dashboard opened.")
                 return
             time.sleep(0.25)
-        webbrowser.open(MACRO_URL)
+        open_dashboard_once(MACRO_URL)
         self.emit("Bonds & Macro dashboard was started. The browser may need a few more seconds to connect.")
 
     def _get_ticker(self) -> str:
@@ -414,7 +429,6 @@ class ResearchHub(tk.Tk):
         self.run_task(f"Guarded workbook — {ticker}", lambda: self._equity_task(ticker, full=False))
 
     def _equity_task(self, ticker: str, full: bool):
-        self._prepare_latest()
         py = python_executable()
         script = "research.py" if full else "commodity_safe_runner.py"
         self._run([py, script, ticker], cwd=ROOT)
