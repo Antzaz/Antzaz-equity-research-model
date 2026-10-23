@@ -3,6 +3,7 @@ from __future__ import annotations
 import finland_sources
 import issuer_source_engine
 import issuer_statement_profiles
+import consensus_sources
 from source_registry import full_source_catalog, market_sources
 
 
@@ -272,3 +273,90 @@ def test_helsinki_tickers_use_ifrs_statement_profile():
     assert profile["name"]=="IFRS / ESEF corporate"
     assert any(row[0]=="Operating Income" for row in profile["income"])
     assert any(row[0]=="Cash & Cash Equivalents" for row in profile["balance"])
+
+
+def test_finnish_core_extension_fact_maps_to_statutory_ifrs_row():
+    payload={
+        "facts":{
+            "op":{
+                "value":"45000000",
+                "dimensions":{
+                    "concept":"yit:OperatingProfit",
+                    "entity":"lei:TEST",
+                    "period":"2025-01-01T00:00:00/2026-01-01T00:00:00",
+                    "unit":"iso4217:EUR",
+                },
+            },
+            "adjusted":{
+                "value":"54000000",
+                "dimensions":{
+                    "concept":"yit:AdjustedOperatingProfit",
+                    "entity":"lei:TEST",
+                    "period":"2025-01-01T00:00:00/2026-01-01T00:00:00",
+                    "unit":"iso4217:EUR",
+                },
+            },
+        }
+    }
+    facts=finland_sources._esef_companyfacts_from_payload(payload)
+    op=facts["facts"]["ifrs-full"]["ProfitLossFromOperatingActivities"]["units"]["EUR"]
+    assert op[0]["val"]==45_000_000
+    # Adjusted/non-GAAP operating profit must never silently become statutory operating profit.
+    assert all("AdjustedOperatingProfit" not in key for key in facts["facts"]["ifrs-full"])
+
+
+def test_vara_detailed_consensus_parser_handles_fy_columns():
+    import pandas as pd
+    df=pd.DataFrame([
+        ["Revenue","Number of Estimates",6,6,6],
+        ["Revenue","Average",1973.7,2279.8,2529.5],
+        ["Revenue","Highest",2040.0,2545.0,2761.0],
+        ["Revenue","Lowest",1927.0,2093.0,2395.0],
+        ["Adjusted operating profit","Average",87.6,126.2,158.2],
+    ],columns=["KPI","[EUR m]","FY 2026 E","FY 2027 E","FY 2028 E"])
+    rows=finland_sources._parse_vara_detailed_tables([df])
+    keyed={(x["metric"],x["fiscal_year"]):x for x in rows}
+    assert keyed[("Revenue",2026)]["mean"]==1973.7
+    assert keyed[("Revenue",2026)]["analysts"]==6
+    assert keyed[("Revenue",2026)]["high"]==2040.0
+    assert keyed[("Adjusted Operating Profit",2027)]["mean"]==126.2
+
+
+def test_vara_price_target_parser():
+    import pandas as pd
+    df=pd.DataFrame([
+        ["Price, last closing",4.24],
+        ["Number of Estimates",6],
+        ["Highest",5.00],
+        ["Average",4.45],
+        ["Median",4.40],
+        ["Lowest",4.10],
+    ],columns=["Metric","Current"])
+    target=finland_sources._parse_vara_price_target_tables([df])
+    assert target["mean"]==4.45
+    assert target["median"]==4.40
+    assert target["analysts"]==6
+
+
+def test_vara_records_keep_adjusted_profit_separate(monkeypatch):
+    monkeypatch.setattr(
+        consensus_sources,
+        "finland_vara_consensus",
+        lambda ticker,info: (
+            [
+                {"metric":"Revenue","fiscal_year":2026,"mean":1973.7,"low":1927.0,"high":2040.0,"analysts":6},
+                {"metric":"Adjusted Operating Profit","fiscal_year":2026,"mean":87.6,"low":83.0,"high":96.0,"analysts":6},
+            ],
+            {"mean":4.45,"median":4.40,"low":4.10,"high":5.0,"analysts":6,"source_url":"https://vara.example/yit"},
+            {"status":"PASS","source_url":"https://vara.example/yit"},
+        ),
+    )
+    records,status,target=consensus_sources.vara_records(
+        "YIT.HE",2025,{"currency":"EUR","financialCurrency":"EUR"}
+    )
+    metrics={r["metric"]:r for r in records}
+    assert abs(metrics["Revenue"]["mean"]-1.9737)<1e-9
+    assert abs(metrics["Adjusted Operating Profit"]["mean"]-0.0876)<1e-9
+    assert "EBIT" not in metrics
+    assert status["ok"]
+    assert target["mean"]==4.45
