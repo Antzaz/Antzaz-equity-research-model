@@ -108,10 +108,13 @@ ESEF_CONCEPT_ALIASES = {
     "op": (
         "ProfitLossFromOperatingActivities",
         "OperatingProfitLoss",
+        "OperatingProfit",
+        "OperatingResult",
     ),
     "ni": (
         "ProfitLoss",
         "ProfitLossAttributableToOwnersOfParent",
+        "ResultForPeriod",
     ),
     "eps": (
         "DilutedEarningsLossPerShare",
