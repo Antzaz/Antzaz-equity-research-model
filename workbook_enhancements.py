@@ -24,6 +24,7 @@ from bs4 import BeautifulSoup
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from offline_equity_extensions import ensure_offline_equity_extensions
+from finland_sources import is_finnish_ticker
 
 try:
     from pypdf import PdfReader
@@ -62,6 +63,7 @@ CORE_ORDER = [
     "Earnings & Revisions",
     "Historical Financials",
     "Financial Statements",
+    "Issuer KPIs",
     "Three-Case Scenarios",
     "Capital Allocation",
     "Valuation History",
@@ -91,6 +93,7 @@ TAB_COLORS = {
     "Earnings & Revisions": "8064A2",
     "Historical Financials": "548235",
     "Financial Statements": "548235",
+    "Issuer KPIs": "548235",
     "Three-Case Scenarios": "548235",
     "Capital Allocation": "548235",
     "Valuation History": "C65911",
@@ -167,7 +170,7 @@ def _annual_filing_url(wb):
     if "Filings" not in wb.sheetnames:
         return None, None
     ws = wb["Filings"]
-    forms = {"10-K", "10-K/A", "20-F", "20-F/A", "40-F", "40-F/A"}
+    forms = {"10-K", "10-K/A", "20-F", "20-F/A", "40-F", "40-F/A", "ESEF AFR", "OAM"}
     for r in range(1, min(ws.max_row, 60) + 1):
         form = str(ws.cell(r, 1).value or "").strip().upper()
         if form not in forms:
@@ -266,6 +269,15 @@ def _issuer_candidate_pages(ticker: str, info: dict) -> dict[str, str]:
             "careers_candidate": "/careers",
             "leadership_candidate": "/leadership",
         }
+        if is_finnish_ticker(ticker):
+            # English-language investor paths are common among Helsinki issuers. These are
+            # best-effort candidates only; the fetcher validates them before using evidence.
+            candidates.update({
+                "finland_investor_candidate": "/en/investors",
+                "finland_governance_candidate": "/en/investors/corporate-governance",
+                "finland_sustainability_candidate": "/en/sustainability",
+                "finland_leadership_candidate": "/en/about-us/management",
+            })
         for key, suffix in candidates.items():
             out.setdefault(key, website + suffix)
     return out
@@ -320,9 +332,9 @@ def _collect_public_evidence(wb, ticker: str, info: dict) -> dict:
 
     pages = evidence["issuer_pages"]
     probes = [
-        ("workforce", ("workplace", "sustainability", "careers_candidate", "annual_reports", "investor"), WORKFORCE_PATTERNS),
-        ("governance", ("governance", "workplace_governance", "governance_candidate", "investor"), GOVERNANCE_PATTERNS),
-        ("leadership", ("leadership", "leadership_candidate", "governance", "investor"), LEADERSHIP_PATTERNS),
+        ("workforce", ("workplace", "sustainability", "finland_sustainability_candidate", "careers_candidate", "annual_reports", "finland_investor_candidate", "investor"), WORKFORCE_PATTERNS),
+        ("governance", ("governance", "workplace_governance", "finland_governance_candidate", "governance_candidate", "finland_investor_candidate", "investor"), GOVERNANCE_PATTERNS),
+        ("leadership", ("leadership", "finland_leadership_candidate", "leadership_candidate", "governance", "finland_investor_candidate", "investor"), LEADERSHIP_PATTERNS),
     ]
     for kind, keys, patterns in probes:
         if evidence.get(kind):
