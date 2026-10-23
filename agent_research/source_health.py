@@ -10,6 +10,7 @@ import requests
 from source_registry import (
     consensus_sources,
     issuer_sources,
+    market_sources,
     professional_framework_sources,
     regulator_macro_sources,
     specialist_sources,
@@ -48,6 +49,7 @@ class SourceHealthAgent:
         consensus = consensus_sources()
         professional = professional_framework_sources()
         regulator_macro = regulator_macro_sources()
+        market = market_sources(ctx.ticker)
 
         checks = []
         for label, url in list(issuer.items())[: self.max_issuer_checks]:
@@ -61,6 +63,11 @@ class SourceHealthAgent:
         if regulator_macro:
             label, source = next(iter(regulator_macro.items()))
             checks.append(self._check(label, source["url"], source.get("source_type", "regulator/macro")))
+        # Helsinki-listed companies receive a bounded probe of the Finland-specific official/open
+        # source layer (OAM/ESEF, Nasdaq Nordic, PRH, Statistics Finland, Bank of Finland, Fingrid).
+        if market:
+            for label, source in list(market.items())[:2]:
+                checks.append(self._check(label, source["url"], source.get("source_type", "market/open data")))
 
         consensus_config = {}
         for key, source in consensus.items():
@@ -79,6 +86,7 @@ class SourceHealthAgent:
             "generated_at": utc_now_iso(),
             "registered_issuer_sources": issuer,
             "registered_regulator_macro_sources": regulator_macro,
+            "registered_market_sources": market,
             "registered_specialist_sources": specialist,
             "registered_consensus_sources": consensus,
             "consensus_provider_configuration": consensus_config,
@@ -87,7 +95,7 @@ class SourceHealthAgent:
             "reachable_checks": reachable,
             "important_note": (
                 "A failed reachability probe may reflect anti-bot controls or transient network issues; it does not prove the source is invalid. "
-                "Optional consensus providers require their listed API key and sometimes paid endpoint access."
+                "Optional consensus providers require their listed API key and sometimes paid endpoint access. Finland-specific sources are free; Fingrid is free but requires registration for an API key."
             ),
         }
         artifact = ctx.write_json("source_health.json", payload)
@@ -97,8 +105,8 @@ class SourceHealthAgent:
         if not issuer:
             status = "WARN"
             summary = (
-                f"No explicit issuer source registry is mapped for this ticker; {configured_consensus}/{len(consensus_config)} consensus source(s) "
-                "are configured and regulator/fallback logic remains available."
+                f"No explicit issuer source registry is mapped for this ticker; {len(market)} market/open-data source(s) are registered; "
+                f"{configured_consensus}/{len(consensus_config)} consensus source(s) are configured and regulator/fallback logic remains available."
             )
         elif reachable:
             status = "PASS"
