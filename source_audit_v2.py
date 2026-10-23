@@ -11,6 +11,7 @@ Two auditability issues are handled here:
 from __future__ import annotations
 
 from openpyxl.styles import Font
+from finland_sources import is_finnish_ticker
 
 try:
     import update_model as core
@@ -18,7 +19,7 @@ except Exception:
     core=None
 
 LINK_GREEN="008000"; GREY="666666"
-ANNUAL_FORMS={"10-K","10-K/A","20-F","20-F/A","40-F","40-F/A"}
+ANNUAL_FORMS={"10-K","10-K/A","20-F","20-F/A","40-F","40-F/A","ESEF AFR","OAM"}
 
 
 def _has_annual(ws):
@@ -29,8 +30,12 @@ def _has_annual(ws):
 
 
 def ensure_latest_annual_filing(wb,ticker):
-    """Guarantee that Filings retains at least the latest annual report URL when SEC data permits."""
+    """Guarantee that Filings retains the appropriate annual filing source."""
     if "Filings" not in wb.sheetnames or _has_annual(wb["Filings"]):
+        return False
+    if is_finnish_ticker(ticker):
+        # Finnish annual filings are populated from OAM/ESEF upstream; never append a synthetic
+        # SEC filing to a Helsinki issuer merely because this generic source audit runs late.
         return False
     if core is None:
         return False
@@ -63,19 +68,21 @@ def ensure_latest_annual_filing(wb,ticker):
     return True
 
 
-def clarify_company_data_definitions(wb):
+def clarify_company_data_definitions(wb,ticker=None):
     """Make provider/calculated market fields explicit without changing their values."""
     if "Company Data" not in wb.sheetnames:
         return False
     ws=wb["Company Data"]
+    info=getattr(wb,"_wacc_info",{}) or getattr(wb,"_issuer_source_info",{}) or {}
+    currency=str(info.get("currency") or info.get("financialCurrency") or ("EUR" if is_finnish_ticker(ticker or "") else "USD")).upper()
     labels={
         8:"Current Price",
         9:"Valuation-Equivalent Shares (bn)",
-        10:"Market Cap (USD bn)",
-        11:"Provider Enterprise Value (USD bn)",
-        12:"Provider Total Cash (USD bn)",
-        13:"Provider Total Debt (USD bn)",
-        14:"Provider Net Debt / (Cash) (USD bn)",
+        10:f"Market Cap ({currency} bn)",
+        11:f"Provider Enterprise Value ({currency} bn)",
+        12:f"Provider Total Cash ({currency} bn)",
+        13:f"Provider Total Debt ({currency} bn)",
+        14:f"Provider Net Debt / (Cash) ({currency} bn)",
         15:"Provider Forward P/E",
     }
     notes={
@@ -100,5 +107,5 @@ def clarify_company_data_definitions(wb):
 def apply_source_audit_fixes(wb,ticker):
     return {
         "annual_filing_added":ensure_latest_annual_filing(wb,ticker),
-        "definitions_clarified":clarify_company_data_definitions(wb),
+        "definitions_clarified":clarify_company_data_definitions(wb,ticker),
     }
