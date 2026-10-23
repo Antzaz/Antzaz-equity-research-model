@@ -87,6 +87,14 @@ FINLAND_PUBLIC_SOURCES = {
         "env_key": "FINGRID_API_KEY",
         "free_registration": True,
     },
+    "vara_research": {
+        "provider": "Vara Research",
+        "url": "https://vara-services.com/",
+        "purpose": "Free analyst consensus, estimate ranges and target-price context when linked by the issuer's investor-relations site",
+        "source_type": "Issuer-linked public analyst consensus",
+        "env_key": None,
+        "issuer_link_required": True,
+    },
 }
 
 
