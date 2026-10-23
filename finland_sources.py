@@ -17,17 +17,24 @@ For .HE issuers, the ESEF helper is used as a conservative structured-financial 
 It only consumes consolidated, non-dimensional facts and never invents missing values.
 """
 
-from datetime import timedelta
+from datetime import date, datetime, timedelta
+from functools import lru_cache
+from io import StringIO
 import json
 import re
 from urllib.parse import urljoin
 
 import pandas as pd
 import requests
+try:
+    from bs4 import BeautifulSoup
+except Exception:  # optional; requests/ESEF core still works without it
+    BeautifulSoup = None
 
 
 FILINGS_XBRL_API = "https://filings.xbrl.org/api/filings"
 FILINGS_XBRL_ROOT = "https://filings.xbrl.org"
+_ESEF_PAYLOAD_CACHE: dict[str, dict] = {}
 
 FINLAND_PUBLIC_SOURCES = {
     "finland_oam": {
@@ -453,3 +460,352 @@ def finland_esef_history(ticker: str, info: dict | None = None, limit: int = 8) 
         "provenance": provenance,
         "errors": errors[:10],
     }
+
+
+def _esef_payload(url: str, timeout: int = 30) -> dict:
+    """Cache xBRL-JSON within one research run so history/statements/segments reuse downloads."""
+    key=str(url)
+    if key not in _ESEF_PAYLOAD_CACHE:
+        _ESEF_PAYLOAD_CACHE[key]=_request_json(key, timeout=timeout)
+    return _ESEF_PAYLOAD_CACHE[key]
+
+
+def _xbrl_unit_to_companyfacts(unit: str) -> str:
+    raw=str(unit or "")
+    low=raw.lower()
+    currency=None
+    m=re.search(r"iso4217:([A-Za-z]{3})",raw)
+    if m:
+        currency=m.group(1).upper()
+    if "share" in low and currency:
+        return f"{currency}/shares"
+    if "share" in low:
+        return "shares"
+    return currency or raw or "pure"
+
+
+def _xbrl_period_to_companyfacts(period: str) -> tuple[str | None, str | None, int | None]:
+    """Translate xBRL-JSON half-open periods to SEC-CompanyFacts-like inclusive dates."""
+    try:
+        parts=str(period or "").split("/")
+        if len(parts)==2:
+            start=pd.Timestamp(parts[0]).date()
+            end_exclusive=pd.Timestamp(parts[1]).date()
+            end=end_exclusive-timedelta(days=1)
+            return start.isoformat(),end.isoformat(),int(end.year)
+        if len(parts)==1 and parts[0]:
+            instant=pd.Timestamp(parts[0]).date()-timedelta(days=1)
+            return None,instant.isoformat(),int(instant.year)
+    except Exception:
+        pass
+    return None,None,None
+
+
+def _esef_companyfacts_from_payload(payload: dict, source_url: str | None = None) -> dict:
+    """Convert consolidated standard-IFRS xBRL-JSON facts to the internal CompanyFacts shape.
+
+    Only ifrs-full facts without segment/other dimensions are included.  Issuer-extension facts
+    are intentionally left to dedicated parsers because guessing their accounting meaning would
+    create false precision.
+    """
+    root={"facts":{"ifrs-full":{}},"_source_type":"Finnish OAM / ESEF","_source_url":source_url}
+    for fact in (payload.get("facts") or {}).values():
+        if not isinstance(fact,dict) or not _consolidated_fact(fact):
+            continue
+        dims=fact.get("dimensions") or {}
+        qname=str(dims.get("concept") or "")
+        if not qname.startswith("ifrs-full:"):
+            continue
+        tag=_concept_local_name(qname)
+        value=_numeric(fact.get("value"))
+        if value is None:
+            continue
+        start,end,fy=_xbrl_period_to_companyfacts(dims.get("period"))
+        if end is None or fy is None:
+            continue
+        unit=_xbrl_unit_to_companyfacts(dims.get("unit"))
+        item={"val":value,"end":end,"fy":fy,"form":"ESEF","filed":end}
+        if start:
+            item["start"]=start
+        node=root["facts"]["ifrs-full"].setdefault(
+            tag,
+            {"label":tag,"description":"IFRS/ESEF fact from Finnish OAM filing","units":{}},
+        )
+        bucket=node["units"].setdefault(unit,[])
+        signature=(item.get("start"),item.get("end"),item.get("val"))
+        if not any((x.get("start"),x.get("end"),x.get("val"))==signature for x in bucket):
+            bucket.append(item)
+    return root
+
+
+def finland_esef_companyfacts(ticker: str, info: dict | None = None, limit: int = 8) -> tuple[dict, dict]:
+    """Return Finnish ESEF facts in the shape expected by the full-statement renderer."""
+    if not is_finnish_ticker(ticker):
+        return {},{"status":"NOT_APPLICABLE","ticker":ticker}
+    urls,discovery=_filing_json_urls(ticker,info,limit=limit)
+    merged={"facts":{"ifrs-full":{}},"_source_type":"Finnish OAM / ESEF","_source_urls":urls}
+    errors=[]
+    for url in urls:
+        try:
+            converted=_esef_companyfacts_from_payload(_esef_payload(url),url)
+        except Exception as exc:
+            errors.append(f"{url}: {exc}"[:300])
+            continue
+        for tag,node in ((converted.get("facts") or {}).get("ifrs-full") or {}).items():
+            dest=merged["facts"]["ifrs-full"].setdefault(
+                tag,
+                {"label":node.get("label") or tag,"description":node.get("description") or "","units":{}},
+            )
+            for unit,items in (node.get("units") or {}).items():
+                bucket=dest["units"].setdefault(unit,[])
+                seen={(x.get("start"),x.get("end"),x.get("val")) for x in bucket}
+                for item in items:
+                    sig=(item.get("start"),item.get("end"),item.get("val"))
+                    if sig not in seen:
+                        bucket.append(item); seen.add(sig)
+    tags=sorted(merged["facts"]["ifrs-full"])
+    return merged,{
+        "status":"PASS" if tags else discovery.get("status","NO_DATA"),
+        "source":"Finnish OAM / ESEF via XBRL International",
+        "tags":tags,
+        "tag_count":len(tags),
+        "json_urls":urls,
+        "discovery":discovery,
+        "errors":errors[:10],
+    }
+
+
+_SEGMENT_AXIS_HINTS=("segment","reportable","operatingsegment","businesssegment")
+_SEGMENT_EXCLUDE=("consolidated","group","elimination","unallocated","reconciliation","total")
+
+
+def _humanize_member(qname: str) -> str:
+    name=_concept_local_name(qname)
+    name=re.sub(r"(Member|Segment)$","",name)
+    name=re.sub(r"([a-zåäö0-9])([A-ZÅÄÖ])",r"\1 \2",name)
+    name=re.sub(r"[_\-]+"," ",name)
+    return re.sub(r"\s+"," ",name).strip()
+
+
+def _segment_member(dims: dict) -> str | None:
+    allowed={"concept","entity","period","unit","language"}
+    for axis,member in dims.items():
+        if axis in allowed:
+            continue
+        axis_local=_concept_local_name(axis).lower()
+        if any(h in axis_local for h in _SEGMENT_AXIS_HINTS):
+            label=_humanize_member(member)
+            low=label.lower()
+            if label and not any(x in low for x in _SEGMENT_EXCLUDE):
+                return label
+    return None
+
+
+def _segment_metric(concept_qname: str) -> tuple[str | None,int]:
+    """Map standard or issuer-extension segment concepts conservatively."""
+    local=_concept_local_name(concept_qname)
+    low=re.sub(r"[^a-z0-9]","",local.lower())
+    if local in ESEF_CONCEPT_ALIASES["revenue"]:
+        return "revenue",100
+    if "revenue" in low and not any(x in low for x in ("growth","percentage","share")):
+        return "revenue",75
+    if "adjustedoperatingprofit" in low or "adjustedoperatingresult" in low:
+        return "op",100
+    if local in ESEF_CONCEPT_ALIASES["op"]:
+        return "op",90
+    if ("operatingprofit" in low or "segmentprofit" in low) and not any(x in low for x in ("margin","percentage")):
+        return "op",70
+    return None,0
+
+
+def _extract_esef_segments(payload: dict) -> dict:
+    """Extract dimensioned annual segment revenue/profit without treating segments as group facts."""
+    best={}
+    for fact in (payload.get("facts") or {}).values():
+        if not isinstance(fact,dict):
+            continue
+        dims=fact.get("dimensions") or {}
+        member=_segment_member(dims)
+        if not member:
+            continue
+        field,score=_segment_metric(dims.get("concept"))
+        if not field:
+            continue
+        unit=str(dims.get("unit") or "")
+        if unit and "iso4217:" not in unit:
+            continue
+        year,duration=_period_year(dims.get("period"))
+        if year is None or duration is None or not 250<=duration<=450:
+            continue
+        value=_numeric(fact.get("value"))
+        if value is None:
+            continue
+        key=(member,year,field)
+        old=best.get(key)
+        if old is None or score>old[0]:
+            best[key]=(score,value,_concept_local_name(dims.get("concept")))
+    segments={}
+    for (member,year,field),(score,value,concept) in best.items():
+        rec=segments.setdefault(member,{"name":member,"revenue":{},"op":{},"concepts":{}})
+        rec[field][year]=value
+        rec["concepts"][f"{year}:{field}"]=concept
+    return segments
+
+
+def finland_esef_segments(ticker: str, info: dict | None = None, limit: int = 4) -> tuple[list[dict], dict]:
+    """Return recent operating-segment economics from dimensioned Finnish ESEF facts."""
+    if not is_finnish_ticker(ticker):
+        return [],{"status":"NOT_APPLICABLE","ticker":ticker}
+    urls,discovery=_filing_json_urls(ticker,info,limit=limit)
+    merged={}
+    errors=[]
+    for url in urls:  # newest filing first; retain first observation of an overlapping year
+        try:
+            found=_extract_esef_segments(_esef_payload(url))
+        except Exception as exc:
+            errors.append(f"{url}: {exc}"[:300]); continue
+        for name,rec in found.items():
+            dest=merged.setdefault(name,{"name":name,"revenue":{},"op":{},"concepts":{},"source":url})
+            for field in ("revenue","op"):
+                for year,value in rec[field].items():
+                    dest[field].setdefault(year,value)
+            dest["concepts"].update({k:v for k,v in rec["concepts"].items() if k not in dest["concepts"]})
+    # Keep entities with useful segment economics and a recent annual observation.
+    rows=[x for x in merged.values() if x["revenue"] or x["op"]]
+    rows.sort(key=lambda x:max(list(x["revenue"])+list(x["op"]) or [0]),reverse=True)
+    years=sorted({y for x in rows for field in ("revenue","op") for y in x[field]})
+    return rows,{
+        "status":"PASS" if rows else discovery.get("status","NO_DATA"),
+        "source":"Finnish OAM / ESEF dimensioned segment facts",
+        "json_urls":urls,
+        "years":years[-3:],
+        "errors":errors[:10],
+        "discovery":discovery,
+    }
+
+
+def _issuer_candidate_pages(info: dict | None, suffixes: tuple[str,...]) -> list[str]:
+    website=str((info or {}).get("website") or "").strip().rstrip("/")
+    if not website:
+        return []
+    pages=[website+s for s in suffixes]
+    # Also inspect investor landing pages for canonical links.
+    for landing in (website+"/investors",website+"/en/investors",website+"/investor-relations"):
+        try:
+            r=requests.get(landing,timeout=12,headers={"User-Agent":"Mozilla/5.0 AntzazEquityResearch"})
+            if not r.ok or BeautifulSoup is None:
+                continue
+            soup=BeautifulSoup(r.text,"html.parser")
+            for a in soup.find_all("a",href=True):
+                href=urljoin(r.url,a.get("href"))
+                text=(a.get_text(" ",strip=True)+" "+href).lower()
+                if any(token in text for token in ("shareholder","ownership","share information","stock exchange release","company announcement","releases")):
+                    pages.append(href)
+        except Exception:
+            continue
+    return list(dict.fromkeys(pages))
+
+
+def finland_major_shareholders(ticker: str, info: dict | None = None, limit: int = 20) -> tuple[list[dict], dict]:
+    """Best-effort issuer/Euroclear shareholder table for Helsinki-listed companies."""
+    if not is_finnish_ticker(ticker):
+        return [],{"status":"NOT_APPLICABLE"}
+    pages=_issuer_candidate_pages(info,(
+        "/investors/share-and-shareholders","/en/investors/share-and-shareholders",
+        "/investors/shareholders","/en/investors/shareholders",
+        "/investors/share-information","/en/investors/share-information",
+        "/investor-relations/shareholders","/en/investor-relations/shareholders",
+    ))
+    errors=[]
+    for page in pages[:12]:
+        try:
+            r=requests.get(page,timeout=15,headers={"User-Agent":"Mozilla/5.0 AntzazEquityResearch"})
+            r.raise_for_status()
+            tables=pd.read_html(StringIO(r.text))
+        except Exception as exc:
+            errors.append(f"{page}: {exc}"[:240]); continue
+        for df in tables:
+            if df.empty:
+                continue
+            cols=[str(x).lower() for x in df.columns]
+            text=" ".join(cols)+" "+" ".join(str(x).lower() for x in df.head(3).astype(str).values.flatten())
+            if not any(x in text for x in ("shareholder","owner","osakkeenomist")):
+                continue
+            records=[]
+            for _,row in df.iterrows():
+                vals=[x for x in row.tolist()]
+                if not vals:
+                    continue
+                holder=str(vals[0]).strip()
+                if not holder or holder.lower() in {"nan","total","yhteensä"}:
+                    continue
+                nums=[]
+                for v in vals[1:]:
+                    if isinstance(v,(int,float)) and not pd.isna(v):
+                        nums.append(float(v)); continue
+                    s=str(v).replace("\xa0"," ").replace(" ","").replace(",",".")
+                    m=re.search(r"-?\d+(?:\.\d+)?",s)
+                    if m:
+                        try: nums.append(float(m.group(0)))
+                        except Exception: pass
+                shares=next((n for n in nums if n>1000),None)
+                pct=next((n/100 if n>1 else n for n in reversed(nums) if 0<n<=100),None)
+                records.append({"holder":holder,"shares":shares,"pct":pct,"source":page})
+            if len(records)>=3:
+                return records[:limit],{"status":"PASS","source":page,"provider":"Issuer / Euroclear Finland","pages_checked":pages[:12]}
+    return [],{"status":"NO_TABLE","pages_checked":pages[:12],"errors":errors[:10]}
+
+
+def finland_company_news(ticker: str, info: dict | None = None, horizon_days: int = 730, limit: int = 80) -> tuple[list[dict], dict]:
+    """Collect issuer stock-exchange/company releases for Finnish names when Yahoo coverage is thin."""
+    if not is_finnish_ticker(ticker):
+        return [],{"status":"NOT_APPLICABLE"}
+    pages=_issuer_candidate_pages(info,(
+        "/news-repository/stock-exchange-releases","/en/news-repository/stock-exchange-releases",
+        "/investors/releases","/en/investors/releases",
+        "/investors/stock-exchange-releases","/en/investors/stock-exchange-releases",
+        "/investor-relations/releases","/en/investor-relations/releases",
+    ))
+    cutoff=date.today()-timedelta(days=int(horizon_days))
+    out=[]; seen=set(); errors=[]
+    date_re=re.compile(r"(20\d{2})[-./](\d{1,2})[-./](\d{1,2})")
+    for page in pages[:12]:
+        try:
+            r=requests.get(page,timeout=15,headers={"User-Agent":"Mozilla/5.0 AntzazEquityResearch"})
+            r.raise_for_status()
+            if BeautifulSoup is None:
+                continue
+            soup=BeautifulSoup(r.text,"html.parser")
+        except Exception as exc:
+            errors.append(f"{page}: {exc}"[:240]); continue
+        for a in soup.find_all("a",href=True):
+            title=re.sub(r"\s+"," ",a.get_text(" ",strip=True)).strip()
+            href=urljoin(r.url,a.get("href"))
+            if len(title)<8 or href in seen:
+                continue
+            blob=re.sub(r"\s+"," ",a.parent.get_text(" ",strip=True) if a.parent else title)
+            m=date_re.search(blob)
+            published=None
+            if m:
+                try: published=date(int(m.group(1)),int(m.group(2)),int(m.group(3)))
+                except Exception: published=None
+            if published and published<cutoff:
+                continue
+            low=(title+" "+href).lower()
+            if not any(k in low for k in ("release","acqui","divest","agreement","contract","invest","transaction","strategy","order","partnership","joint venture","guidance","result")):
+                continue
+            seen.add(href)
+            out.append({
+                "title":title,
+                "summary":blob[:700],
+                "date":published.isoformat() if published else None,
+                "publisher":(info or {}).get("shortName") or (info or {}).get("longName") or ticker,
+                "url":href,
+                "source_kind":"press_release",
+            })
+            if len(out)>=limit:
+                break
+        if len(out)>=limit:
+            break
+    out.sort(key=lambda x:x.get("date") or "",reverse=True)
+    return out,{"status":"PASS" if out else "NO_ITEMS","pages_checked":pages[:12],"errors":errors[:10],"source":"Issuer stock-exchange/company releases"}
