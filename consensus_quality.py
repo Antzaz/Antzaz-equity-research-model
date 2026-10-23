@@ -77,7 +77,7 @@ def _eps_revisions(result,year):
 def _write_expectations(wb,result):
     if "Expectations & Consensus" not in wb.sheetnames: return {"updated":0}
     ws=wb["Expectations & Consensus"]; rows=_row_map(ws); blended=result["blended"]
-    ws["A3"]="Consensus is a best-effort multi-source stack. Yahoo works without API keys; FMP, Alpha Vantage and Finnhub activate when keys/plan access are configured. Aggregator universes can overlap, so provider analyst counts are not summed."
+    ws["A3"]="Consensus is a best-effort multi-source stack. For supported Helsinki issuers, issuer-linked Vara Research is a free primary public consensus source; Yahoo is the zero-config fallback. FMP, Alpha Vantage and Finnhub activate when keys/plan access are configured. Aggregator universes can overlap, so provider analyst counts are not summed."
     ws["A3"].font=Font(italic=True,color=GREY); ws["A3"].alignment=Alignment(wrap_text=True)
     ws.cell(6,12,"Provider Count"); ws.cell(6,13,"Providers / Provenance")
     for c in (12,13): ws.cell(6,c).fill=_fill(BLUE); ws.cell(6,c).font=Font(bold=True,color=WHITE); ws.cell(6,c).alignment=Alignment(horizontal="center",wrap_text=True)
@@ -137,7 +137,7 @@ def _write_market_expectations(wb,result):
 
 def _write_quality(wb,result):
     if "Data Quality" not in wb.sheetnames: return
-    ws=wb["Data Quality"]; good=[s for s in result["statuses"] if s.get("ok")]; configured=[s for s in result["statuses"] if s.get("configured")]; status="PASS" if good else "REVIEW"; detail=f"{len(good)}/{len(result['statuses'])} provider(s) returned usable consensus; {len(configured)} configured. Yahoo is zero-config; optional API sources improve coverage."
+    ws=wb["Data Quality"]; good=[s for s in result["statuses"] if s.get("ok")]; configured=[s for s in result["statuses"] if s.get("configured")]; status="PASS" if good else "REVIEW"; detail=f"{len(good)}/{len(result['statuses'])} provider(s) returned usable consensus; {len(configured)} configured. Vara is free when issuer-linked for supported Helsinki companies; Yahoo is the general zero-config fallback; optional API sources improve coverage."
     existing=None
     for r in range(1,ws.max_row+1):
         if str(ws.cell(r,1).value or "").strip()=="Consensus provider coverage": existing=r; break
@@ -165,7 +165,9 @@ def _install_institutional_extension_hook():
 
 
 def normalize_expectations_consensus(wb,ticker,info=None):
-    latest=_latest_year(wb); result=collect_consensus(ticker,latest,info or {}); exp=_write_expectations(wb,result); market=_write_market_expectations(wb,result); _write_quality(wb,result)
+    latest=_latest_year(wb); result=collect_consensus(ticker,latest,info or {})
+    setattr(wb,"_consensus_result",result)
+    exp=_write_expectations(wb,result); market=_write_market_expectations(wb,result); _write_quality(wb,result)
     try:
         from professional_analysis import extend_ai_impact_analysis
         extend_ai_impact_analysis(wb,ticker)
