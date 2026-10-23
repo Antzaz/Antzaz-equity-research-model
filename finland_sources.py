@@ -526,9 +526,20 @@ def _esef_companyfacts_from_payload(payload: dict, source_url: str | None = None
             continue
         dims=fact.get("dimensions") or {}
         qname=str(dims.get("concept") or "")
-        if not qname.startswith("ifrs-full:"):
+        local=_concept_local_name(qname)
+        extension_map={
+            # Conservative Finnish issuer-extension aliases for core statutory metrics only.
+            # Adjusted/comparable/underlying concepts are deliberately excluded.
+            "OperatingProfit":"ProfitLossFromOperatingActivities",
+            "OperatingResult":"ProfitLossFromOperatingActivities",
+            "ResultForPeriod":"ProfitLoss",
+        }
+        if qname.startswith("ifrs-full:"):
+            tag=local
+        elif local in extension_map:
+            tag=extension_map[local]
+        else:
             continue
-        tag=_concept_local_name(qname)
         value=_numeric(fact.get("value"))
         if value is None:
             continue
