@@ -75,7 +75,7 @@ NORDIC_SECTOR_FALLBACK={
         "KNEBV.HE","METSO.HE","VALMT.HE","WRT1V.HE","KCR.HE",
         "SKA-B.ST","NCC-B.ST","PEAB-B.ST","ALFA.ST","SAND.ST","VOLV-B.ST",
     ],
-    "Technology":["NOKIA.HE","QTCOM.HE","TIETO.HE","ERIC-B.ST","HEXAB.ST"],
+    "Technology":["NOKIA.HE","QTCOM.HE","TIETO.HE","ERIC-B.ST","HEXA-B.ST"],
     "Basic Materials":["UPM.HE","STERV.HE","METSB.HE","SCA-B.ST","HOLM-B.ST","BILL.ST"],
     "Consumer Defensive":["KESKOB.HE","TYRES.HE","ORK.OL","CARL-B.CO"],
     "Financial Services":["NDA-FI.HE","SEB-A.ST","SWED-A.ST","SHB-A.ST","DANSKE.CO","DNB.OL"],
