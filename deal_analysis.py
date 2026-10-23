@@ -385,7 +385,11 @@ def ensure_deal_analysis(wb,ticker,info=None,horizon_days=DEFAULT_HORIZON_DAYS,m
     ws=wb.create_sheet(name); ws.sheet_view.showGridLines=False
     for c in range(1,19): ws.cell(1,c).fill=_fill(NAVY); ws.cell(2,c).fill=_fill(NAVY)
     ws["A1"]=f"{ticker} — Recent Material Deals & Transactions"; ws["A1"].font=Font(bold=True,color=WHITE,size=19)
-    ws["A3"]="Source-backed transaction monitor. Facts from public press/news metadata and SEC filings are separated from rule-based analyst lenses. Missing deal economics remain blank. Open source links before changing forecasts, valuation or the investment thesis."
+    ws["A3"]=(
+        "Source-backed transaction monitor. For Helsinki issuers, issuer stock-exchange releases are the primary event source, supplemented by public news feeds; SEC evidence is used only when applicable. Facts remain separate from rule-based analyst lenses and missing economics stay blank."
+        if is_finnish_ticker(ticker)
+        else "Source-backed transaction monitor. Facts from public press/news metadata and SEC filings are separated from rule-based analyst lenses. Missing deal economics remain blank. Open source links before changing forecasts, valuation or the investment thesis."
+    )
     ws["A3"].font=Font(italic=True,color=GREY); ws["A3"].alignment=Alignment(wrap_text=True); ws.merge_cells("A3:R3"); ws.row_dimensions[3].height=38
     deals,meta=collect_deals(ticker,info,horizon_days,max_deals)
     _section(ws,5,"Deal Monitor Summary")
@@ -414,4 +418,7 @@ def ensure_deal_analysis(wb,ticker,info=None,horizon_days=DEFAULT_HORIZON_DAYS,m
     if not pending_deals: ws.cell(rr,1,"No pending / active material deal requires a closing or implementation watch from the retrieved sources."); ws.cell(rr,1).font=Font(italic=True,color=GREY)
     widths={"A":12,"B":20,"C":25,"D":30,"E":52,"F":20,"G":24,"H":28,"I":34,"J":50,"K":55,"L":40,"M":38,"N":48,"O":62,"P":28,"Q":22,"R":52}
     for col,w in widths.items(): ws.column_dimensions[col].width=w
-    ws.freeze_panes="A15"; ws.auto_filter.ref=f"A14:R{max(14,row-1)}"; return ws
+    ws.freeze_panes="A15"; ws.auto_filter.ref=f"A14:R{max(14,row-1)}"
+    if is_finnish_ticker(ticker):
+        setattr(wb,"_finland_deal_meta",meta)
+    return ws
