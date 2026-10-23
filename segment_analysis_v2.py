@@ -347,6 +347,7 @@ def ensure_segment_analysis_v2(wb,ticker,headers):
             numeric=sum(any(_num(v) is not None for v in (rv+op)) for _,rv,op in segments)
             source=(meta.get("json_urls") or ["https://oam.fi/"])[0]
             status=f"AUTO — Finnish ESEF dimension facts: {len(segments)} segment(s), {numeric} with extracted economics; years={meta.get('years') or years}"
+            setattr(wb,"_finland_segment_meta",{**meta,"segment_count":len(segments),"numeric_segments":numeric})
             return _write_sheet(
                 wb,ticker,years,segments,[],source,status,
                 source_label="Finnish OAM / ESEF",
@@ -358,6 +359,7 @@ def ensure_segment_analysis_v2(wb,ticker,headers):
         status=f"REVIEW — Finnish ESEF segment dimensions not recovered ({meta.get('status','NO_DATA')})"
         if detail:
             status+=f"; {detail}"
+        setattr(wb,"_finland_segment_meta",{**meta,"segment_count":0,"numeric_segments":0})
         return _write_sheet(
             wb,ticker,years,[],[],"https://oam.fi/",status,
             source_label="Finnish OAM / ESEF",
