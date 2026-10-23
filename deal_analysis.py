@@ -23,6 +23,7 @@ except Exception:  # pragma: no cover
     BeautifulSoup = None
 
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from finland_sources import finland_company_news, is_finnish_ticker
 
 NAVY="17365D"; BLUE="2F75B5"; WHITE="FFFFFF"; GREY="666666"
 PALE_GREEN="E2F0D9"; PALE_RED="FCE4D6"; PALE_YELLOW="FFF2CC"; PALE_BLUE="DDEBF7"; LINK_GREEN="008000"
@@ -349,8 +350,24 @@ def analyze_items(ticker,items,info=None,horizon_days=DEFAULT_HORIZON_DAYS,max_d
 
 
 def collect_deals(ticker,info=None,horizon_days=DEFAULT_HORIZON_DAYS,max_deals=DEFAULT_MAX_DEALS):
-    yahoo=_yahoo_items(ticker,100); sec=_sec_items(ticker,horizon_days); deals=analyze_items(ticker,yahoo+sec,info or {},horizon_days,max_deals)
-    return deals,{"yahoo_items":len(yahoo),"sec_items":len(sec),"qualified_deals":len(deals),"horizon_days":horizon_days,"sources":"Yahoo Finance news/press releases + SEC/EDGAR when available"}
+    info=info or {}
+    yahoo=_yahoo_items(ticker,100)
+    sec=_sec_items(ticker,horizon_days)
+    fin=[]; fin_meta={}
+    if is_finnish_ticker(ticker):
+        try:
+            fin,fin_meta=finland_company_news(ticker,info,horizon_days,limit=100)
+        except Exception as exc:
+            fin=[]; fin_meta={"status":"ERROR","error":str(exc)}
+    deals=analyze_items(ticker,fin+yahoo+sec,info,horizon_days,max_deals)
+    sources="Issuer stock-exchange releases + Yahoo Finance" if is_finnish_ticker(ticker) else "Yahoo Finance news/press releases"
+    if sec:
+        sources+=" + SEC/EDGAR"
+    return deals,{
+        "yahoo_items":len(yahoo),"sec_items":len(sec),"finland_issuer_items":len(fin),
+        "qualified_deals":len(deals),"horizon_days":horizon_days,"sources":sources,
+        "finland_source":fin_meta.get("source"),"finland_pages":fin_meta.get("pages_checked",[]),
+    }
 
 
 def _section(ws,row,title,end=18):
@@ -374,7 +391,7 @@ def ensure_deal_analysis(wb,ticker,info=None,horizon_days=DEFAULT_HORIZON_DAYS,m
     _section(ws,5,"Deal Monitor Summary")
     disclosed=[x for x in deals if x.get("amount")]; largest=max(disclosed,key=lambda x:x["amount"].get("value") or 0) if disclosed else None
     pending=sum(x.get("status") in {"Announced / Pending","Approved / Clearing","Signed / Active"} for x in deals); types=sorted({x.get("type") for x in deals if x.get("type")})
-    rows=[("Material transactions retained",len(deals),"Materiality and source-quality filtered"),("Pending / active items",pending,"Require closing, implementation or delivery monitoring"),("Largest disclosed transaction",largest.get("deal_value") if largest else "—",largest.get("title") if largest else "No disclosed amount verified"),("Deal types represented",", ".join(types) if types else "—","Classification from retrieved source text"),("Coverage window",f"{horizon_days} days",meta.get("sources")),("Source records reviewed",meta.get("yahoo_items",0)+meta.get("sec_items",0),f"News/press: {meta.get('yahoo_items',0)} | SEC excerpts: {meta.get('sec_items',0)}")]
+    rows=[("Material transactions retained",len(deals),"Materiality and source-quality filtered"),("Pending / active items",pending,"Require closing, implementation or delivery monitoring"),("Largest disclosed transaction",largest.get("deal_value") if largest else "—",largest.get("title") if largest else "No disclosed amount verified"),("Deal types represented",", ".join(types) if types else "—","Classification from retrieved source text"),("Coverage window",f"{horizon_days} days",meta.get("sources")),("Source records reviewed",meta.get("yahoo_items",0)+meta.get("sec_items",0)+meta.get("finland_issuer_items",0),f"Issuer releases: {meta.get('finland_issuer_items',0)} | Yahoo: {meta.get('yahoo_items',0)} | SEC excerpts: {meta.get('sec_items',0)}")]
     for r,(label,val,note) in enumerate(rows,6):
         ws.cell(r,1,label).font=Font(bold=True); ws.cell(r,2,val); ws.merge_cells(start_row=r,start_column=3,end_row=r,end_column=8); ws.cell(r,3,note); ws.cell(r,3).font=Font(color=GREY); ws.cell(r,3).alignment=Alignment(wrap_text=True)
     _section(ws,13,"Recent Material Deals — Facts + Analyst Lens")
