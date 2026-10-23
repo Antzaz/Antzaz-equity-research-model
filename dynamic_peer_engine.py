@@ -60,6 +60,29 @@ INDUSTRY_FALLBACK={
     "Internet Retail":["AMZN","MELI","EBAY","ETSY","CHWY"],
 }
 
+# Region-first public comparables for Nordic issuers. These lists are discovery candidates,
+# not forced peers: the normal sector/industry, size and coverage checks still decide whether
+# a security is retained. This prevents a Finnish construction/industrial name from falling
+# directly into a mostly-US fallback universe when relevant Nordic public comps exist.
+NORDIC_INDUSTRY_FALLBACK={
+    "Engineering & Construction":[
+        "SKA-B.ST","NCC-B.ST","PEAB-B.ST","SRV1V.HE","CONSTI.HE",
+        "KREATE.HE","GRK.HE","NRC.OL","JM.ST","BONAV-B.ST",
+    ],
+}
+NORDIC_SECTOR_FALLBACK={
+    "Industrials":[
+        "KNEBV.HE","METSO.HE","VALMT.HE","WRT1V.HE","KCR.HE",
+        "SKA-B.ST","NCC-B.ST","PEAB-B.ST","ALFA.ST","SAND.ST","VOLV-B.ST",
+    ],
+    "Technology":["NOKIA.HE","QTCOM.HE","TIETO.HE","ERIC-B.ST","HEXAB.ST"],
+    "Basic Materials":["UPM.HE","STERV.HE","METSB.HE","SCA-B.ST","HOLM-B.ST","BILL.ST"],
+    "Consumer Defensive":["KESKOB.HE","TYRES.HE","ORK.OL","CARL-B.CO"],
+    "Financial Services":["NDA-FI.HE","SEB-A.ST","SWED-A.ST","SHB-A.ST","DANSKE.CO","DNB.OL"],
+    "Utilities":["FORTUM.HE","ORSTED.CO"],
+    "Communication Services":["ELISA.HE","TELIA.ST","TEL.OL"],
+}
+
 COUNTRY_TO_REGION={
     "United States":"US","Canada":"CA","Finland":"FI","Sweden":"SE","Norway":"NO","Denmark":"DK",
     "Germany":"DE","France":"FR","United Kingdom":"GB","Switzerland":"CH","Netherlands":"NL","Japan":"JP",
@@ -68,6 +91,7 @@ COUNTRY_TO_REGION={
 }
 
 STRATEGIC_PEERS={
+    "YIT.HE":["SKA-B.ST","NCC-B.ST","PEAB-B.ST","SRV1V.HE","CONSTI.HE","KREATE.HE","GRK.HE","NRC.OL","JM.ST","BONAV-B.ST"],
     "TSM":["INTC","MU","NVDA","AVGO","AMD","QCOM","TXN","ADI"],
     "GOOGL":["META","MSFT","AMZN","NFLX","ORCL","CRM","AAPL"],
     "GOOG":["META","MSFT","AMZN","NFLX","ORCL","CRM","AAPL"],
@@ -216,7 +240,11 @@ def _symbols_from_screen(result):
 def _discover_candidates(ticker,sector,industry,sector_key,industry_key,region):
     if yf is None or sector=="Unknown": return []
     out=[]
-    out.extend(preferred_peer_symbols(ticker,industry)); out.extend(STRATEGIC_PEERS.get(str(ticker).upper(),[]))
+    out.extend(preferred_peer_symbols(ticker,industry))
+    out.extend(STRATEGIC_PEERS.get(str(ticker).upper(),[]))
+    if region in {"FI","SE","NO","DK"}:
+        out.extend(NORDIC_INDUSTRY_FALLBACK.get(industry,[]))
+        out.extend(NORDIC_SECTOR_FALLBACK.get(sector,[]))
     if industry_key:
         try:
             dom=yf.Industry(industry_key,region=region)
