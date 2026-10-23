@@ -440,7 +440,7 @@ def finland_esef_history(ticker: str, info: dict | None = None, limit: int = 8) 
 
     for url in urls:
         try:
-            payload = _request_json(url, timeout=30)
+            payload = _esef_payload(url, timeout=30)
             hist, meta = _extract_esef_report(payload)
         except Exception as exc:
             errors.append(f"{url}: {exc}"[:300])
