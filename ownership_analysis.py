@@ -134,7 +134,11 @@ def ensure_ownership_analysis(wb,ticker):
     index=2 if len(wb.worksheets)>=2 else len(wb.worksheets)
     ws=wb.create_sheet(name,index)
     _style_title(ws,f"{ticker} — Ownership & Largest Shareholders")
-    ws["A3"]="Ownership snapshot from Yahoo Finance via yfinance. Institutional/fund positions can lag regulatory filings; insider roster figures may not equal full beneficial ownership. Always use the reported dates when interpreting changes."
+    ws["A3"]=(
+        "For Helsinki issuers, registered-shareholder data and legal share count are sourced from the issuer / Euroclear Finland when recovered; Yahoo Finance remains supplementary for aggregate institutional/insider fields and fund tables."
+        if is_finnish_ticker(ticker)
+        else "Ownership snapshot from Yahoo Finance via yfinance. Institutional/fund positions can lag regulatory filings; insider roster figures may not equal full beneficial ownership. Always use the reported dates when interpreting changes."
+    )
     ws["A3"].font=Font(italic=True,color=GREY); ws["A3"].alignment=Alignment(wrap_text=True)
     try: ws.merge_cells("A3:H3")
     except Exception: pass
@@ -232,4 +236,10 @@ def ensure_ownership_analysis(wb,ticker):
     for row in ws.iter_rows():
         for cell in row: cell.alignment=Alignment(vertical="top",wrap_text=True)
     ws.freeze_panes="A5"
+    if is_finnish_ticker(ticker):
+        setattr(wb,"_finland_ownership_meta",{
+            **official_meta,
+            "registered_holders":len(official_rows),
+            "shares_outstanding":shares_out,
+        })
     return ws
