@@ -19,6 +19,7 @@ import yfinance as yf
 from openpyxl.styles import PatternFill, Font, Alignment
 from openpyxl.utils import get_column_letter
 
+from finland_sources import is_finnish_ticker
 from issuer_source_engine import (
     build_crossborder_history,
     patch_financial_statements_from_history,
@@ -123,7 +124,7 @@ def _recover_crossborder_history(wb,ticker):
         return None
     try: info=yf.Ticker(ticker).info or {}
     except Exception: info={}
-    facts=_fetch_sec_facts(ticker)
+    facts=None if is_finnish_ticker(ticker) else _fetch_sec_facts(ticker)
     try:
         hist,meta=build_crossborder_history(ticker,info,facts)
     except Exception as exc:
@@ -143,7 +144,7 @@ def _recover_crossborder_history(wb,ticker):
 
 
 def _repair_foreign_filings(wb,ticker):
-    if "Filings" not in wb.sheetnames: return
+    if "Filings" not in wb.sheetnames or is_finnish_ticker(ticker): return
     try:
         items=requests.get("https://www.sec.gov/files/company_tickers.json",headers=SEC_HEADERS,timeout=25).json(); cik=None
         for item in items.values():
