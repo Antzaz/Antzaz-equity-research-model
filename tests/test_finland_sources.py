@@ -405,7 +405,7 @@ def test_nordic_construction_peers_are_prioritized_for_yit():
 
 def test_finland_sector_fallbacks_precede_us_fallback_candidates(monkeypatch):
     monkeypatch.setattr(dynamic_peer_engine,"preferred_peer_symbols",lambda ticker,industry:[])
-    monkeypatch.setattr(dynamic_peer_engine,"yf",None)
+    monkeypatch.setattr(dynamic_peer_engine,"yf",object())
     out=dynamic_peer_engine._discover_candidates(
         "YIT.HE","Industrials","Engineering & Construction","","", "FI"
     )
