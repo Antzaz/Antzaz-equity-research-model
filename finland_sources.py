@@ -359,6 +359,51 @@ def _extract_esef_report(payload: dict) -> tuple[dict[int, dict], dict]:
     }
 
 
+def finland_esef_filings(ticker: str, info: dict | None = None, limit: int = 12) -> tuple[list[dict], dict]:
+    """Return recent Finnish ESEF filing metadata for workbook filing registers."""
+    urls, discovery = _filing_json_urls(ticker, info, limit=limit)
+    rows = []
+    for item in discovery.get("filings", []) if isinstance(discovery, dict) else []:
+        raw_json = item.get("json_url")
+        raw_viewer = item.get("viewer_url")
+        rows.append(
+            {
+                "form": "ESEF AFR",
+                "period_end": item.get("period_end"),
+                "published": item.get("published"),
+                "url": (
+                    urljoin(FILINGS_XBRL_ROOT + "/", str(raw_viewer))
+                    if raw_viewer
+                    else (
+                        urljoin(FILINGS_XBRL_ROOT + "/", str(raw_json))
+                        if raw_json
+                        else "https://oam.fi/"
+                    )
+                ),
+                "note": "Finnish annual financial report — ESEF / official OAM source mirrored by XBRL International",
+                "entity": item.get("entity"),
+                "lei": item.get("lei"),
+            }
+        )
+    # Discovery can occasionally expose fewer metadata rows than JSON URLs. Preserve a usable
+    # filing link rather than silently losing a machine-readable report.
+    known={row["url"] for row in rows}
+    for url in urls:
+        if url not in known:
+            rows.append(
+                {
+                    "form": "ESEF AFR",
+                    "period_end": None,
+                    "published": None,
+                    "url": url,
+                    "note": "Finnish annual financial report — machine-readable ESEF xBRL-JSON",
+                    "entity": None,
+                    "lei": None,
+                }
+            )
+    return rows[:limit], discovery
+
+
 def finland_esef_history(ticker: str, info: dict | None = None, limit: int = 8) -> tuple[dict, dict]:
     """Return annual financial history from free Finnish ESEF filings when available.
 
