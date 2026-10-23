@@ -201,7 +201,8 @@ Helsinki builds should be Finland-native across the workbook, not merely at the 
 - use issuer stock-exchange releases for deal/event monitoring;
 - use issuer-linked Vara Research for free consensus, estimate ranges and target-price context when available;
 - keep adjusted/comparable issuer metrics separate from statutory IFRS values;
-- keep currency/source labels Finland-aware through the final source-audit/polish passes.
+- keep currency/source labels Finland-aware through the final source-audit/polish passes;
+- use the ECB AAA euro-area 10-year spot curve as the EUR risk-free proxy for Helsinki/EUR WACC rather than a US Treasury default; use Finnish 20% corporate tax as the 2026 fallback only when a reported effective tax rate is unavailable.
 
 The ESEF parser may use recognized consolidated standard IFRS concepts plus a narrow conservative allow-list of unadjusted issuer-extension concepts for core statutory metrics. It must not map adjusted/comparable/underlying KPIs into IFRS accounting rows. Unsupported concepts remain blank rather than inferred or fabricated. Numeric-coverage reporting should distinguish true extraction failures from analyst inputs, derived fields, optional provider coverage and legitimate IFRS presentation/non-disclosure.
 
