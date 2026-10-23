@@ -181,6 +181,20 @@ Planned specialist extensions should reuse existing project modules rather than 
 - Portfolio Manager Agent
 - Research Journal / Decision Review Agent
 
+## Finland / Nasdaq Helsinki source policy
+
+For Yahoo-style Helsinki tickers ending in `.HE`, use the dedicated free-source route before generic market-data fallbacks:
+
+1. Finnish OAM / Nasdaq Helsinki regulated disclosures and ESEF annual reports.
+2. XBRL International `filings.xbrl.org` machine-readable ESEF xBRL-JSON sourced from OAM filings.
+3. Issuer investor-relations material.
+4. SEC annual XBRL only when applicable.
+5. Yahoo annual statements as a transparent fallback.
+
+Additional free Finland sources registered for research context include Nasdaq Nordic Company News, PRH Open Data, Statistics Finland PxWeb, Bank of Finland / FIN-FSA Open Data and Fingrid Open Data (free registration/API key required).
+
+The ESEF parser accepts only recognized consolidated annual IFRS facts. It must leave unsupported concepts blank rather than infer or fabricate values. Helsinki builds should expose the Finland/OAM source hierarchy in Data Quality, the research source registry and the Filings sheet.
+
 ## Current repository areas
 
 ### Single-company model
