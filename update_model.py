@@ -53,6 +53,7 @@ from ownership_analysis import ensure_ownership_analysis
 from currency_normalization import normalize_workbook_currency
 from consensus_quality import normalize_expectations_consensus
 from research_extensions import ensure_research_extensions
+from finland_sources import finland_esef_filings, is_finnish_ticker
 
 # institutional_layers historically created a 33-character temporary sheet name.
 # Patch its sheet factory once so both institutional refreshes are warning-free.
@@ -240,7 +241,38 @@ def update_scenarios(wb,hist,info):
         for c in cols: ws.cell(18,c).value=dep
 
 
-def update_filings(wb,ticker):
+def update_filings(wb,ticker,info=None):
+    ws=wb["Filings"]
+    for r in range(4,20):
+        for c in range(1,6): ws.cell(r,c).value=None
+
+    if is_finnish_ticker(ticker):
+        try:
+            rows,meta=finland_esef_filings(ticker,info or {},limit=12)
+        except Exception as exc:
+            print(f"Warning: Finnish ESEF filing list unavailable: {exc}")
+            rows=[]; meta={}
+        row=4
+        for item in rows:
+            values=[
+                item.get("form") or "ESEF AFR",
+                item.get("period_end"),
+                item.get("published"),
+                item.get("url") or "https://oam.fi/",
+                item.get("note") or "Finnish OAM / ESEF filing",
+            ]
+            for col,value in enumerate(values,1):
+                ws.cell(row,col).value=value
+            row+=1
+            if row>15: break
+        if rows:
+            print(f"Finnish filings: {len(rows)} ESEF/OAM annual filing record(s) loaded")
+            return
+        # Preserve an explicit official-source pointer even when the mirror has no match yet.
+        for col,value in enumerate(["OAM","", "", "https://oam.fi/","Official Finnish regulated-information archive; ESEF match not recovered automatically"],1):
+            ws.cell(4,col).value=value
+        return
+
     try:
         cik=cik_for(ticker)
         if not cik:
@@ -249,9 +281,6 @@ def update_filings(wb,ticker):
     except Exception as exc:
         print(f"Warning: SEC filings list unavailable; continuing without Filings refresh: {exc}")
         return
-    ws=wb["Filings"]
-    for r in range(4,20):
-        for c in range(1,6): ws.cell(r,c).value=None
     row=4
     for form,period,filed,acc,doc in zip(recent.get("form",[]),recent.get("reportDate",[]),recent.get("filingDate",[]),recent.get("accessionNumber",[]),recent.get("primaryDocument",[])):
         if form not in {"10-K","10-Q","8-K","DEF 14A"}:
@@ -324,7 +353,7 @@ def main():
         print(f"Peer classification: sector={sector!r}, industry={industry!r}, validated peers={len(peers)}")
     except Exception as exc:
         print(f"Warning: dynamic peer selection failed: {exc}")
-    update_filings(wb,ticker)
+    update_filings(wb,ticker,info)
     try: _company_analysis._merged_annual_series=annual_series
     except Exception: pass
     try: ensure_financial_statements(wb,ticker,facts)
