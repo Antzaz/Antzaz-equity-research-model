@@ -99,6 +99,12 @@ ESEF_CONCEPT_ALIASES = {
         "RevenueFromContractsWithCustomers",
         "RevenueFromContractsWithCustomersIncludingAssessedTax",
     ),
+    "cost": (
+        "CostOfSales",
+    ),
+    "gross": (
+        "GrossProfit",
+    ),
     "op": (
         "ProfitLossFromOperatingActivities",
         "OperatingProfitLoss",
@@ -120,6 +126,9 @@ ESEF_CONCEPT_ALIASES = {
     "depr": (
         "DepreciationAndAmortisationExpense",
         "DepreciationAmortisationAndImpairmentExpense",
+    ),
+    "rd": (
+        "ResearchAndDevelopmentExpense",
     ),
     "sbc": (
         "ShareBasedPaymentExpense",
@@ -329,7 +338,7 @@ def _extract_esef_report(payload: dict) -> tuple[dict[int, dict], dict]:
             # Income/cash-flow fields should represent approximately a full year. Balance-sheet
             # instants do not have a duration. EPS may have a shares unit; other values should be
             # monetary when a unit is supplied.
-            if field in {"revenue", "op", "ni", "eps", "ocf", "capex", "depr", "sbc"}:
+            if field in {"revenue", "cost", "gross", "op", "ni", "eps", "ocf", "capex", "depr", "rd", "sbc"}:
                 if duration_days is None or duration_days < 250 or duration_days > 450:
                     continue
             if field != "eps" and unit and "iso4217:" not in unit:
