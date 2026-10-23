@@ -200,7 +200,7 @@ def _filing_json_urls(ticker: str, info: dict | None = None, limit: int = 8) -> 
     for candidate in candidates:
         filt = [
             {"name": "country", "op": "eq", "val": "FI"},
-            {"name": "entity.name", "op": "ilike", "val": candidate},
+            {"name": "entity.name", "op": "ilike", "val": f"%{candidate}%"},
         ]
         params = {
             "filter": json.dumps(filt, separators=(",", ":")),
