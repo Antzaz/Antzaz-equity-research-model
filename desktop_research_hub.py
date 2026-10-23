@@ -430,6 +430,17 @@ class ResearchHub(tk.Tk):
         self.run_task(f"Guarded workbook — {ticker}", lambda: self._equity_task(ticker, full=False))
 
     def _equity_task(self, ticker: str, full: bool):
+        # Research runs should use the latest compatible model code whenever the machine is
+        # online.  A missed launcher-time update previously left the hub running stale wrappers
+        # while update_model.py had already changed its function signature.  Pull immediately
+        # before spawning the research subprocess; if GitHub is unavailable, preserve the hub's
+        # offline-first behavior and continue with the current local checkout.
+        try:
+            self.emit("Checking for the latest equity-research code…")
+            self._git_update()
+        except Exception as exc:
+            self.emit(f"GitHub update unavailable; continuing with local code: {exc}")
+
         py = python_executable()
         script = "research.py" if full else "commodity_safe_runner.py"
         self._run([py, script, ticker], cwd=ROOT)
