@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from typing import Iterable
 
+from finland_sources import finland_public_sources, is_finnish_ticker
+
 ISSUER_SOURCES = {
     "GOOGL": {"investor":"https://abc.xyz/investor/","earnings":"https://abc.xyz/investor/earnings/","annual_reports":"https://abc.xyz/investor/annual-reports/","governance":"https://abc.xyz/investor/board-and-governance/","workplace_governance":"https://abc.xyz/investor/board-and-governance/ldicc/default.aspx","additional_information":"https://abc.xyz/investor/additional-information/default.aspx"},
     "MSFT": {"investor":"https://www.microsoft.com/en-us/investor","investor_information":"https://www.microsoft.com/en-us/investor/investor-information","annual_reports":"https://www.microsoft.com/en-us/investor/annual-reports","filings":"https://www.microsoft.com/en-us/investor/sec-filings"},
@@ -77,8 +79,15 @@ def issuer_sources(ticker:str,website:str|None=None)->dict[str,str]:
 
 def _selected_pages(ticker:str,keys:Iterable[str],website:str|None=None)->list[str]:
     sources=issuer_sources(ticker,website); pages=[sources[k] for k in keys if sources.get(k)]; return list(dict.fromkeys(pages))
+def market_sources(ticker:str|None=None)->dict[str,dict]:
+    return finland_public_sources() if ticker and is_finnish_ticker(ticker) else {}
+
 def investor_pages(ticker:str,website:str|None=None)->list[str]:
-    return _selected_pages(ticker,("investor","investor_information","financial_reports","quarterly_results","earnings","annual_reports","filings","company_website"),website)
+    pages=_selected_pages(ticker,("investor","investor_information","financial_reports","quarterly_results","earnings","annual_reports","filings","company_website"),website)
+    if is_finnish_ticker(ticker):
+        market=market_sources(ticker)
+        pages.extend([market["finland_oam"]["url"],market["nasdaq_nordic_company_news"]["url"]])
+    return list(dict.fromkeys(pages))
 def segment_pages(ticker:str,website:str|None=None)->list[str]:
     return _selected_pages(ticker,("quarterly_results","financial_reports","annual_reports","business_structure","investor","company_website"),website)
 def specialist_sources()->dict[str,dict[str,str]]: return {k:dict(v) for k,v in SPECIALIST_MARKET_SOURCES.items()}
@@ -86,4 +95,4 @@ def consensus_sources()->dict[str,dict[str,str|None]]: return {k:dict(v) for k,v
 def professional_framework_sources()->dict[str,dict[str,str]]: return {k:dict(v) for k,v in PROFESSIONAL_FRAMEWORK_SOURCES.items()}
 def regulator_macro_sources()->dict[str,dict[str,str]]: return {k:dict(v) for k,v in REGULATOR_AND_MACRO_SOURCES.items()}
 def full_source_catalog(ticker:str|None=None,website:str|None=None)->dict[str,dict]:
-    return {"issuer":issuer_sources(ticker,website) if ticker else {},"regulator_macro":regulator_macro_sources(),"consensus":consensus_sources(),"specialist":specialist_sources(),"professional_frameworks":professional_framework_sources()}
+    return {"issuer":issuer_sources(ticker,website) if ticker else {},"market":market_sources(ticker),"regulator_macro":regulator_macro_sources(),"consensus":consensus_sources(),"specialist":specialist_sources(),"professional_frameworks":professional_framework_sources()}
