@@ -8,12 +8,15 @@ from public market inputs and writes every assumption, formula and source to a C
 Capital sheet.
 
 Priority:
-- risk-free rate: latest US Treasury 10-year par yield;
-- equity risk premium: Damodaran implied US ERP, with a dated conservative fallback;
-- beta: current Yahoo Finance beta, then 5Y monthly regression vs S&P 500;
-- cost of debt: risk-free plus a transparent leverage-based synthetic spread;
-- tax rate: latest reported effective tax rate from Financial Statements, else 21%;
-- capital weights: current market equity and total debt.
+- risk-free rate: match valuation currency where supported — ECB AAA euro-area 10-year
+  spot rate for EUR/Helsinki issuers and the US Treasury 10-year par yield for USD issuers;
+- equity risk premium: Damodaran mature-market implied ERP, with a dated conservative fallback;
+- beta: current Yahoo Finance beta, then a 5Y monthly regression; Helsinki issuers prefer
+  OMX Helsinki 25 / EURO STOXX 50 before the S&P 500 fallback;
+- cost of debt: currency-matched risk-free rate plus a transparent leverage-based synthetic spread;
+- tax rate: latest reported effective tax rate from Financial Statements; Helsinki issuers use
+  Finland's current 20% corporate-tax rate as the explicit fallback;
+- capital weights: current market equity and total debt in the traded security's valuation currency.
 
 The synthetic credit spread is explicitly a model assumption, not a reported credit quote.
 """
