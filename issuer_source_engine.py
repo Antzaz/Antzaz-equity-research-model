@@ -21,6 +21,8 @@ import requests
 import pandas as pd
 import yfinance as yf
 
+from finland_sources import finland_esef_history, is_finnish_ticker
+
 try:
     from bs4 import BeautifulSoup
 except Exception:
@@ -417,19 +419,46 @@ def _merge_histories(*histories: tuple[dict, str]) -> tuple[dict, dict]:
 
 
 def build_crossborder_history(ticker: str, info: dict | None, facts: dict | None) -> tuple[dict, dict]:
+    # Helsinki-listed companies get a dedicated free structured-data route first.  The ESEF
+    # repository mirrors official OAM filings and therefore outranks market-data aggregators.
+    # Missing ESEF concepts are still allowed to fall through to issuer IR / SEC / Yahoo.
+    fin_hist, fin_meta = finland_esef_history(ticker, info)
     website_hist, website_meta = issuer_website_history(ticker, info)
     sec_hist, sec_meta = sec_crossborder_history(facts)
     yf_hist, yf_meta = yfinance_statement_history(ticker)
-    merged, provenance = _merge_histories(
-        (website_hist, "Issuer IR"),
-        (sec_hist, "SEC annual XBRL"),
-        (yf_hist, "Yahoo annual statements"),
-    )
+
+    if is_finnish_ticker(ticker):
+        ordered = (
+            (fin_hist, "Finnish OAM / ESEF"),
+            (website_hist, "Issuer IR"),
+            (sec_hist, "SEC annual XBRL"),
+            (yf_hist, "Yahoo annual statements"),
+        )
+        priority = [
+            "Finnish OAM / ESEF structured annual filing",
+            "Issuer investor relations",
+            "SEC 10-K/20-F/40-F XBRL when applicable",
+            "Yahoo annual statements fallback",
+        ]
+    else:
+        ordered = (
+            (website_hist, "Issuer IR"),
+            (sec_hist, "SEC annual XBRL"),
+            (yf_hist, "Yahoo annual statements"),
+        )
+        priority = [
+            "Issuer investor relations",
+            "SEC 10-K/20-F/40-F XBRL",
+            "Yahoo annual statements fallback",
+        ]
+
+    merged, provenance = _merge_histories(*ordered)
     years = sorted(y for y,d in merged.items() if d.get("revenue") is not None or d.get("ni") is not None)
     if len(years) > 6:
         keep=set(years[-6:]); merged={y:d for y,d in merged.items() if y in keep}; provenance={y:d for y,d in provenance.items() if y in keep}
     meta = {
-        "priority": ["Issuer investor relations", "SEC 10-K/20-F/40-F XBRL", "Yahoo annual statements fallback"],
+        "priority": priority,
+        "finland_esef": fin_meta,
         "issuer": website_meta,
         "sec": sec_meta,
         "yahoo": yf_meta,
@@ -480,25 +509,42 @@ def patch_financial_statements_from_history(wb, hist: dict, meta: dict | None = 
         for idx,y in enumerate(bs_years,2):
             ws.cell(23,idx).value=y
             ws.cell(r,idx).value=hist[y][field]/1e9
-    # Replace SEC-only note with transparent hierarchy.
+    # Replace SEC-only note with the actual transparent hierarchy used for this build.
     try:
-        ws["A3"]="USD billions unless per-share data. Source hierarchy: issuer IR reports/tables → SEC annual XBRL (10-K/20-F/40-F; US-GAAP/IFRS) → Yahoo annual statements fallback. Missing fields remain blank rather than estimated."
+        priority = " → ".join((meta or {}).get("priority") or [
+            "Issuer investor relations",
+            "SEC annual XBRL",
+            "Yahoo annual statements fallback",
+        ])
+        ws["A3"]=f"USD billions unless per-share data. Source hierarchy: {priority}. Missing fields remain blank rather than estimated."
     except Exception:
         pass
 
 
 def write_source_hierarchy(wb, ticker: str, meta: dict):
+    priority = list(meta.get("priority") or [
+        "Issuer investor relations",
+        "SEC 10-K/20-F/40-F XBRL",
+        "Yahoo annual statements fallback",
+    ])
+    hierarchy = " → ".join(priority)
     if "Historical Financials" in wb.sheetnames:
         ws=wb["Historical Financials"]
         ws["A24"]="Sources"
-        ws["B24"]="Issuer IR → SEC 10-K/20-F/40-F XBRL → Yahoo annual statements fallback"
+        ws["B24"]=hierarchy
         ws["A25"]="Observed years"
         ws["B25"]=", ".join(str(y) for y in meta.get("years",[])) or "None"
         issuer=meta.get("issuer",{}) or {}
         ws["A26"]="Issuer IR page"
         ws["B26"]=(issuer.get("pages") or [None])[0]
+        fin=meta.get("finland_esef",{}) or {}
+        if is_finnish_ticker(ticker):
+            ws["A27"]="Finnish ESEF"
+            ws["B27"]=(fin.get("json_urls") or ["https://oam.fi/"])[0]
     if "Company Data" in wb.sheetnames:
         ws=wb["Company Data"]
-        ws["D5"]="Historical data: issuer IR / 20-F IFRS / Yahoo fallback"
-        if ticker.upper() in ISSUER_IR_PAGES:
+        ws["D5"]="Historical data: " + " / ".join(priority)
+        if is_finnish_ticker(ticker):
+            ws["D6"]="Official Finland disclosures: https://oam.fi/"
+        elif ticker.upper() in ISSUER_IR_PAGES:
             ws["D6"]="Issuer IR: " + ISSUER_IR_PAGES[ticker.upper()][0]
