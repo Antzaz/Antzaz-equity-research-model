@@ -107,12 +107,18 @@ issuer_source_engine.build_crossborder_history=_safe_build_crossborder_history
 model_reliability.build_crossborder_history=_safe_build_crossborder_history
 
 
-def _safe_update_filings(wb,ticker):
+def _safe_update_filings(wb,ticker,info=None):
+    """Preserve the guarded filing-sheet cleanup while forwarding provider metadata.
+
+    update_model.update_filings accepts optional company info so Helsinki-listed issuers can
+    resolve Finnish OAM/ESEF filings by company name. Keep this wrapper signature compatible
+    with the underlying function instead of dropping the third argument.
+    """
     if "Filings" in wb.sheetnames:
         ws=wb["Filings"]
         for r in range(4,20):
             for c in range(1,6): ws.cell(r,c).value=None
-    return _ORIGINAL_UPDATE_FILINGS(wb,ticker)
+    return _ORIGINAL_UPDATE_FILINGS(wb,ticker,info)
 update_model.update_filings=_safe_update_filings
 
 
