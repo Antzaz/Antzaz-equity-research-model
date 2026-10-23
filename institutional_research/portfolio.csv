@@ -1,0 +1,20 @@
+# Private portfolio tracked in the private repository for multi-computer use.
+# Use either Shares or ManualWeight.
+# If every holding has Shares > 0, market-value weights are calculated automatically.
+# Otherwise fill ManualWeight as decimals (for example 0.25 = 25%).
+Ticker,Shares,AverageCost,ManualWeight,Notes
+GOOGL,15,355.18,,
+AMZN,30,275.57,,
+NVDA,30,219.45,,
+JPM,15,357.99,,
+BRK-B,5,529.25,,
+SU.PA,10,302.4,,
+CVX,20,198.87,,
+TSM,10,430.42,,
+LITE,2,973.41,,
+UHS,20,170.91,,
+SNY,50,44.39,,
+TTE,30,88.61,,
+MEDP,2,597.12,,
+CMI,4,641.88,,
+MSFT,10,481.54,,
