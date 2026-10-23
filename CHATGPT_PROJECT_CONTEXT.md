@@ -191,9 +191,19 @@ For Yahoo-style Helsinki tickers ending in `.HE`, use the dedicated free-source 
 4. SEC annual XBRL only when applicable.
 5. Yahoo annual statements as a transparent fallback.
 
-Additional free Finland sources registered for research context include Nasdaq Nordic Company News, PRH Open Data, Statistics Finland PxWeb, Bank of Finland / FIN-FSA Open Data and Fingrid Open Data (free registration/API key required).
+Additional free Finland sources registered for research context include Nasdaq Nordic Company News, PRH Open Data, Statistics Finland PxWeb, Bank of Finland / FIN-FSA Open Data, Fingrid Open Data (free registration/API key required), and issuer-linked Vara Research consensus where the issuer provides the public link.
 
-The ESEF parser accepts only recognized consolidated annual IFRS facts. It must leave unsupported concepts blank rather than infer or fabricate values. Helsinki builds should expose the Finland/OAM source hierarchy in Data Quality, the research source registry and the Filings sheet.
+Helsinki builds should be Finland-native across the workbook, not merely at the historical-financial fallback layer:
+- feed Finnish OAM/ESEF facts into the full IFRS statement renderer;
+- recover dimensioned ESEF operating segments when reported;
+- keep issuer-defined KPIs and latest interim/results tables in the dedicated `Issuer KPIs` sheet;
+- prefer issuer/Euroclear registered-shareholder tables and legal share counts where available;
+- use issuer stock-exchange releases for deal/event monitoring;
+- use issuer-linked Vara Research for free consensus, estimate ranges and target-price context when available;
+- keep adjusted/comparable issuer metrics separate from statutory IFRS values;
+- keep currency/source labels Finland-aware through the final source-audit/polish passes.
+
+The ESEF parser may use recognized consolidated standard IFRS concepts plus a narrow conservative allow-list of unadjusted issuer-extension concepts for core statutory metrics. It must not map adjusted/comparable/underlying KPIs into IFRS accounting rows. Unsupported concepts remain blank rather than inferred or fabricated. Numeric-coverage reporting should distinguish true extraction failures from analyst inputs, derived fields, optional provider coverage and legitimate IFRS presentation/non-disclosure.
 
 ## Current repository areas
 
