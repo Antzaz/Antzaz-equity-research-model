@@ -5,6 +5,7 @@ import issuer_source_engine
 import issuer_statement_profiles
 import consensus_sources
 import wacc_engine
+import dynamic_peer_engine
 from source_registry import full_source_catalog, market_sources
 
 
@@ -391,3 +392,22 @@ def test_helsinki_wacc_uses_finland_tax_fallback(monkeypatch):
     result=wacc_engine.calculate_wacc(wb,"YIT.HE",{"currency":"EUR"})
     assert result["tax_rate"]==0.20
     assert result["currency"]=="EUR"
+
+
+def test_nordic_construction_peers_are_prioritized_for_yit():
+    peers=dynamic_peer_engine.STRATEGIC_PEERS["YIT.HE"]
+    assert peers[:4]==["SKA-B.ST","NCC-B.ST","PEAB-B.ST","SRV1V.HE"]
+    assert "CONSTI.HE" in peers
+    assert "KREATE.HE" in peers
+    assert "GRK.HE" in peers
+    assert dynamic_peer_engine.NORDIC_INDUSTRY_FALLBACK["Engineering & Construction"][0]=="SKA-B.ST"
+
+
+def test_finland_sector_fallbacks_precede_us_fallback_candidates(monkeypatch):
+    monkeypatch.setattr(dynamic_peer_engine,"preferred_peer_symbols",lambda ticker,industry:[])
+    monkeypatch.setattr(dynamic_peer_engine,"yf",None)
+    out=dynamic_peer_engine._discover_candidates(
+        "YIT.HE","Industrials","Engineering & Construction","","", "FI"
+    )
+    assert out.index("SKA-B.ST") < out.index("ETN")
+    assert out.index("SRV1V.HE") < out.index("ETN")
