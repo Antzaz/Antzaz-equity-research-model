@@ -109,7 +109,6 @@ ESEF_CONCEPT_ALIASES = {
     ),
     "capex": (
         "PurchaseOfPropertyPlantAndEquipment",
-        "PurchaseOfIntangibleAssets",
     ),
     "depr": (
         "DepreciationAndAmortisationExpense",
@@ -132,8 +131,6 @@ ESEF_CONCEPT_ALIASES = {
         "EquityAttributableToOwnersOfParent",
     ),
     "debt": (
-        "CurrentBorrowings",
-        "NoncurrentBorrowings",
         "Borrowings",
     ),
 }
@@ -227,7 +224,7 @@ def _filing_json_urls(ticker: str, info: dict | None = None, limit: int = 8) -> 
             entity = included.get(str(rel.get("id")), {})
             entity_name = _norm_name(entity.get("name"))
             # Require a meaningful local name match; server-side ilike alone is not enough.
-            if entity_name and not (candidate in entity_name or entity_name in candidate):
+            if entity_name and entity_name != candidate:
                 continue
             raw_url = attrs.get("json_url")
             if raw_url:
