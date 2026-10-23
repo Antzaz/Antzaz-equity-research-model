@@ -421,4 +421,19 @@ def ensure_deal_analysis(wb,ticker,info=None,horizon_days=DEFAULT_HORIZON_DAYS,m
     ws.freeze_panes="A15"; ws.auto_filter.ref=f"A14:R{max(14,row-1)}"
     if is_finnish_ticker(ticker):
         setattr(wb,"_finland_deal_meta",meta)
+        if "Data Quality" in wb.sheetnames:
+            dq=wb["Data Quality"]; label="Finnish issuer-release coverage"; qrow=None
+            for r in range(1,dq.max_row+1):
+                if str(dq.cell(r,1).value or "").strip()==label:
+                    qrow=r; break
+            qrow=qrow or dq.max_row+1
+            count=int(meta.get("finland_issuer_items") or 0)
+            status="PASS" if count else "REVIEW"
+            dq.cell(qrow,1,label); dq.cell(qrow,2,status)
+            dq.cell(qrow,3,f"Issuer stock-exchange/company releases reviewed: {count}; qualified material transaction(s): {meta.get('qualified_deals',0)}")
+            dq.cell(qrow,4,"Issuer releases are the primary event/deal source for Helsinki names; Yahoo supplements coverage and SEC is used only when applicable.")
+            dq.cell(qrow,2).font=Font(bold=True)
+            dq.cell(qrow,2).fill=_fill(PALE_GREEN if status=="PASS" else PALE_YELLOW)
+            for col in range(1,5):
+                dq.cell(qrow,col).alignment=Alignment(wrap_text=True,vertical="top")
     return ws
