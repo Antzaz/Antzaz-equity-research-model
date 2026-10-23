@@ -136,3 +136,8 @@ Generated workbooks, agent run reports, private portfolio files, local Streamlit
 ## Closed-loop portfolio research
 
 The private `institutional_research` layer now supports a transaction-ledger truth layer, TWR/MWR, point-in-time attribution, optional point-in-time Brinson attribution, research-workbook expected-return integration, transparent sizing ranges, thesis-budget diagnostics, company-model portfolio scenarios, expected-return decomposition, transaction-cost-aware rebalancing and decision-journal outcome analytics. These additions are private/offline only and are not exported to the recruiter-safe public showcase.
+
+
+## Windows desktop app
+
+For normal Windows use, clone this private repo and double-click `install_desktop_app.bat` once. It creates an **Antzaz Investment Research** desktop shortcut. The launcher can update from GitHub, run full equity research, build a guarded model, refresh/open the portfolio dashboard and open the latest workbook. See `DESKTOP_APP.md`.

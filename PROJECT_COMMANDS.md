@@ -1,3 +1,7 @@
+## Desktop launcher
+
+One-time setup on each Windows computer: double-click `install_desktop_app.bat` in the cloned private repository. After that, use **Antzaz Investment Research** on the desktop. The launcher updates from GitHub before research/dashboard actions by default. See `DESKTOP_APP.md`.
+
 # Project launch commands
 
 Assumes the repository is located at:
