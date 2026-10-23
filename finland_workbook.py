@@ -73,6 +73,9 @@ def ensure_finland_issuer_kpis(wb,ticker,info=None):
     info=info or {}
     annual,annual_meta=finland_key_figures(ticker,info)
     latest,latest_meta=finland_latest_results(ticker,info)
+    statement_meta=getattr(wb,"_finland_esef_statement_meta",{}) or {}
+    segment_meta=getattr(wb,"_finland_segment_meta",{}) or {}
+    ownership_meta=getattr(wb,"_finland_ownership_meta",{}) or {}
 
     name="Issuer KPIs"
     if name in wb.sheetnames:
@@ -175,6 +178,9 @@ def ensure_finland_issuer_kpis(wb,ticker,info=None):
 
     _section(ws,row,"Source status",9)
     status_rows=[
+        ("ESEF full-statement concepts","PASS" if statement_meta.get("tag_count") else "REVIEW",f"Standard/conservative statutory IFRS concepts recovered: {statement_meta.get('tag_count',0)}"),
+        ("ESEF operating segments","PASS" if segment_meta.get("segment_count") else "REVIEW",f"Segments recovered: {segment_meta.get('segment_count',0)}; with economics: {segment_meta.get('numeric_segments',0)}"),
+        ("Registered shareholder table","PASS" if ownership_meta.get("registered_holders") else "REVIEW",f"Issuer/Euroclear rows: {ownership_meta.get('registered_holders',0)}; shares outstanding: {ownership_meta.get('shares_outstanding') or 'not recovered'}"),
         ("Annual KPI extraction",annual_meta.get("status"),annual_meta.get("source") or "; ".join(annual_meta.get("pages_checked") or [])),
         ("Latest results extraction",latest_meta.get("status"),latest_meta.get("source") or f"Candidate releases: {latest_meta.get('candidates',0)}"),
         ("Vara consensus","PASS" if vara_rows else "REVIEW",f"Issuer-linked Vara observations recovered: {len(vara_rows)}"),
@@ -194,6 +200,24 @@ def ensure_finland_issuer_kpis(wb,ticker,info=None):
 
     annual_status="PASS" if annual else "REVIEW"
     latest_status="PASS" if latest else "REVIEW"
+    _quality_row(
+        wb,
+        "Finnish ESEF statement coverage",
+        "PASS" if statement_meta.get("tag_count") else "REVIEW",
+        f"Standard/conservative statutory IFRS concepts available: {statement_meta.get('tag_count',0)}",
+    )
+    _quality_row(
+        wb,
+        "Finnish segment coverage",
+        "PASS" if segment_meta.get("segment_count") else "REVIEW",
+        f"Operating segments recovered: {segment_meta.get('segment_count',0)}; numeric segment economics: {segment_meta.get('numeric_segments',0)}",
+    )
+    _quality_row(
+        wb,
+        "Finnish ownership coverage",
+        "PASS" if ownership_meta.get("registered_holders") else "REVIEW",
+        f"Issuer/Euroclear registered holders: {ownership_meta.get('registered_holders',0)}; legal share count: {ownership_meta.get('shares_outstanding') or 'not recovered'}",
+    )
     _quality_row(
         wb,
         "Finnish issuer KPI coverage",
