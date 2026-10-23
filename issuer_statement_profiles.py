@@ -129,6 +129,67 @@ TSM_BALANCE = [
 
 TSM_CASH = deepcopy(generic.CASH)
 
+# Generic ESEF/IFRS corporate profile for Nasdaq Helsinki issuers.  It uses only standard IFRS
+# concepts plus structured Yahoo aliases; company-extension concepts are handled separately by
+# Finland-specific segment/KPI parsers rather than guessed into statement rows.
+IFRS_INCOME = [
+    _row("Revenue", ["Total Revenue","Operating Revenue"], ["ifrs-full:Revenue","ifrs-full:RevenueFromContractsWithCustomers"], aliases=("Net Revenue",)),
+    _row("Cost of Revenue", ["Cost Of Revenue"], ["ifrs-full:CostOfSales"], aliases=("Cost of Sales",)),
+    _row("Gross Profit", ["Gross Profit"], ["ifrs-full:GrossProfit"]),
+    _row("Research & Development", ["Research And Development"], ["ifrs-full:ResearchAndDevelopmentExpense"]),
+    _row("Selling, General & Administrative", ["Selling General And Administration"], ["ifrs-full:DistributionCosts","ifrs-full:AdministrativeExpense"]),
+    _row("Other Operating Income / (Expense)", ["Other Operating Expenses","Other Operating Income"], ["ifrs-full:OtherIncome","ifrs-full:OtherExpenseByFunction"]),
+    _row("Total Operating Expenses", ["Operating Expense"], []),
+    _row("Operating Income", ["Operating Income","EBIT"], ["ifrs-full:ProfitLossFromOperatingActivities"]),
+    _row("Share of Associates / Joint Ventures", ["Other Non Operating Income Expenses"], ["ifrs-full:ShareOfProfitLossOfAssociatesAndJointVenturesAccountedForUsingEquityMethod"]),
+    _row("Interest Income", ["Interest Income Non Operating"], ["ifrs-full:InterestRevenueExpense"]),
+    _row("Interest Expense / Finance Costs", ["Interest Expense Non Operating"], ["ifrs-full:FinanceCosts"]),
+    _row("Other Non-Operating Income / (Expense)", ["Other Non Operating Income Expenses","Total Other Finance Cost"], ["ifrs-full:OtherIncomeExpenseFromNonoperatingActivities"]),
+    _row("Pre-Tax Income", ["Pretax Income"], ["ifrs-full:ProfitLossBeforeTax"]),
+    _row("Income Taxes", ["Tax Provision"], ["ifrs-full:IncomeTaxExpenseContinuingOperations","ifrs-full:IncomeTaxExpense"]),
+    _row("Income from Continuing Operations", ["Net Income Continuous Operations"], ["ifrs-full:ProfitLossFromContinuingOperations"]),
+    _row("Discontinued Operations", ["Net Income Discontinuous Operations"], ["ifrs-full:ProfitLossFromDiscontinuedOperations"]),
+    _row("Net Income", ["Net Income","Net Income Common Stockholders"], ["ifrs-full:ProfitLoss"]),
+    _row("Net Income Attributable to Parent", ["Net Income Common Stockholders"], ["ifrs-full:ProfitLossAttributableToOwnersOfParent"]),
+    _row("Noncontrolling Interests", ["Net Income Including Noncontrolling Interests"], ["ifrs-full:ProfitLossAttributableToNoncontrollingInterests"]),
+    _row("Basic EPS", ["Basic EPS"], ["ifrs-full:BasicEarningsLossPerShare"], "eps"),
+    _row("Diluted EPS", ["Diluted EPS"], ["ifrs-full:DilutedEarningsLossPerShare","ifrs-full:BasicAndDilutedEarningsLossPerShare"], "eps"),
+    _row("Basic Weighted Average Shares (bn)", ["Basic Average Shares"], ["ifrs-full:WeightedAverageShares"], "shares"),
+    _row("Diluted Weighted Average Shares (bn)", ["Diluted Average Shares"], ["ifrs-full:AdjustedWeightedAverageShares"], "shares"),
+]
+
+IFRS_BALANCE = deepcopy(TSM_BALANCE)
+
+IFRS_CASH = [
+    _row("Net Income", ["Net Income From Continuing Operations","Net Income"], ["ifrs-full:ProfitLoss"]),
+    _row("Depreciation, Amortization & Impairment", ["Depreciation Amortization Depletion","Depreciation And Amortization"], ["ifrs-full:DepreciationAmortisationAndImpairmentExpense","ifrs-full:DepreciationAndAmortisationExpense"]),
+    _row("Stock-Based Compensation", ["Stock Based Compensation"], ["ifrs-full:ShareBasedPaymentExpense"]),
+    _row("Deferred / Income Tax Adjustments", ["Deferred Tax"], ["ifrs-full:AdjustmentsForIncomeTaxExpense"]),
+    _row("Asset Impairments", ["Impairment Of Capital Assets"], ["ifrs-full:ImpairmentLossReversalOfImpairmentLossRecognisedInProfitOrLoss"]),
+    _row("Other Non-Cash Items", ["Other Non Cash Items"], ["ifrs-full:OtherAdjustmentsForWhichCashEffectsAreInvestingOrFinancingCashFlow"]),
+    _row("Change in Accounts Receivable", ["Change In Accounts Receivable"], ["ifrs-full:IncreaseDecreaseInTradeAndOtherReceivables"]),
+    _row("Change in Inventory", ["Change In Inventory"], ["ifrs-full:IncreaseDecreaseInInventories"]),
+    _row("Change in Accounts Payable / Accrued Liabilities", ["Change In Payables And Accrued Expense","Change In Account Payable"], ["ifrs-full:IncreaseDecreaseInTradeAndOtherPayables"]),
+    _row("Change in Other Working Capital", ["Change In Other Working Capital"], ["ifrs-full:IncreaseDecreaseInOtherOperatingAssets","ifrs-full:IncreaseDecreaseInOtherOperatingLiabilities"]),
+    _row("Operating Cash Flow", ["Operating Cash Flow"], ["ifrs-full:CashFlowsFromUsedInOperatingActivities"]),
+    _row("Capital Expenditures", ["Capital Expenditure","Purchase Of PPE"], ["ifrs-full:PurchaseOfPropertyPlantAndEquipment"]),
+    _row("Purchases of Intangibles", ["Purchase Of Intangibles"], ["ifrs-full:PurchaseOfIntangibleAssets"]),
+    _row("Acquisitions", ["Net Business Purchases","Purchase Of Business"], ["ifrs-full:AcquisitionOfSubsidiariesNetOfCashAcquired"]),
+    _row("Purchases of Investments", ["Investment Purchases"], ["ifrs-full:PurchaseOfInvestments"]),
+    _row("Proceeds from Investment Sales", ["Investment Sales"], ["ifrs-full:ProceedsFromSalesOfInvestments"]),
+    _row("Investing Cash Flow", ["Investing Cash Flow"], ["ifrs-full:CashFlowsFromUsedInInvestingActivities"]),
+    _row("Debt Issuance", ["Issuance Of Debt","Long Term Debt Issuance"], ["ifrs-full:ProceedsFromBorrowings"]),
+    _row("Debt Repayments", ["Repayment Of Debt","Long Term Debt Payments"], ["ifrs-full:RepaymentsOfBorrowings"]),
+    _row("Common Stock Issuance", ["Issuance Of Capital Stock","Common Stock Issuance"], ["ifrs-full:ProceedsFromIssuingShares"]),
+    _row("Share Repurchases", ["Repurchase Of Capital Stock","Common Stock Payments"], ["ifrs-full:PaymentsToAcquireOrRedeemEntitysShares"]),
+    _row("Dividends", ["Cash Dividends Paid"], ["ifrs-full:DividendsPaid"]),
+    _row("Financing Cash Flow", ["Financing Cash Flow"], ["ifrs-full:CashFlowsFromUsedInFinancingActivities"]),
+    _row("Effect of FX on Cash", ["Effect Of Exchange Rate Changes"], ["ifrs-full:EffectOfExchangeRateChangesOnCashAndCashEquivalents"]),
+    _row("Net Change in Cash", ["Changes In Cash"], ["ifrs-full:IncreaseDecreaseInCashAndCashEquivalents"]),
+    _row("Beginning Cash", ["Beginning Cash Position"], []),
+    _row("Ending Cash", ["End Cash Position","Cash And Cash Equivalents"], ["ifrs-full:CashAndCashEquivalents"]),
+]
+
 SIE_INCOME = [
     _row("Revenue", ["Total Revenue", "Operating Revenue"], ["ifrs-full:Revenue"]),
     _row("Cost of Revenue", ["Cost Of Revenue"], ["ifrs-full:CostOfSales"]),
@@ -335,6 +396,11 @@ PROFILES = {
         "canonical_revenue": "Revenue", "derive_fcf": True, "balance_net_debt": True,
         "min_structure": (20, 30, 25), "min_mapped": (11, 16, 13),
     },
+    "ifrs": {
+        "name": "IFRS / ESEF corporate", "income": IFRS_INCOME, "balance": IFRS_BALANCE, "cash": IFRS_CASH,
+        "canonical_revenue": "Revenue", "derive_fcf": True, "balance_net_debt": True,
+        "min_structure": (20, 30, 24), "min_mapped": (10, 14, 10),
+    },
     "bank": {
         "name": "Bank / financial institution", "income": BANK_INCOME, "balance": BANK_BALANCE, "cash": BANK_CASH,
         "canonical_revenue": "Total Net Revenue", "derive_fcf": False, "balance_net_debt": False,
@@ -359,7 +425,11 @@ TICKER_PROFILE = {
 
 
 def get_statement_profile(ticker: str):
-    key = TICKER_PROFILE.get(str(ticker).upper().strip(), "default")
+    symbol=str(ticker).upper().strip()
+    key = TICKER_PROFILE.get(symbol)
+    if key is None and symbol.endswith(".HE"):
+        key="ifrs"
+    key = key or "default"
     profile = deepcopy(PROFILES[key])
     profile["key"] = key
     return profile
