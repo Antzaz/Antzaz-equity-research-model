@@ -344,6 +344,13 @@ def _extract_table_history(df: pd.DataFrame) -> dict:
             label = _norm(row.get(label_col))
             if not label:
                 continue
+            # Keep canonical statement metrics distinct from issuer-defined adjusted/non-GAAP
+            # key figures.  In particular, "adjusted operating profit" is not IFRS operating
+            # profit and "operating cash flow after investments" is not operating cash flow.
+            if field=="op" and any(x in label for x in ("adjusted","comparable","underlying")):
+                continue
+            if field=="ocf" and any(x in label for x in ("after investments","after investment","free cash flow","after capex")):
+                continue
             if not any(_norm(a) in label or label in _norm(a) for a in aliases):
                 continue
             for col, y in year_cols.items():
