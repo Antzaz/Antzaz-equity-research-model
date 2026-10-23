@@ -94,6 +94,8 @@ The ESEF parser prioritizes consolidated annual IFRS facts and a small conservat
 
 Helsinki/EUR WACC builds also use an **ECB AAA euro-area 10-year spot-rate** risk-free proxy instead of inheriting the US Treasury curve. If a reported effective tax rate cannot be recovered, Finnish issuers use the current 20% Finnish corporate-tax fallback for tax year 2026; the workbook labels fallbacks and source dates explicitly.
 
+Peer discovery is region-aware for Nordic issuers. Finnish construction/engineering names prioritize Nordic listed comparables (for example Skanska, NCC, Peab, SRV, Consti, Kreate, GRK, NRC, JM and Bonava for YIT-style businesses) before broad US sector fallbacks; every candidate still passes the normal sector/industry, size, duplication and public-data coverage checks.
+
 Foreign issuers are normalized to the traded security's quote currency before valuation and consensus comparisons. SEC outages or throttling are designed to fall through to issuer/Yahoo recovery instead of stopping the entire model.
 
 ## Workbook consolidation
