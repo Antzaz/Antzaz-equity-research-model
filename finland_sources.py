@@ -721,6 +721,12 @@ def finland_major_shareholders(ticker: str, info: dict | None = None, limit: int
         try:
             r=requests.get(page,timeout=15,headers={"User-Agent":"Mozilla/5.0 AntzazEquityResearch"})
             r.raise_for_status()
+            page_text=(BeautifulSoup(r.text,"html.parser").get_text(" ",strip=True) if BeautifulSoup is not None else re.sub(r"<[^>]+>"," ",r.text))
+            shares_outstanding=None
+            sm=re.search(r"(?:total\s+)?number\s+of\s+shares.{0,80}?([0-9][0-9\s,.]{5,})",page_text,re.I)
+            if sm:
+                try: shares_outstanding=float(re.sub(r"[^0-9.]","",sm.group(1).replace(",","")))
+                except Exception: shares_outstanding=None
             tables=pd.read_html(StringIO(r.text))
         except Exception as exc:
             errors.append(f"{page}: {exc}"[:240]); continue
@@ -752,7 +758,7 @@ def finland_major_shareholders(ticker: str, info: dict | None = None, limit: int
                 pct=next((n/100 if n>1 else n for n in reversed(nums) if 0<n<=100),None)
                 records.append({"holder":holder,"shares":shares,"pct":pct,"source":page})
             if len(records)>=3:
-                return records[:limit],{"status":"PASS","source":page,"provider":"Issuer / Euroclear Finland","pages_checked":pages[:12]}
+                return records[:limit],{"status":"PASS","source":page,"provider":"Issuer / Euroclear Finland","pages_checked":pages[:12],"shares_outstanding":shares_outstanding}
     return [],{"status":"NO_TABLE","pages_checked":pages[:12],"errors":errors[:10]}
 
 
