@@ -244,6 +244,9 @@ def _valid_segment_name(name):
     if any(b==low or low.startswith(b+" ") for b in BLACKLIST): return None
     # Reject broken HTML/narrative fragments and sentence-like candidates.
     if any(x in low for x in (" and our "," revenue was "," consists of "," includes ","segment revenues")): return None
+    # Reject parser fragments such as: Networking" and "Graphics.
+    # Balanced quote counts alone are insufficient because those fragments can contain two quotes.
+    if re.search(r'"\s+(?:and|or)\s+"', s, flags=re.IGNORECASE): return None
     if s.count('"')%2 or s.count("(")!=s.count(")"): return None
     words=s.split()
     if len(words)>8: return None
