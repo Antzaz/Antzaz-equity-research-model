@@ -371,10 +371,14 @@ def main():
     ticker=get_ticker(); print(f"Ticker: {ticker}")
     if not TEMPLATE.exists(): raise FileNotFoundError(TEMPLATE)
     info=yf_info(ticker)
-    try:
-        facts=company_facts(ticker)
-    except Exception as exc:
-        print(f"Warning: SEC Company Facts unavailable: {exc}"); facts=None
+    if is_finnish_ticker(ticker):
+        facts=None
+        print("Helsinki issuer detected: skipping US SEC first-pass and using Finnish OAM / ESEF recovery.")
+    else:
+        try:
+            facts=company_facts(ticker)
+        except Exception as exc:
+            print(f"Warning: SEC Company Facts unavailable: {exc}"); facts=None
     hist=build_history(ticker,facts)
     wb=load_workbook(TEMPLATE,data_only=False)
     put_company(wb,ticker,info); put_history(wb,hist)
