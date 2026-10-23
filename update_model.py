@@ -176,6 +176,17 @@ def put_company(wb,ticker,info):
     for cell,value in vals.items():
         if value is not None:
             ws[cell]=value
+    currency=str(info.get("currency") or info.get("financialCurrency") or "USD").upper()
+    for cell,label in {
+        "A10":f"Market Cap ({currency} bn)",
+        "A11":f"Enterprise Value ({currency} bn)",
+        "A12":f"Cash ({currency} bn)",
+        "A13":f"Debt ({currency} bn)",
+        "A14":f"Net Debt ({currency} bn)",
+    }.items():
+        ws[cell]=label
+    if is_finnish_ticker(ticker):
+        ws["D7"]="Latest regulated filings: Finnish OAM / ESEF; quarterly/result releases: issuer IR / Nasdaq Helsinki"
 
 
 def put_history(wb,hist):
@@ -184,7 +195,7 @@ def put_history(wb,hist):
         for c in range(2,8):
             ws.cell(r,c).value=None
     if not hist:
-        print("Warning: SEC annual history unavailable; historical raw-input rows left blank for issuer/Yahoo recovery.")
+        print("Warning: first-pass annual history unavailable; raw-input rows left blank for issuer/regulator/Yahoo recovery.")
         return
     for i,y in enumerate(sorted(hist)[-6:],2):
         d=hist[y]
@@ -267,6 +278,12 @@ def _call_update_filings_compat(wb,ticker,info=None):
 
 def update_filings(wb,ticker,info=None):
     ws=wb["Filings"]
+    if is_finnish_ticker(ticker):
+        ws["A1"]=f"{ticker} — Filings & Regulated Sources"
+        try:
+            ws.merge_cells("A1:E2")
+        except Exception:
+            pass
     for r in range(4,20):
         for c in range(1,6): ws.cell(r,c).value=None
 
