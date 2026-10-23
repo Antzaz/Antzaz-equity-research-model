@@ -92,6 +92,8 @@ For `.HE` issuers, the historical-financial recovery order is **Finnish OAM/ESEF
 
 The ESEF parser prioritizes consolidated annual IFRS facts and a small conservative allow-list of unadjusted issuer-extension concepts for core statutory metrics. Unsupported or genuinely undisclosed fields remain blank or are classified as IFRS presentation/non-disclosure rather than being guessed. The Numeric Coverage Audit distinguishes real extraction gaps from derived fields, optional consensus coverage, analyst inputs and legitimate IFRS presentation differences.
 
+Helsinki/EUR WACC builds also use an **ECB AAA euro-area 10-year spot-rate** risk-free proxy instead of inheriting the US Treasury curve. If a reported effective tax rate cannot be recovered, Finnish issuers use the current 20% Finnish corporate-tax fallback for tax year 2026; the workbook labels fallbacks and source dates explicitly.
+
 Foreign issuers are normalized to the traded security's quote currency before valuation and consensus comparisons. SEC outages or throttling are designed to fall through to issuer/Yahoo recovery instead of stopping the entire model.
 
 ## Workbook consolidation
