@@ -16,7 +16,10 @@ IMPORTANT_SHEETS=(
 )
 ANALYST_INPUT_HINTS=("analyst","input","assumption","multiple","manual")
 WAIT_HINTS=("forecast accountability","earnings & revisions","thesis timeline")
-NON_NUMERIC_HINTS=("source","notes","status","company","metric","segment","supplier","relationship","evidence","year","date","period")
+NON_NUMERIC_HINTS=("source","notes","status","company","metric","supplier","relationship","evidence","year","date","period")
+DERIVED_HINTS=("growth","margin","cagr","mix","net debt","working capital","free cash flow","return on","roic","roe","upside","downside","gap","spread","yield","coverage","ratio","change in")
+SECTION_LABELS={"income statement","balance sheet","cash flow statement","full statement coverage","source & data quality","reported operating / reportable segments","revenue by business line / product group"}
+
 
 def _fill(c): return PatternFill("solid",fgColor=c)
 
@@ -30,6 +33,9 @@ def _classify(sheet,label,header):
     text=f"{sheet} {label} {header}".lower()
     if any(x in text for x in ANALYST_INPUT_HINTS): return "ANALYST INPUT REQUIRED"
     if any(x in sheet.lower() for x in WAIT_HINTS): return "WAITING FOR HISTORY"
+    if sheet=="Expectations & Consensus": return "OPTIONAL / PUBLIC CONSENSUS COVERAGE"
+    if sheet in {"Capital Allocation","Valuation History"}: return "WAITING FOR SUFFICIENT HISTORY"
+    if any(x in str(label).lower() for x in DERIVED_HINTS): return "DERIVED / DEPENDENT DATA"
     if sheet=="Supply Chain": return "NOT PUBLICLY DISCLOSED / EXTRACTION REVIEW"
     if sheet=="Segment Analysis": return "NOT PUBLICLY DISCLOSED / EXTRACTION REVIEW"
     if sheet=="SOTP Framework": return "ANALYST INPUT REQUIRED"
@@ -50,7 +56,13 @@ def ensure_numeric_coverage_audit(wb,ticker):
         src=wb[sheet]
         for rr in range(1,src.max_row+1):
             label=str(src.cell(rr,1).value or "").strip()
-            if not label: continue
+            if not label or label.lower() in SECTION_LABELS: continue
+            # A completely descriptive row/section is not a missing numeric field.
+            row_values=[src.cell(rr,cc).value for cc in range(2,src.max_column+1)]
+            if row_values and all(v in (None,"") for v in row_values):
+                label_low=label.lower()
+                if any(x in label_low for x in ("section","source","note","important","research rule","methodology")):
+                    continue
             for cc in range(2,src.max_column+1):
                 cell=src.cell(rr,cc)
                 if cell.value not in (None,""): continue
@@ -64,6 +76,8 @@ def ensure_numeric_coverage_audit(wb,ticker):
                 cls=_classify(sheet,label,header)
                 action=("Research / extraction fallback required" if "REVIEW" in cls else
                         "Populate only with explicit analyst assumption" if "ANALYST" in cls else
+                        "Optional provider coverage; do not fabricate" if "OPTIONAL" in cls else
+                        "Derived automatically once dependencies are available" if "DERIVED" in cls else
                         "Allow history to mature")
                 row=[sheet,cell.coordinate,label,header,cls,action,"BLANK"]
                 for c,v in enumerate(row,1): ws.cell(r,c,v)
