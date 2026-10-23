@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import finland_sources
 import issuer_source_engine
+import issuer_statement_profiles
 from source_registry import full_source_catalog, market_sources
 
 
@@ -222,3 +223,52 @@ def test_update_model_compat_forwards_info_to_new_wrapper(monkeypatch):
     )
     assert result=="new-ok"
     assert called["info"]["longName"]=="YIT Oyj"
+
+
+def test_esef_companyfacts_adapter_exposes_standard_ifrs_facts():
+    facts=finland_sources._esef_companyfacts_from_payload(_sample_esef_payload(),"https://example.test/yit.json")
+    assert facts["_source_type"]=="Finnish OAM / ESEF"
+    revenue=facts["facts"]["ifrs-full"]["Revenue"]["units"]["EUR"]
+    assert revenue[0]["form"]=="ESEF"
+    assert revenue[0]["fy"]==2024
+    assert revenue[0]["val"]==1_000_000_000
+    assert facts["facts"]["ifrs-full"]["DilutedEarningsLossPerShare"]["units"]["EUR/shares"][0]["val"]==2.0
+
+
+def test_dimensioned_esef_segment_parser_keeps_segment_economics():
+    payload={
+        "facts":{
+            "seg_rev":{
+                "value":"317000000",
+                "dimensions":{
+                    "concept":"ifrs-full:Revenue",
+                    "entity":"lei:TEST",
+                    "period":"2025-01-01T00:00:00/2026-01-01T00:00:00",
+                    "unit":"iso4217:EUR",
+                    "ifrs-full:SegmentsAxis":"yit:ResidentialFinlandMember",
+                },
+            },
+            "seg_profit":{
+                "value":"-8000000",
+                "dimensions":{
+                    "concept":"yit:AdjustedOperatingProfit",
+                    "entity":"lei:TEST",
+                    "period":"2025-01-01T00:00:00/2026-01-01T00:00:00",
+                    "unit":"iso4217:EUR",
+                    "ifrs-full:SegmentsAxis":"yit:ResidentialFinlandMember",
+                },
+            },
+        }
+    }
+    segments=finland_sources._extract_esef_segments(payload)
+    rec=segments["Residential Finland"]
+    assert rec["revenue"][2025]==317_000_000
+    assert rec["op"][2025]==-8_000_000
+
+
+def test_helsinki_tickers_use_ifrs_statement_profile():
+    profile=issuer_statement_profiles.get_statement_profile("YIT.HE")
+    assert profile["key"]=="ifrs"
+    assert profile["name"]=="IFRS / ESEF corporate"
+    assert any(row[0]=="Operating Income" for row in profile["income"])
+    assert any(row[0]=="Cash & Cash Equivalents" for row in profile["balance"])
