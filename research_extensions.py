@@ -12,7 +12,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 from institutional_lenses import consolidate_research_workbench, ensure_institutional_lens_comparison
 from market_context import business_market_share_records, market_share_record
-from source_registry import SPECIALIST_MARKET_SOURCES, issuer_sources
+from source_registry import SPECIALIST_MARKET_SOURCES, issuer_sources, market_sources
 
 NAVY="17365D"; BLUE="2F75B5"; WHITE="FFFFFF"; GOLD="FFF2CC"
 PALE_GREEN="E2F0D9"; GREY="666666"; LINK_GREEN="008000"
@@ -46,6 +46,9 @@ def _safe_info(ticker,info=None):
 
 def _sources(ticker,info):
     return issuer_sources(ticker,(info or {}).get("website"))
+
+def _market_sources(ticker):
+    return market_sources(ticker)
 
 def _employee_signal(ticker,info):
     src=_sources(ticker,info)
@@ -251,6 +254,10 @@ def _write_leadership(wb,ticker,info,employee,leadership_score,leadership_rows,a
         ws.cell(rr,4,"Preferred company, filing, governance or workforce evidence")
         if str(url).startswith("http"): ws.cell(rr,3).hyperlink=url; ws.cell(rr,3).font=Font(color=LINK_GREEN,underline="single")
         rr+=1
+    for topic,s in _market_sources(ticker).items():
+        ws.cell(rr,1,topic.replace("_"," ").title()); ws.cell(rr,2,s.get("provider")); ws.cell(rr,3,s.get("url")); ws.cell(rr,4,s.get("purpose"))
+        if s.get("url"): ws.cell(rr,3).hyperlink=s.get("url"); ws.cell(rr,3).font=Font(color=LINK_GREEN,underline="single")
+        rr+=1
     for topic,s in SPECIALIST_MARKET_SOURCES.items():
         ws.cell(rr,1,topic.replace("_"," ").title()); ws.cell(rr,2,s.get("provider")); ws.cell(rr,3,s.get("url")); ws.cell(rr,4,s.get("purpose"))
         ws.cell(rr,3).hyperlink=s.get("url"); ws.cell(rr,3).font=Font(color=LINK_GREEN,underline="single"); rr+=1
@@ -327,9 +334,10 @@ def _summary(wb,ticker,employee,leadership_score,alt):
 def _quality(wb,ticker,info,employee,alt):
     if "Data Quality" not in wb.sheetnames: return
     ws=wb["Data Quality"]; existing={str(ws.cell(r,1).value or "").strip():r for r in range(1,ws.max_row+1)}
-    src=_sources(ticker,info); share=market_share_record(ticker); target=alt.get("target") or {}
+    src=_sources(ticker,info); mkt=_market_sources(ticker); share=market_share_record(ticker); target=alt.get("target") or {}
     peers=_peer_rows(wb); coverage=[x.get("data_coverage") for x in peers if x.get("data_coverage") is not None]
     checks=[
+        ("Market / official open-data sources","PASS" if mkt else "N/A",f"{len(mkt)} Finland/Nordic source(s) mapped" if mkt else "No market-specific open-data route required","Helsinki tickers use official/open Finnish sources including OAM/ESEF before generic market-data fallbacks."),
         ("Issuer source registry","PASS" if src else "REVIEW",f"{len(src)} issuer-owned source(s) mapped" if src else "No explicit issuer source mapped","Issuer pages improve auditability; regulator and transparent fallback sources remain separate."),
         ("Market-share comparability","PASS" if share else "REVIEW",share.get("basis") if share else "No comparable public industry-share source mapped","Peer market share is used only on a like-for-like market definition."),
         ("Employee sentiment scope","PASS" if employee.get("score") is not None else "REVIEW",employee.get("scope"),"Program satisfaction, engagement and company-wide happiness must not be conflated."),
@@ -354,4 +362,4 @@ def ensure_research_extensions(wb,ticker,info=None):
     _quality(wb,ticker,info,employee,alt); _dedupe(wb)
     institutional=ensure_institutional_lens_comparison(wb,ticker)
     removed=consolidate_research_workbench(wb)
-    return {"employee":employee,"leadership_score":leadership_score,"alternative":alt,"business_market_position":business_market_share_records(ticker),"issuer_sources":_sources(ticker,info),"institutional_comparison":institutional,"consolidated_tabs":removed}
+    return {"employee":employee,"leadership_score":leadership_score,"alternative":alt,"business_market_position":business_market_share_records(ticker),"issuer_sources":_sources(ticker,info),"market_sources":_market_sources(ticker),"institutional_comparison":institutional,"consolidated_tabs":removed}
