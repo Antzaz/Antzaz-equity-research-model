@@ -136,7 +136,8 @@ def _recover_crossborder_history(wb,ticker):
         write_source_hierarchy(wb,ticker,meta)
         patch_financial_statements_from_history(wb,hist,meta)
         _bank_mode(wb,ticker,info)
-        print(f"Historical source recovery: ticker={ticker}, years={sorted(hist)}, priority=issuer IR -> SEC annual XBRL -> Yahoo fallback")
+        priority=" -> ".join((meta or {}).get("priority") or ["Issuer IR","SEC annual XBRL","Yahoo fallback"])
+        print(f"Historical source recovery: ticker={ticker}, years={sorted(hist)}, priority={priority}")
         return hist
     return None
 
@@ -335,7 +336,10 @@ def repair_data_quality(wb,ticker):
         ws.cell(fixed,1,"Annual history coverage"); status="PASS" if len(years)>=3 else ("REVIEW" if len(years)==2 else "FAIL"); ws.cell(fixed,2,status); ws.cell(fixed,3,f"{len(years)} comparable annual periods: {years}" if years else "No annual periods"); ws.cell(fixed,4,"Foreign issuers and newer/spun companies are evaluated on available comparable annual history, not a hard-coded six-year requirement."); ws.cell(fixed,2).fill=_fill(PALE_GREEN if status=="PASS" else GOLD)
     put("Years unique and ascending","PASS" if years==sorted(set(years)) and bool(years) else "FAIL",str(years),"Tests only observed nonblank annual periods.")
     put("Latest actual alignment","PASS" if years and wb["Historical Financials"]["G3"].value==max(years) else "FAIL",f"Historical Financials!G = {wb['Historical Financials']['G3'].value}","Downstream forecasts require G to hold the latest actual.")
-    if getattr(wb,"_issuer_source_meta",None): put("Historical source hierarchy","PASS", "Issuer IR / SEC annual XBRL / Yahoo fallback", "Foreign-issuer history is no longer dependent on US 10-K us-gaap tags alone.")
+    meta=getattr(wb,"_issuer_source_meta",None)
+    if meta:
+        hierarchy=" / ".join(meta.get("priority") or ["Issuer IR","SEC annual XBRL","Yahoo fallback"])
+        put("Historical source hierarchy","PASS", hierarchy, "Helsinki issuers can use Finnish OAM/ESEF structured filings before market-data fallbacks; other foreign issuers remain independent of US 10-K us-gaap tags alone.")
 
 
 def prepare_model_reliability(wb,ticker):
