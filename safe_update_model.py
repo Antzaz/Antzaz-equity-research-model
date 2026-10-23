@@ -40,6 +40,7 @@ from costco_segment_analysis import ensure_costco_segment_analysis
 from constellation_segment_analysis import ensure_constellation_segment_analysis
 from decision_view_v2 import ensure_decision_view
 from finland_sources import finland_esef_companyfacts, is_finnish_ticker
+from finland_workbook import ensure_finland_issuer_kpis, finalize_finland_labels
 from output_quality_v3 import prune_low_value_tabs, reconcile_score_displays, ensure_quality_checks
 
 BASE=Path(__file__).resolve().parent
@@ -311,6 +312,17 @@ def _safe_research_extensions(wb,ticker,info=None):
     except Exception as exc: print(f"Warning: final Data Quality controls failed: {exc}")
     try: ensure_decision_view(wb,ticker)
     except Exception as exc: print(f"Warning: Decision View finalization failed: {exc}")
+    if is_finnish_ticker(ticker):
+        try:
+            finland_kpis=ensure_finland_issuer_kpis(wb,ticker,info or {})
+            setattr(wb,"_finland_issuer_kpis",finland_kpis)
+            print(f"Finnish issuer KPI layer: annual_rows={finland_kpis.get('annual_rows',0)}, latest_rows={finland_kpis.get('latest_rows',0)}")
+        except Exception as exc:
+            print(f"Warning: Finnish issuer KPI/results enrichment failed: {exc}")
+        try:
+            finalize_finland_labels(wb,ticker,info or {})
+        except Exception as exc:
+            print(f"Warning: Finnish workbook localization failed: {exc}")
     try:
         research_accountability.apply_research_accountability(wb,ticker,info or {})
     except Exception as exc:
