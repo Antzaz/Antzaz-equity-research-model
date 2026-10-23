@@ -14,6 +14,7 @@ except Exception:
     yf=None
 
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+from finland_sources import finland_major_shareholders, is_finnish_ticker
 
 NAVY="17365D"; BLUE="2F75B5"; WHITE="FFFFFF"; GREY="666666"
 FMT_PCT='0.0%;[Red](0.0%);-'; FMT_INT='#,##0;[Red](#,##0);-'; FMT_M='$#,##0.0,,"m";[Red]($#,##0.0,,"m");-'
@@ -143,6 +144,15 @@ def ensure_ownership_analysis(wb,ticker):
     try: info=(t.info or {}) if t is not None else {}
     except Exception: info={}
     shares_out=_num(info.get("sharesOutstanding"))
+    official_rows=[]; official_meta={}
+    if is_finnish_ticker(ticker):
+        try:
+            official_rows,official_meta=finland_major_shareholders(ticker,info,limit=20)
+            official_shares=_num(official_meta.get("shares_outstanding"))
+            if official_shares:
+                shares_out=official_shares
+        except Exception as exc:
+            official_rows=[]; official_meta={"status":"ERROR","error":str(exc)}
     insider_pct=_pct(info.get("heldPercentInsiders")); inst_pct=_pct(info.get("heldPercentInstitutions"))
     major=_frame(t,"major_holders") if t is not None else None
     insider_pct=insider_pct if insider_pct is not None else _pct(_major_value(major,"insider"))
@@ -155,19 +165,28 @@ def ensure_ownership_analysis(wb,ticker):
     purchases=_frame(t,"insider_purchases") if t is not None else None
 
     _section(ws,5,"Ownership Snapshot")
+    official_source=official_meta.get("source")
     summary=[
-        ("Shares Outstanding",shares_out,FMT_INT,"Company / Yahoo Finance"),
+        ("Shares Outstanding",shares_out,FMT_INT,"Issuer / Euroclear Finland" if official_meta.get("shares_outstanding") else "Company / Yahoo Finance"),
         ("Held by Insiders",insider_pct,FMT_PCT,"Yahoo Finance ownership summary"),
         ("Held by Institutions",inst_pct,FMT_PCT,"Yahoo Finance ownership summary"),
         ("Institutional Float Held",_pct(_major_value(major,"institution","float")),FMT_PCT,"Yahoo Finance major holders"),
         ("Reporting Snapshot Generated",datetime.now().strftime("%Y-%m-%d %H:%M"),None,"Workbook generation time"),
+        ("Official Shareholder Source",official_source,None,"Issuer / Euroclear Finland" if official_source else "No issuer shareholder table recovered automatically"),
     ]
     for r,(lab,val,fmt,src) in enumerate(summary,6):
         ws.cell(r,1,lab); ws.cell(r,2,val); ws.cell(r,3,src)
         if fmt: ws.cell(r,2).number_format=fmt
+        if lab=="Official Shareholder Source" and isinstance(val,str) and val.startswith("http"):
+            ws.cell(r,2).hyperlink=val; ws.cell(r,2).font=Font(color="008000",underline="single")
 
-    inst_rows=_institution_rows(inst,shares_out,15)
-    r=13; _section(ws,r,"Largest Institutional Holders")
+    if official_rows:
+        inst_rows=[[x.get("holder"),x.get("shares"),x.get("pct"),None,None] for x in official_rows[:15]]
+        holder_title="Largest Registered Shareholders — issuer / Euroclear Finland"
+    else:
+        inst_rows=_institution_rows(inst,shares_out,15)
+        holder_title="Largest Institutional Holders"
+    r=13; _section(ws,r,holder_title)
     _header(ws,r+1,["Holder","Shares","% Outstanding","Reported Value","Date Reported","","",""])
     for rr,row in enumerate(inst_rows or [["No institutional-holder table returned",None,None,None,None]],r+2):
         for c,v in enumerate(row,1): ws.cell(rr,c,v)
