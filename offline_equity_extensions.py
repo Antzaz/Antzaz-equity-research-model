@@ -122,10 +122,20 @@ def _consensus_rows(wb):
 def _earnings_surprises(wb):
     if "Advanced Analytics" not in wb.sheetnames: return []
     ws=wb["Advanced Analytics"]; rows=[]
-    for r in range(1,min(ws.max_row,35)+1):
-        reported=ws.cell(r,9).value; est=_num(ws.cell(r,10).value)
-        actual=_num(ws.cell(r,11).value); surprise=_num(ws.cell(r,12).value)
-        if reported and str(reported).strip().lower()!="reported" and any(x is not None for x in (est,actual,surprise)):
+    def looks_like_period(value):
+        if value in (None,""): return False
+        if hasattr(value,"year") and not isinstance(value,str): return True
+        text=str(value).strip()
+        return bool(
+            re.search(r"\b20\d{2}[-/.]\d{1,2}[-/.]\d{1,2}\b",text)
+            or re.search(r"\b(?:Q[1-4]\s*20\d{2}|20\d{2}\s*Q[1-4])\b",text,re.I)
+        )
+    for r in range(1,min(ws.max_row,45)+1):
+        reported=ws.cell(r,9).value
+        if not looks_like_period(reported):
+            continue
+        est=_num(ws.cell(r,10).value); actual=_num(ws.cell(r,11).value); surprise=_num(ws.cell(r,12).value)
+        if any(x is not None for x in (est,actual,surprise)):
             rows.append({"Reported":reported,"Estimate":est,"Actual":actual,"Surprise":surprise})
     return rows[-12:]
 
