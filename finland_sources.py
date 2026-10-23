@@ -778,13 +778,9 @@ def finland_major_shareholders(ticker: str, info: dict | None = None, limit: int
                     continue
                 nums=[]
                 for v in vals[1:]:
-                    if isinstance(v,(int,float)) and not pd.isna(v):
-                        nums.append(float(v)); continue
-                    s=str(v).replace("\xa0"," ").replace(" ","").replace(",",".")
-                    m=re.search(r"-?\d+(?:\.\d+)?",s)
-                    if m:
-                        try: nums.append(float(m.group(0)))
-                        except Exception: pass
+                    n=_table_number(v)
+                    if n is not None:
+                        nums.append(n)
                 shares=next((n for n in nums if n>1000),None)
                 pct=next((n/100 if n>1 else n for n in reversed(nums) if 0<n<=100),None)
                 records.append({"holder":holder,"shares":shares,"pct":pct,"source":page})
