@@ -76,6 +76,20 @@ The model prefers primary and issuer-owned sources where possible:
 
 For peer analysis, missing live summary fields can now be recovered from public statement/market data where the calculation is mechanically supportable. Examples include revenue growth, operating margin, ROE, enterprise value, EV/Revenue, EV/EBITDA and forward P/E. The Peer Comps sheet labels calculated fallback usage in `Metric Source / Fallback Notes` and reports a `Data Coverage %` for every company.
 
+### Finland / Nasdaq Helsinki free-data route
+
+Helsinki-listed `.HE` companies use a dedicated free-source layer before generic market-data fallbacks:
+
+- Finnish OAM / Nasdaq Helsinki for official regulated disclosures and ESEF annual reports;
+- XBRL International `filings.xbrl.org` for free machine-readable ESEF xBRL-JSON sourced from OAM filings;
+- Nasdaq Nordic Company News for regulated company announcements;
+- PRH Open Data for Finnish company/register information and available digital IXBRL statements;
+- Statistics Finland PxWeb for official Finnish macro and industry series;
+- Bank of Finland / FIN-FSA Open Data for rates, credit, banking and financial-system context;
+- Fingrid Open Data for electricity-system context (free registration/API key required).
+
+For `.HE` issuers, the historical-financial recovery order is **Finnish OAM/ESEF → issuer IR → SEC annual XBRL when applicable → Yahoo annual statements**. The ESEF parser accepts only consolidated, non-dimensional annual IFRS facts with recognized concepts; unsupported fields remain blank and flow to the existing fallbacks rather than being guessed.
+
 Foreign issuers are normalized to the traded security's quote currency before valuation and consensus comparisons. SEC outages or throttling are designed to fall through to issuer/Yahoo recovery instead of stopping the entire model.
 
 ## Workbook consolidation
