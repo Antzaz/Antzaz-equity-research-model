@@ -29,6 +29,7 @@ except Exception:  # pragma: no cover - optional runtime fallback
     yf = None
 
 from currency_normalization import convert_financial_amount_to_quote
+from finland_sources import finland_vara_consensus, is_finnish_ticker
 
 FMP_DOC = "https://site.financialmodelingprep.com/developer/docs/stable/financial-estimates"
 FMP_PT_DOC = "https://site.financialmodelingprep.com/developer/docs/stable/price-target-consensus"
@@ -158,6 +159,72 @@ def yahoo_records(ticker, latest_year, info=None):
     except Exception as exc:
         status["detail"] = str(exc)
     return records, status
+
+
+def vara_records(ticker, latest_year, info=None):
+    """Issuer-linked free Vara Research consensus for supported Helsinki-listed companies."""
+    info=info or {}
+    status={
+        "provider":"Vara Research","configured":True,"ok":False,
+        "detail":"No issuer-linked Vara consensus recovered","source_url":None,
+    }
+    if not is_finnish_ticker(ticker):
+        status["configured"]=False
+        status["detail"]="Not applicable outside Nasdaq Helsinki"
+        return [],status,None
+    try:
+        rows,price_target,meta=finland_vara_consensus(ticker,info)
+    except Exception as exc:
+        status["detail"]=str(exc)[:180]
+        return [],status,None
+    status["source_url"]=meta.get("source_url")
+    status["ok"]=bool(rows)
+    status["detail"]=(f"{len(rows)} detailed fiscal-year observation(s) from issuer-linked Vara Research"
+                      if rows else f"No usable detailed consensus rows ({meta.get('status','NO_DATA')})")
+    allowed=_future_years(latest_year)
+    records=[]
+    money_metrics={"Revenue","Adjusted Operating Profit","EBIT","EBITDA","Net Income","FCF","Capex"}
+    for row in rows:
+        year=row.get("fiscal_year")
+        metric=row.get("metric")
+        if year not in allowed or not metric:
+            continue
+        def conv(value):
+            value=_num(value)
+            if value is None:
+                return None
+            if metric in money_metrics:
+                # Vara's Finnish issuer tables are published in EUR millions. Convert through
+                # the same reporting->quote path as the other consensus providers, then to bn.
+                converted=convert_financial_amount_to_quote(value*1e6, {
+                    **info,
+                    "financialCurrency":"EUR",
+                })
+                return converted/1e9 if converted is not None else None
+            return value
+        mean=conv(row.get("mean") if row.get("mean") is not None else row.get("median"))
+        low=conv(row.get("low")); high=conv(row.get("high"))
+        if mean is None:
+            continue
+        records.append(_record(
+            "Vara Research",metric,year,mean,low,high,row.get("analysts"),
+            meta.get("source_url"),
+            "Free consensus linked from issuer investor relations; Vara analyst universe. "
+            "Adjusted operating profit remains separate from statutory IFRS EBIT.",
+            "EUR" if metric in money_metrics or metric in {"EPS","DPS"} else None,
+        ))
+    pt=None
+    if price_target and any(_num(price_target.get(k)) is not None for k in ("mean","median","low","high")):
+        pt={
+            "provider":"Vara Research",
+            "mean":_num(price_target.get("mean")),
+            "median":_num(price_target.get("median")),
+            "low":_num(price_target.get("low")),
+            "high":_num(price_target.get("high")),
+            "analysts":_num(price_target.get("analysts")),
+            "source_url":price_target.get("source_url") or meta.get("price_target_url") or meta.get("source_url"),
+        }
+    return records,status,pt
 
 
 def fmp_records(ticker, latest_year, info=None):
@@ -324,6 +391,12 @@ def collect_consensus(ticker, latest_year, info=None):
     observations = []
     statuses = []
     price_targets = []
+
+    if is_finnish_ticker(ticker):
+        recs, st, pt = vara_records(ticker, latest_year, info)
+        observations.extend(recs); statuses.append(st)
+        if pt and any(_num(pt.get(k)) is not None for k in ("mean","median","low","high")):
+            price_targets.append(pt)
 
     recs, st = yahoo_records(ticker, latest_year, info); observations.extend(recs); statuses.append(st)
     recs, st, pt = fmp_records(ticker, latest_year, info); observations.extend(recs); statuses.append(st)
