@@ -39,6 +39,7 @@ from commodity_valuation import apply_commodity_normalization
 from costco_segment_analysis import ensure_costco_segment_analysis
 from constellation_segment_analysis import ensure_constellation_segment_analysis
 from decision_view_v2 import ensure_decision_view
+from finland_sources import finland_esef_companyfacts, is_finnish_ticker
 from output_quality_v3 import prune_low_value_tabs, reconcile_score_displays, ensure_quality_checks
 
 BASE=Path(__file__).resolve().parent
@@ -209,8 +210,19 @@ def _safe_financial_statements(wb,ticker,facts):
         except Exception as exc:
             print(f"Warning: Financial Statements canonical pre-repair failed: {exc}")
     expansion={}
+    statement_facts=facts
+    if is_finnish_ticker(ticker):
+        try:
+            source_info=getattr(wb,"_issuer_source_info",{}) or getattr(wb,"_wacc_info",{}) or {}
+            esef_facts,esef_meta=finland_esef_companyfacts(ticker,source_info)
+            if (esef_facts.get("facts") or {}).get("ifrs-full"):
+                statement_facts=esef_facts
+                setattr(wb,"_finland_esef_statement_meta",esef_meta)
+                print(f"Finnish ESEF full statements: {esef_meta.get('tag_count',0)} standard IFRS concept(s) available")
+        except Exception as exc:
+            print(f"Warning: Finnish ESEF full-statement facts unavailable: {exc}")
     try:
-        expansion=expand_financial_statements(wb,ticker,facts) or {}
+        expansion=expand_financial_statements(wb,ticker,statement_facts) or {}
         setattr(wb,"_full_statement_expansion",expansion)
         print(
             "Full Financial Statements: "
