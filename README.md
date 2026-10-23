@@ -88,7 +88,9 @@ Helsinki-listed `.HE` companies use a dedicated free-source layer before generic
 - Bank of Finland / FIN-FSA Open Data for rates, credit, banking and financial-system context;
 - Fingrid Open Data for electricity-system context (free registration/API key required).
 
-For `.HE` issuers, the historical-financial recovery order is **Finnish OAM/ESEF → issuer IR → SEC annual XBRL when applicable → Yahoo annual statements**. The ESEF parser accepts only consolidated, non-dimensional annual IFRS facts with recognized concepts; unsupported fields remain blank and flow to the existing fallbacks rather than being guessed.
+For `.HE` issuers, the historical-financial recovery order is **Finnish OAM/ESEF → issuer IR → SEC annual XBRL when applicable → Yahoo annual statements**. The Finland layer now also feeds the full IFRS statement renderer, extracts dimensioned ESEF operating-segment economics, preserves issuer-defined annual KPIs and latest interim/result tables in a dedicated **Issuer KPIs** sheet, prefers issuer/Euroclear registered-shareholder data for ownership, uses issuer stock-exchange releases for event/deal monitoring, and uses issuer-linked **Vara Research** consensus when available. Vara remains separate from statutory accounting: adjusted/comparable profit estimates are never silently relabeled as IFRS EBIT.
+
+The ESEF parser prioritizes consolidated annual IFRS facts and a small conservative allow-list of unadjusted issuer-extension concepts for core statutory metrics. Unsupported or genuinely undisclosed fields remain blank or are classified as IFRS presentation/non-disclosure rather than being guessed. The Numeric Coverage Audit distinguishes real extraction gaps from derived fields, optional consensus coverage, analyst inputs and legitimate IFRS presentation differences.
 
 Foreign issuers are normalized to the traded security's quote currency before valuation and consensus comparisons. SEC outages or throttling are designed to fall through to issuer/Yahoo recovery instead of stopping the entire model.
 
