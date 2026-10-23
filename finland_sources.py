@@ -827,3 +827,141 @@ def finland_company_news(ticker: str, info: dict | None = None, horizon_days: in
             break
     out.sort(key=lambda x:x.get("date") or "",reverse=True)
     return out,{"status":"PASS" if out else "NO_ITEMS","pages_checked":pages[:12],"errors":errors[:10],"source":"Issuer stock-exchange/company releases"}
+
+
+def _table_number(value):
+    if value in (None,""):
+        return None
+    if isinstance(value,(int,float)) and not pd.isna(value):
+        return float(value)
+    text=str(value).strip().replace("\u2212","-").replace("\xa0"," ")
+    if text.lower() in {"nan","-","—","n/a","na"}:
+        return None
+    neg=text.startswith("(") and text.endswith(")")
+    text=text.strip("()").replace(" ","")
+    # European tables often use comma thousands separators; decimal-comma values are usually
+    # short and contain no thousands grouping. Preserve both forms conservatively.
+    if re.fullmatch(r"-?\d{1,3}(?:,\d{3})+",text):
+        text=text.replace(",","")
+    elif re.fullmatch(r"-?\d+,\d+",text):
+        text=text.replace(",",".")
+    text=re.sub(r"[^0-9.\-]","",text)
+    try:
+        out=float(text)
+        return -out if neg else out
+    except Exception:
+        return None
+
+
+def _year_from_header(value) -> int | None:
+    m=re.search(r"\b(20\d{2})\b",str(value or ""))
+    return int(m.group(1)) if m else None
+
+
+def finland_key_figures(ticker: str, info: dict | None = None, limit: int = 40) -> tuple[list[dict], dict]:
+    """Extract issuer-owned annual KPI tables while preserving issuer-defined metric names."""
+    if not is_finnish_ticker(ticker):
+        return [],{"status":"NOT_APPLICABLE"}
+    pages=_issuer_candidate_pages(info,(
+        "/investors/financial-information","/en/investors/financial-information",
+        "/investors/key-figures","/en/investors/key-figures",
+        "/investor-relations/financial-information","/en/investor-relations/financial-information",
+        "/investors/financials","/en/investors/financials",
+    ))
+    errors=[]
+    for page in pages[:12]:
+        try:
+            r=requests.get(page,timeout=18,headers={"User-Agent":"Mozilla/5.0 AntzazEquityResearch"})
+            r.raise_for_status()
+            tables=pd.read_html(StringIO(r.text))
+        except Exception as exc:
+            errors.append(f"{page}: {exc}"[:240]); continue
+        best=[]
+        for df in tables:
+            if df is None or df.empty or df.shape[1]<3:
+                continue
+            x=df.copy()
+            if isinstance(x.columns,pd.MultiIndex):
+                x.columns=[" ".join(str(z) for z in col if str(z)!="nan").strip() for col in x.columns]
+            else:
+                x.columns=[str(col) for col in x.columns]
+            year_cols={col:_year_from_header(col) for col in x.columns}
+            year_cols={col:y for col,y in year_cols.items() if y}
+            if len(set(year_cols.values()))<2:
+                continue
+            label_col=next((col for col in x.columns if col not in year_cols),x.columns[0])
+            rows=[]
+            for _,row in x.iterrows():
+                metric=re.sub(r"\s+"," ",str(row.get(label_col) or "")).strip()
+                if not metric or metric.lower() in {"nan","total"}:
+                    continue
+                values={}
+                for col,year in year_cols.items():
+                    num=_table_number(row.get(col))
+                    if num is not None:
+                        values[year]=num
+                if values:
+                    rows.append({"metric":metric,"values":values,"source":page})
+            if len(rows)>=3:
+                best=rows
+                break
+        if best:
+            return best[:limit],{"status":"PASS","source":page,"rows":len(best),"provider":"Issuer investor relations"}
+    return [],{"status":"NO_TABLE","pages_checked":pages[:12],"errors":errors[:10]}
+
+
+def finland_latest_results(ticker: str, info: dict | None = None, horizon_days: int = 500, limit: int = 50) -> tuple[dict, dict]:
+    """Extract the latest issuer-hosted interim/results table for Helsinki companies."""
+    if not is_finnish_ticker(ticker):
+        return {},{"status":"NOT_APPLICABLE"}
+    items,news_meta=finland_company_news(ticker,info,horizon_days,limit=100)
+    candidates=[]
+    for item in items:
+        title=str(item.get("title") or "")
+        low=title.lower()
+        if any(k in low for k in ("interim report","half-year","half year","financial statements bulletin","results","business review")):
+            candidates.append(item)
+    errors=[]
+    for item in candidates[:12]:
+        url=item.get("url")
+        if not url:
+            continue
+        try:
+            r=requests.get(url,timeout=18,headers={"User-Agent":"Mozilla/5.0 AntzazEquityResearch"})
+            r.raise_for_status()
+            tables=pd.read_html(StringIO(r.text))
+        except Exception as exc:
+            errors.append(f"{url}: {exc}"[:240]); continue
+        for df in tables:
+            if df is None or df.empty or df.shape[1]<2:
+                continue
+            x=df.copy()
+            if isinstance(x.columns,pd.MultiIndex):
+                x.columns=[" | ".join(str(z) for z in col if str(z)!="nan").strip() for col in x.columns]
+            else:
+                x.columns=[str(col) for col in x.columns]
+            first=x.columns[0]
+            labels=[str(v).lower() for v in x[first].head(30).tolist()]
+            score=sum(any(k in lab for k in ("revenue","operating profit","earnings per share","order book","net interest-bearing debt","cash flow")) for lab in labels)
+            if score<2:
+                continue
+            rows=[]
+            for _,row in x.iterrows():
+                metric=re.sub(r"\s+"," ",str(row.get(first) or "")).strip()
+                if not metric or metric.lower()=="nan":
+                    continue
+                vals=[]
+                for col in x.columns[1:]:
+                    raw=row.get(col)
+                    vals.append({"column":str(col),"value":_table_number(raw),"raw":None if pd.isna(raw) else str(raw)})
+                if any(v["value"] is not None for v in vals):
+                    rows.append({"metric":metric,"values":vals})
+            if rows:
+                return {
+                    "title":item.get("title"),
+                    "date":item.get("date"),
+                    "url":url,
+                    "columns":[str(x) for x in x.columns[1:]],
+                    "rows":rows[:limit],
+                },{"status":"PASS","source":url,"provider":"Issuer stock-exchange release","news":news_meta}
+    return {},{"status":"NO_TABLE","candidates":len(candidates),"errors":errors[:10],"news":news_meta}
