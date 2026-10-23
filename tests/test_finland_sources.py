@@ -156,3 +156,26 @@ def test_crossborder_history_prioritizes_finnish_esef(monkeypatch):
     assert hist[2024]["op"]==12.0
     assert hist[2024]["cash"]==5.0
     assert meta["priority"][0].startswith("Finnish OAM")
+
+
+def test_guarded_filings_wrapper_forwards_company_info(monkeypatch):
+    import safe_update_model
+    from openpyxl import Workbook
+
+    captured={}
+    def fake_update_filings(wb,ticker,info=None):
+        captured["ticker"]=ticker
+        captured["info"]=info
+        return "ok"
+
+    monkeypatch.setattr(safe_update_model,"_ORIGINAL_UPDATE_FILINGS",fake_update_filings)
+    wb=Workbook()
+    wb.active.title="Filings"
+    result=safe_update_model._safe_update_filings(
+        wb,
+        "YIT.HE",
+        {"longName":"YIT Oyj"},
+    )
+    assert result=="ok"
+    assert captured["ticker"]=="YIT.HE"
+    assert captured["info"]["longName"]=="YIT Oyj"
