@@ -4,6 +4,7 @@ import finland_sources
 import issuer_source_engine
 import issuer_statement_profiles
 import consensus_sources
+import wacc_engine
 from source_registry import full_source_catalog, market_sources
 
 
@@ -360,3 +361,33 @@ def test_vara_records_keep_adjusted_profit_separate(monkeypatch):
     assert "EBIT" not in metrics
     assert status["ok"]
     assert target["mean"]==4.45
+
+
+def test_helsinki_wacc_routes_to_eur_risk_free(monkeypatch):
+    monkeypatch.setattr(
+        wacc_engine,
+        "_ecb_eur_10y",
+        lambda: (0.031,"2026-10-20","ECB AAA euro-area 10Y spot rate"),
+    )
+    value,asof,status,source,role=wacc_engine._risk_free(
+        "YIT.HE",{"currency":"EUR","financialCurrency":"EUR"}
+    )
+    assert value==0.031
+    assert "ECB" in status
+    assert "EUR" in role
+    assert "data.ecb.europa.eu" in source
+
+
+def test_helsinki_wacc_uses_finland_tax_fallback(monkeypatch):
+    from openpyxl import Workbook
+    wb=Workbook()
+    wb.active.title="Company Data"
+    wb["Company Data"]["B10"]=1.0
+    wb["Company Data"]["B13"]=0.0
+    monkeypatch.setattr(wacc_engine,"_risk_free",lambda ticker,info:(0.03,"2026-10-20","ECB","https://ecb.example","EUR"))
+    monkeypatch.setattr(wacc_engine,"_damodaran_erp",lambda:(0.04,"2026-10-20","ERP"))
+    monkeypatch.setattr(wacc_engine,"_beta",lambda ticker,info:(1.0,"test"))
+    monkeypatch.setattr(wacc_engine,"_credit_spread",lambda wb:(0.01,"test"))
+    result=wacc_engine.calculate_wacc(wb,"YIT.HE",{"currency":"EUR"})
+    assert result["tax_rate"]==0.20
+    assert result["currency"]=="EUR"
