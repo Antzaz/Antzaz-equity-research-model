@@ -21,7 +21,9 @@ The synthetic credit spread is explicitly a model assumption, not a reported cre
 import math
 import re
 import statistics
-from datetime import datetime, timezone
+import csv
+from datetime import datetime, timedelta, timezone
+from io import StringIO
 from xml.etree import ElementTree as ET
 
 import requests
@@ -35,6 +37,8 @@ TREASURY_URL="https://home.treasury.gov/resource-center/data-chart-center/intere
 TREASURY_SOURCE="https://home.treasury.gov/resource-center/data-chart-center/interest-rates/TextView?type=daily_treasury_yield_curve"
 DAMODARAN_SOURCE="https://pages.stern.nyu.edu/~adamodar/New_Home_Page/home.htm"
 YAHOO_SOURCE="https://finance.yahoo.com/"
+ECB_EUR_10Y_API="https://data-api.ecb.europa.eu/service/data/YC/B.U2.EUR.4F.G_N_A.SV_C_YM.SR_10Y"
+ECB_EUR_10Y_SOURCE="https://data.ecb.europa.eu/data/datasets/YC/YC.B.U2.EUR.4F.G_N_A.SV_C_YM.SR_10Y"
 
 
 def _fill(c): return PatternFill("solid",fgColor=c)
@@ -71,6 +75,41 @@ def _treasury_10y():
     return .0445,"2026-07-01","Fallback: 4.45% Treasury rate used in Damodaran July-2026 ERP update"
 
 
+def _ecb_eur_10y():
+    """Return the latest ECB AAA euro-area 10Y spot rate as the EUR risk-free proxy."""
+    start=(datetime.now(timezone.utc)-timedelta(days=45)).date().isoformat()
+    try:
+        r=requests.get(
+            ECB_EUR_10Y_API,
+            params={"startPeriod":start,"format":"csvdata"},
+            headers={"User-Agent":"Antzaz Equity Research public-data WACC engine","Accept":"text/csv"},
+            timeout=15,
+        )
+        r.raise_for_status()
+        rows=[]
+        for row in csv.DictReader(StringIO(r.text)):
+            date_val=str(row.get("TIME_PERIOD") or row.get("TIME_PERIOD_START") or "").strip()[:10]
+            value=_num(row.get("OBS_VALUE"))
+            if date_val and value is not None:
+                rows.append((date_val,value/100))
+        if rows:
+            date_val,value=max(rows,key=lambda x:x[0])
+            return value,date_val,"ECB AAA euro-area 10Y spot rate"
+    except Exception:
+        pass
+    # Explicit dated EUR fallback: never silently substitute a US Treasury rate for a EUR issuer.
+    return .0301,"2026-06-15","Fallback: ECB AAA euro-area 10Y spot rate observed 2026-06-15; REVIEW freshness"
+
+
+def _risk_free(ticker,info):
+    currency=str((info or {}).get("currency") or (info or {}).get("financialCurrency") or "").upper().strip()
+    if str(ticker or "").upper().endswith(".HE") or currency=="EUR":
+        value,asof,status=_ecb_eur_10y()
+        return value,asof,status,ECB_EUR_10Y_SOURCE,"10Y EUR risk-free proxy"
+    value,asof,status=_treasury_10y()
+    return value,asof,status,TREASURY_SOURCE,"10Y USD risk-free proxy"
+
+
 def _damodaran_erp():
     headers={"User-Agent":"Antzaz Equity Research public-data WACC engine"}
     try:
@@ -84,24 +123,34 @@ def _damodaran_erp():
     return .0418,"2026-07-01","Fallback: Damodaran July-2026 implied ERP"
 
 
-def _regression_beta(ticker):
-    try:
-        px=yf.download([ticker,"^GSPC"],period="5y",interval="1mo",auto_adjust=True,progress=False,threads=False)
-        close=px["Close"] if "Close" in px else px
-        if ticker not in close or "^GSPC" not in close: return None
-        a=close[ticker].pct_change().dropna(); b=close["^GSPC"].pct_change().dropna(); joined=a.to_frame("a").join(b.to_frame("b"),how="inner").dropna()
-        if len(joined)<24: return None
-        var=float(joined["b"].var()); cov=float(joined[["a","b"]].cov().iloc[0,1])
-        return cov/var if var>0 else None
-    except Exception:
-        return None
+def _regression_beta(ticker,benchmarks=None):
+    benchmarks=list(benchmarks or ["^GSPC"])
+    for benchmark in benchmarks:
+        try:
+            px=yf.download([ticker,benchmark],period="5y",interval="1mo",auto_adjust=True,progress=False,threads=False)
+            close=px["Close"] if "Close" in px else px
+            if ticker not in close or benchmark not in close:
+                continue
+            a=close[ticker].pct_change().dropna(); b=close[benchmark].pct_change().dropna(); joined=a.to_frame("a").join(b.to_frame("b"),how="inner").dropna()
+            if len(joined)<24:
+                continue
+            var=float(joined["b"].var()); cov=float(joined[["a","b"]].cov().iloc[0,1])
+            if var>0:
+                return cov/var,benchmark
+        except Exception:
+            continue
+    return None,None
 
 
 def _beta(ticker,info):
     b=_num((info or {}).get("beta"))
     if b is not None and .05<b<4.0: return b,"Yahoo Finance beta"
-    b=_regression_beta(ticker)
-    if b is not None and .05<b<4.0: return b,"5Y monthly beta vs S&P 500 calculated from Yahoo price history"
+    helsinki=str(ticker or "").upper().endswith(".HE")
+    benchmarks=["^OMXH25","^STOXX50E","^GSPC"] if helsinki else ["^GSPC"]
+    b,benchmark=_regression_beta(ticker,benchmarks)
+    if b is not None and .05<b<4.0:
+        label={"^OMXH25":"OMX Helsinki 25","^STOXX50E":"EURO STOXX 50","^GSPC":"S&P 500"}.get(benchmark,benchmark)
+        return b,f"5Y monthly beta vs {label} calculated from Yahoo price history"
     return 1.0,"Fallback beta = 1.00 (market beta); REVIEW"
 
 
@@ -113,8 +162,8 @@ def _find_row(ws,label,start=1,end=None):
     return None
 
 
-def _effective_tax_rate(wb):
-    if "Financial Statements" not in wb.sheetnames: return .21,"Fallback statutory/reference rate"
+def _effective_tax_rate(wb,fallback=.21,fallback_label="Fallback statutory/reference rate"):
+    if "Financial Statements" not in wb.sheetnames: return fallback,fallback_label
     ws=wb["Financial Statements"]
     pretax=_find_row(ws,"Pre-Tax Income"); taxes=_find_row(ws,"Income Taxes")
     if pretax and taxes:
@@ -123,7 +172,7 @@ def _effective_tax_rate(wb):
             if p not in (None,0) and t is not None:
                 rate=t/p
                 if 0<=rate<=.50: return rate,"Latest reported effective tax rate"
-    return .21,"Fallback statutory/reference rate"
+    return fallback,fallback_label
 
 
 def _latest_fcf(wb):
@@ -156,8 +205,15 @@ def calculate_wacc(wb,ticker,info=None):
     if equity is None: equity=_num(info.get("marketCap")); equity=equity/1e9 if equity else None
     if debt is None: debt=_num(info.get("totalDebt")); debt=debt/1e9 if debt else 0.0
     debt=max(0.0,debt or 0.0); equity=max(0.0,equity or 0.0)
-    rf,rf_date,rf_status=_treasury_10y(); erp,erp_date,erp_status=_damodaran_erp(); beta,beta_status=_beta(ticker,info)
-    tax,tax_status=_effective_tax_rate(wb); spread,spread_status=_credit_spread(wb)
+    rf,rf_date,rf_status,rf_source,rf_role=_risk_free(ticker,info)
+    erp,erp_date,erp_status=_damodaran_erp(); beta,beta_status=_beta(ticker,info)
+    helsinki=str(ticker or "").upper().endswith(".HE")
+    tax,tax_status=_effective_tax_rate(
+        wb,
+        .20 if helsinki else .21,
+        "Fallback Finland corporate income tax rate = 20%" if helsinki else "Fallback statutory/reference rate",
+    )
+    spread,spread_status=_credit_spread(wb)
     cost_equity=rf+beta*erp; pretax_debt=rf+spread; aftertax_debt=pretax_debt*(1-tax)
     total=equity+debt
     ew=equity/total if total else 1.0; dw=debt/total if total else 0.0
@@ -165,7 +221,11 @@ def calculate_wacc(wb,ticker,info=None):
     base=max(.045,min(.18,base)); bear=min(.20,base+.015); bull=max(.04,base-.010)
     return {
         "risk_free":rf,"risk_free_date":rf_date,"risk_free_status":rf_status,
-        "erp":erp,"erp_date":erp_date,"erp_status":erp_status,"beta":beta,"beta_status":beta_status,
+        "risk_free_source":rf_source,"risk_free_role":rf_role,
+        "erp":erp,"erp_date":erp_date,"erp_status":erp_status,
+        "erp_role":"Mature-market implied ERP (Damodaran)",
+        "beta":beta,"beta_status":beta_status,
+        "currency":str(info.get("currency") or info.get("financialCurrency") or ("EUR" if str(ticker).upper().endswith(".HE") else "USD")).upper(),
         "cost_equity":cost_equity,"credit_spread":spread,"credit_spread_status":spread_status,
         "pretax_cost_debt":pretax_debt,"tax_rate":tax,"tax_status":tax_status,"aftertax_cost_debt":aftertax_debt,
         "equity_value":equity,"debt_value":debt,"equity_weight":ew,"debt_weight":dw,
@@ -178,21 +238,21 @@ def _write_sheet(wb,ticker,x):
     ws=wb.create_sheet("Cost of Capital"); ws.sheet_view.showGridLines=False
     for c in range(1,8): ws.cell(1,c).fill=_fill(NAVY); ws.cell(2,c).fill=_fill(NAVY)
     ws["A1"]=f"{ticker} — Cost of Capital / WACC"; ws["A1"].font=Font(bold=True,color=WHITE,size=18)
-    ws["A3"]="Company-specific public-data WACC. Market inputs are refreshed at model build; the credit spread is a transparent model estimate when no market debt yield is available."
+    ws["A3"]="Company-specific public-data WACC. The risk-free curve is matched to valuation currency where supported (ECB EUR curve for Helsinki/EUR issuers; US Treasury for USD); the credit spread is a transparent model estimate when no market debt yield is available."
     ws.merge_cells("A3:G3"); ws["A3"].font=Font(italic=True,color=GREY); ws["A3"].alignment=Alignment(wrap_text=True)
     headers=["Input","Value","Formula / Role","Source / Method","As of","Status","Source URL"]
     for c,v in enumerate(headers,1): ws.cell(5,c,v); ws.cell(5,c).fill=_fill(BLUE); ws.cell(5,c).font=Font(bold=True,color=WHITE); ws.cell(5,c).alignment=Alignment(wrap_text=True)
     rows=[
-        ("Risk-free rate",x["risk_free"],"10Y USD risk-free proxy",x["risk_free_status"],x["risk_free_date"],"PASS",TREASURY_SOURCE),
-        ("Equity risk premium",x["erp"],"US implied ERP",x["erp_status"],x["erp_date"],"PASS",DAMODARAN_SOURCE),
+        ("Risk-free rate",x["risk_free"],x.get("risk_free_role") or "10Y risk-free proxy",x["risk_free_status"],x["risk_free_date"],"PASS" if "REVIEW" not in x["risk_free_status"] else "REVIEW",x.get("risk_free_source")),
+        ("Equity risk premium",x["erp"],x.get("erp_role") or "Mature-market implied ERP",x["erp_status"],x["erp_date"],"PASS",DAMODARAN_SOURCE),
         ("Equity beta",x["beta"],"Systematic equity risk",x["beta_status"],"Build date","PASS" if "REVIEW" not in x["beta_status"] else "REVIEW",YAHOO_SOURCE),
         ("Cost of equity",x["cost_equity"],"Risk-free + Beta × ERP","Calculated from rows above","Build date","PASS",None),
         ("Synthetic credit spread",x["credit_spread"],"Added to risk-free for pre-tax debt cost",x["credit_spread_status"],"Build date","MODEL",None),
         ("Pre-tax cost of debt",x["pretax_cost_debt"],"Risk-free + credit spread","Calculated","Build date","MODEL",None),
         ("Effective tax rate",x["tax_rate"],"Tax shield on debt",x["tax_status"],"Latest reported FY","PASS" if "reported" in x["tax_status"].lower() else "REVIEW",None),
         ("After-tax cost of debt",x["aftertax_cost_debt"],"Pre-tax debt cost × (1 − tax rate)","Calculated","Build date","PASS",None),
-        ("Market equity ($bn)",x["equity_value"],"E in capital weights","Company Data / current market cap","Build date","PASS",YAHOO_SOURCE),
-        ("Debt ($bn)",x["debt_value"],"D in capital weights","Company Data / latest total debt","Latest available","PASS",None),
+        (f"Market equity ({x.get('currency','USD')} bn)",x["equity_value"],"E in capital weights","Company Data / current market cap","Build date","PASS",YAHOO_SOURCE),
+        (f"Debt ({x.get('currency','USD')} bn)",x["debt_value"],"D in capital weights","Company Data / latest total debt","Latest available","PASS",None),
         ("Equity weight",x["equity_weight"],"E / (D + E)","Calculated","Build date","PASS",None),
         ("Debt weight",x["debt_weight"],"D / (D + E)","Calculated","Build date","PASS",None),
     ]
