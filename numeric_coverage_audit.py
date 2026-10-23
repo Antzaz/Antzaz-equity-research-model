@@ -7,6 +7,7 @@ non-disclosure, immature history, non-applicability and analyst-input fields.
 """
 
 from openpyxl.styles import Alignment, Font, PatternFill
+from finland_sources import is_finnish_ticker
 
 NAVY="17365D"; BLUE="2F75B5"; WHITE="FFFFFF"; GOLD="FFF2CC"
 IMPORTANT_SHEETS=(
@@ -19,6 +20,18 @@ WAIT_HINTS=("forecast accountability","earnings & revisions","thesis timeline")
 NON_NUMERIC_HINTS=("source","notes","status","company","metric","supplier","relationship","evidence","year","date","period")
 DERIVED_HINTS=("growth","margin","cagr","mix","net debt","working capital","free cash flow","return on","roic","roe","upside","downside","gap","spread","yield","coverage","ratio","change in")
 SECTION_LABELS={"income statement","balance sheet","cash flow statement","full statement coverage","source & data quality","reported operating / reportable segments","revenue by business line / product group"}
+FINLAND_OPTIONAL_STATEMENT_ROWS={
+    "cost of revenue","gross profit","research & development","selling, general & administrative",
+    "other operating income / (expense)","total operating expenses","interest income",
+    "share of associates / joint ventures","other non-operating income / (expense)",
+    "short-term investments / marketable securities","right-of-use assets","other current assets",
+    "other non-current assets","current lease liabilities","non-current lease liabilities",
+    "additional paid-in capital / capital surplus","other reserves / aoci","noncontrolling interest",
+    "stock-based compensation","asset impairments","other non-cash items",
+    "change in accounts receivable","change in inventory","change in accounts payable / accrued liabilities",
+    "change in other working capital","purchases of intangibles","acquisitions","purchases of investments",
+    "proceeds from investment sales","common stock issuance","share repurchases",
+}
 
 
 def _fill(c): return PatternFill("solid",fgColor=c)
@@ -29,8 +42,13 @@ def _header_text(ws,col):
         if isinstance(v,str) and v.strip(): return v.strip()
     return ""
 
-def _classify(sheet,label,header):
+def _classify(sheet,label,header,finland=False):
     text=f"{sheet} {label} {header}".lower()
+    label_low=str(label).strip().lower()
+    if finland and sheet=="Financial Statements" and label_low in FINLAND_OPTIONAL_STATEMENT_ROWS:
+        return "IFRS PRESENTATION / NOT SEPARATELY DISCLOSED"
+    if finland and sheet=="Historical Financials" and label_low in {"cost of revenue","research & development","stock-based compensation"}:
+        return "IFRS PRESENTATION / NOT SEPARATELY DISCLOSED"
     if any(x in text for x in ANALYST_INPUT_HINTS): return "ANALYST INPUT REQUIRED"
     if any(x in sheet.lower() for x in WAIT_HINTS): return "WAITING FOR HISTORY"
     if sheet=="Expectations & Consensus": return "OPTIONAL / PUBLIC CONSENSUS COVERAGE"
@@ -42,6 +60,7 @@ def _classify(sheet,label,header):
     return "AVAILABLE DATA / EXTRACTION REVIEW"
 
 def ensure_numeric_coverage_audit(wb,ticker):
+    finland=is_finnish_ticker(ticker)
     if "Numeric Coverage Audit" in wb.sheetnames: wb.remove(wb["Numeric Coverage Audit"])
     ws=wb.create_sheet("Numeric Coverage Audit"); ws.sheet_view.showGridLines=False
     for c in range(1,8): ws.cell(1,c).fill=_fill(NAVY)
@@ -73,10 +92,11 @@ def ensure_numeric_coverage_audit(wb,ticker):
                 fmt=str(cell.number_format or "").lower()
                 numeric_style=any(x in fmt for x in ("0","%","#","$","€")) or cell.fill.fill_type=="solid"
                 if not numeric_style: continue
-                cls=_classify(sheet,label,header)
+                cls=_classify(sheet,label,header,finland=finland)
                 action=("Research / extraction fallback required" if "REVIEW" in cls else
                         "Populate only with explicit analyst assumption" if "ANALYST" in cls else
                         "Optional provider coverage; do not fabricate" if "OPTIONAL" in cls else
+                        "Leave blank unless the issuer separately discloses this IFRS line" if "IFRS PRESENTATION" in cls else
                         "Derived automatically once dependencies are available" if "DERIVED" in cls else
                         "Allow history to mature")
                 row=[sheet,cell.coordinate,label,header,cls,action,"BLANK"]
