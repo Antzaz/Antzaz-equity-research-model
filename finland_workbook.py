@@ -145,10 +145,39 @@ def ensure_finland_issuer_kpis(wb,ticker,info=None):
         rr=row+2
 
     row=rr+2
+    consensus=getattr(wb,"_consensus_result",{}) or {}
+    vara_rows=[x for x in (consensus.get("observations") or []) if x.get("provider")=="Vara Research"]
+    vara_targets=[x for x in (consensus.get("price_targets") or []) if x.get("provider")=="Vara Research"]
+    if vara_rows or vara_targets:
+        _section(ws,row,"Issuer-linked Vara Research consensus",9)
+        _header(ws,row+1,["Fiscal Year","Metric","Consensus","Low","High","Analysts","Source"])
+        rr=row+2
+        for rec in sorted(vara_rows,key=lambda x:(x.get("fiscal_year") or 0,x.get("metric") or "")):
+            vals=[rec.get("fiscal_year"),rec.get("metric"),rec.get("mean"),rec.get("low"),rec.get("high"),rec.get("analysts"),rec.get("source_url")]
+            for cc,v in enumerate(vals,1):
+                ws.cell(rr,cc,v)
+            metric=rec.get("metric")
+            for cc in (3,4,5):
+                if ws.cell(rr,cc).value is not None:
+                    ws.cell(rr,cc).number_format="0.00" if metric in {"EPS","DPS"} else FMT_NUM
+            if rec.get("source_url"):
+                ws.cell(rr,7).hyperlink=rec.get("source_url"); ws.cell(rr,7).font=Font(color=LINK_GREEN,underline="single")
+            rr+=1
+        for target in vara_targets[:1]:
+            vals=["Current","Analyst Price Target",target.get("mean") or target.get("median"),target.get("low"),target.get("high"),target.get("analysts"),target.get("source_url")]
+            for cc,v in enumerate(vals,1):
+                ws.cell(rr,cc,v)
+            for cc in (3,4,5): ws.cell(rr,cc).number_format="0.00"
+            if target.get("source_url"):
+                ws.cell(rr,7).hyperlink=target.get("source_url"); ws.cell(rr,7).font=Font(color=LINK_GREEN,underline="single")
+            rr+=1
+        row=rr+2
+
     _section(ws,row,"Source status",9)
     status_rows=[
         ("Annual KPI extraction",annual_meta.get("status"),annual_meta.get("source") or "; ".join(annual_meta.get("pages_checked") or [])),
         ("Latest results extraction",latest_meta.get("status"),latest_meta.get("source") or f"Candidate releases: {latest_meta.get('candidates',0)}"),
+        ("Vara consensus","PASS" if vara_rows else "REVIEW",f"Issuer-linked Vara observations recovered: {len(vara_rows)}"),
         ("Accounting source","PASS","Finnish OAM / ESEF is the primary standardized annual-statement route for .HE issuers."),
         ("Research rule","PASS","Issuer-adjusted KPIs are not substituted for IFRS accounting metrics unless explicitly labeled."),
     ]
@@ -183,6 +212,8 @@ def ensure_finland_issuer_kpis(wb,ticker,info=None):
         "annual_meta":annual_meta,
         "latest_rows":len(latest.get("rows") or []) if latest else 0,
         "latest_meta":latest_meta,
+        "vara_consensus_rows":len(vara_rows),
+        "vara_price_targets":len(vara_targets),
     }
 
 
