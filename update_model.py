@@ -14,6 +14,7 @@ Reliability rules:
 """
 
 import importlib
+import inspect
 import os
 import re
 import statistics
@@ -241,6 +242,29 @@ def update_scenarios(wb,hist,info):
         for c in cols: ws.cell(18,c).value=dep
 
 
+def _call_update_filings_compat(wb,ticker,info=None):
+    """Call the active filings hook across old/new wrapper signatures.
+
+    Production runners monkey-patch update_filings.  During rolling desktop updates an older
+    two-argument wrapper can coexist with the newer three-argument Finland-aware call site.
+    Inspect the live hook before calling it so a stale wrapper cannot abort an otherwise valid
+    research build.
+    """
+    fn=update_filings
+    try:
+        params=list(inspect.signature(fn).parameters.values())
+        accepts_info=(
+            any(p.kind in (inspect.Parameter.VAR_POSITIONAL,inspect.Parameter.VAR_KEYWORD) for p in params)
+            or len(params)>=3
+        )
+    except Exception:
+        accepts_info=True
+    if accepts_info:
+        return fn(wb,ticker,info)
+    print("Compatibility notice: active filings wrapper uses legacy 2-argument signature; continuing without company-info forwarding.")
+    return fn(wb,ticker)
+
+
 def update_filings(wb,ticker,info=None):
     ws=wb["Filings"]
     for r in range(4,20):
@@ -353,7 +377,7 @@ def main():
         print(f"Peer classification: sector={sector!r}, industry={industry!r}, validated peers={len(peers)}")
     except Exception as exc:
         print(f"Warning: dynamic peer selection failed: {exc}")
-    update_filings(wb,ticker,info)
+    _call_update_filings_compat(wb,ticker,info)
     try: _company_analysis._merged_annual_series=annual_series
     except Exception: pass
     try: ensure_financial_statements(wb,ticker,facts)
