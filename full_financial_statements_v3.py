@@ -18,7 +18,7 @@ import full_financial_statements as base
 from issuer_statement_profiles import get_statement_profile
 
 
-ANNUAL_FORMS = {"10-K", "10-K/A", "20-F", "20-F/A"}
+ANNUAL_FORMS = {"10-K", "10-K/A", "20-F", "20-F/A", "ESEF", "ESEF AFR"}
 
 
 def _fact_candidates(facts, tag_spec):
@@ -107,8 +107,15 @@ def _profile_series(existing, frames, facts, key, label, yf_names, sec_tags, uni
     values = {}
     sources = {}
     scale = 1.0 if unit == "eps" else 1e9
+    finland_esef = str((facts or {}).get("_source_type") or "").startswith("Finnish OAM / ESEF")
     for year in years:
-        if year in old:
+        # For Helsinki issuers the standardized ESEF fact is the primary statement source.
+        # This intentionally outranks an earlier Yahoo-shaped sheet captured from the template
+        # because provider row taxonomies can misalign IFRS lines.
+        if finland_esef and year in sec:
+            values[year] = sec[year] if unit == "eps" else sec[year] / scale
+            sources[year] = "Finnish OAM / ESEF — standard IFRS fact"
+        elif year in old:
             values[year] = old[year]
             sources[year] = "Canonical issuer / reconciled statement"
         elif year in sec:
@@ -253,6 +260,8 @@ def expand_financial_statements(wb, ticker, facts=None):
     quote = str(info.get("currency") or "unknown").upper()
     ws.merge_cells(start_row=4, start_column=1, end_row=4, end_column=last_col)
     ws.cell(4, 1, f"Statement profile: {profile['name']} | reporting currency: {reporting} | traded/valuation currency: {quote}")
+    if str((facts or {}).get("_source_type") or "").startswith("Finnish OAM / ESEF"):
+        ws.cell(3,1,f"{reporting or 'Reporting-currency'} billions unless per-share/share-count data. Primary structured source: Finnish OAM / ESEF (XBRL International mirror); Yahoo is fallback only. Missing fields remain blank rather than estimated.")
     ws.cell(4, 1).font = Font(italic=True, color=base.GREY)
 
     row, imap, source_col = _write_section(ws, 5, "Income Statement", profile["income"], years, existing, frames, facts, "income")
