@@ -2,13 +2,15 @@
 setlocal
 cd /d "%~dp0"
 
-rem Keep the launcher itself current before it opens.
+rem Keep the launcher itself current before it opens. Log failures instead of hiding them.
 where git >nul 2>nul
-if not errorlevel 1 git pull --ff-only origin main > "%TEMP%\antzaz_investment_launcher_update.log" 2>&1
+if not errorlevel 1 (
+  git pull --ff-only origin main > "%TEMP%\antzaz_investment_launcher_update.log" 2>&1
+)
 
 where pyw >nul 2>nul
 if not errorlevel 1 (
-  start "" pyw -3 "%~dp0desktop_launcher.py"
+  start "" pyw -3 "%~dp0desktop_research_hub.py"
   exit /b 0
 )
 
