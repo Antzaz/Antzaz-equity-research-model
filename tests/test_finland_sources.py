@@ -179,3 +179,46 @@ def test_guarded_filings_wrapper_forwards_company_info(monkeypatch):
     assert result=="ok"
     assert captured["ticker"]=="YIT.HE"
     assert captured["info"]["longName"]=="YIT Oyj"
+
+
+def test_update_model_compat_accepts_legacy_two_arg_wrapper(monkeypatch):
+    import update_model
+    from openpyxl import Workbook
+
+    called={}
+    def legacy_wrapper(wb,ticker):
+        called["ticker"]=ticker
+        return "legacy-ok"
+
+    monkeypatch.setattr(update_model,"update_filings",legacy_wrapper)
+    wb=Workbook()
+    wb.active.title="Filings"
+    result=update_model._call_update_filings_compat(
+        wb,
+        "YIT.HE",
+        {"longName":"YIT Oyj"},
+    )
+    assert result=="legacy-ok"
+    assert called["ticker"]=="YIT.HE"
+
+
+def test_update_model_compat_forwards_info_to_new_wrapper(monkeypatch):
+    import update_model
+    from openpyxl import Workbook
+
+    called={}
+    def new_wrapper(wb,ticker,info=None):
+        called["ticker"]=ticker
+        called["info"]=info
+        return "new-ok"
+
+    monkeypatch.setattr(update_model,"update_filings",new_wrapper)
+    wb=Workbook()
+    wb.active.title="Filings"
+    result=update_model._call_update_filings_compat(
+        wb,
+        "YIT.HE",
+        {"longName":"YIT Oyj"},
+    )
+    assert result=="new-ok"
+    assert called["info"]["longName"]=="YIT Oyj"
