@@ -27,6 +27,7 @@ except Exception:
 from openpyxl.styles import PatternFill, Font, Alignment
 from openpyxl.formatting.rule import ColorScaleRule
 from openpyxl.utils import get_column_letter
+from finland_sources import finland_esef_segments, is_finnish_ticker
 
 NAVY="17365D"; BLUE="2F75B5"; WHITE="FFFFFF"; GOLD="FFF2CC"
 INPUT_BLUE="0000FF"; GREY="666666"; LINK_GREEN="008000"
@@ -271,7 +272,7 @@ def _years(wb):
     latest=max(ys) if ys else 2025; return [latest-2,latest-1,latest]
 def _company_revenue(wb): return _num(wb["Historical Financials"]["G4"].value) if "Historical Financials" in wb.sheetnames else None
 
-def _write_sheet(wb,ticker,years,segments,business,url,auto_status):
+def _write_sheet(wb,ticker,years,segments,business,url,auto_status,source_label="SEC 10-K"):
     if "Segment Analysis" in wb.sheetnames: wb.remove(wb["Segment Analysis"])
     ws=wb.create_sheet("Segment Analysis"); _title(ws,f"{ticker} — Business & Segment Analysis")
     ws["A3"]=(f"Standardized segment schema. Status: {auto_status}. All reportable segment names discovered in the filing are retained even when reliable numbers are unavailable. Blank yellow financial cells mean disclosed economics were not reliably extracted; they are not estimates.")
@@ -297,7 +298,7 @@ def _write_sheet(wb,ticker,years,segments,business,url,auto_status):
             for c in (5,6,10,11,12,13,14): ws.cell(r,c).number_format=FMT_PCT
             have_rev=any(_num(v) is not None for v in rev); have_op=any(_num(v) is not None for v in op)
             ws.cell(r,15,"Revenue + profitability" if have_rev and have_op else ("Revenue only" if have_rev else ("Profitability only" if have_op else "Name disclosed; numbers unavailable")))
-            ws.cell(r,16,"SEC 10-K"); ws.cell(r,16).font=Font(color=LINK_GREEN)
+            ws.cell(r,16,source_label); ws.cell(r,16).font=Font(color=LINK_GREEN)
         else:
             for c in range(1,10): ws.cell(r,c).fill=_fill(GOLD); ws.cell(r,c).font=Font(color=INPUT_BLUE); ws.cell(r,c).number_format=FMT_BN if c>=2 else "General"
             for c in (5,6,10,11,12,13,14): ws.cell(r,c).number_format=FMT_PCT
@@ -313,13 +314,13 @@ def _write_sheet(wb,ticker,years,segments,business,url,auto_status):
             for j,v in enumerate(rev,2):
                 ws.cell(r,j,v); ws.cell(r,j).number_format=FMT_BN
                 if v is None: ws.cell(r,j).fill=_fill(GOLD); ws.cell(r,j).font=Font(color=INPUT_BLUE)
-            ws.cell(r,5,f'=IFERROR(D{r}/C{r}-1,"")'); ws.cell(r,6,f'=IFERROR((D{r}/B{r})^(1/2)-1,"")'); ws.cell(r,7,f'=IFERROR(D{r}/SUM($D${start+2}:$D${start+1+bmax}),"")'); ws.cell(r,8,"SEC 10-K"); ws.cell(r,8).font=Font(color=LINK_GREEN)
+            ws.cell(r,5,f'=IFERROR(D{r}/C{r}-1,"")'); ws.cell(r,6,f'=IFERROR((D{r}/B{r})^(1/2)-1,"")'); ws.cell(r,7,f'=IFERROR(D{r}/SUM($D${start+2}:$D${start+1+bmax}),"")'); ws.cell(r,8,source_label); ws.cell(r,8).font=Font(color=LINK_GREEN)
             for c in (5,6,7): ws.cell(r,c).number_format=FMT_PCT
         else:
             for c in range(1,9): ws.cell(r,c).fill=_fill(GOLD); ws.cell(r,c).font=Font(color=INPUT_BLUE); ws.cell(r,c).number_format=FMT_BN if c in (2,3,4) else "General"
             for c in (5,6,7): ws.cell(r,c).number_format=FMT_PCT
     source_row=start+bmax+4; _section(ws,source_row,"Source & Data Quality",10)
-    ws.cell(source_row+1,1,"SEC 10-K Source"); ws.cell(source_row+1,2,url or ""); ws.cell(source_row+1,2).font=Font(color=LINK_GREEN)
+    ws.cell(source_row+1,1,f"{source_label} Source"); ws.cell(source_row+1,2,url or ""); ws.cell(source_row+1,2).font=Font(color=LINK_GREEN)
     ws.cell(source_row+2,1,"Extraction Status"); ws.cell(source_row+2,2,auto_status)
     ws.cell(source_row+3,1,"Important"); ws.cell(source_row+3,2,"Segment disclosure differs by issuer. Segment Profit can represent operating income, adjusted operating income, adjusted earnings, segment EBITDA or another issuer-defined CODM measure. The model preserves the issuer disclosure and leaves missing economics blank rather than estimating them."); ws.cell(source_row+3,2).alignment=Alignment(wrap_text=True)
     ws.column_dimensions["A"].width=38
@@ -327,7 +328,42 @@ def _write_sheet(wb,ticker,years,segments,business,url,auto_status):
     ws.column_dimensions["O"].width=27; ws.column_dimensions["P"].width=34; ws.column_dimensions["H"].width=20; ws.freeze_panes="A7"; return ws
 
 def ensure_segment_analysis_v2(wb,ticker,headers):
-    ticker=ticker.upper(); raw_html,url=_latest_10k_html(ticker,headers); tables,parser_status=_tables(raw_html); cfg=CONFIGS.get(ticker,{})
+    ticker=ticker.upper()
+    if is_finnish_ticker(ticker):
+        info=getattr(wb,"_issuer_source_info",{}) or getattr(wb,"_wacc_info",{}) or {}
+        try:
+            found,meta=finland_esef_segments(ticker,info,limit=4)
+        except Exception as exc:
+            found=[]; meta={"status":"ERROR","errors":[str(exc)]}
+        if found:
+            years=_years(wb)
+            segments=[]
+            for rec in found:
+                rev=[(rec.get("revenue") or {}).get(y) for y in years]
+                op=[(rec.get("op") or {}).get(y) for y in years]
+                rev=[v/1e9 if _num(v) is not None else None for v in rev]
+                op=[v/1e9 if _num(v) is not None else None for v in op]
+                segments.append((rec.get("name") or "Segment",rev,op))
+            numeric=sum(any(_num(v) is not None for v in (rv+op)) for _,rv,op in segments)
+            source=(meta.get("json_urls") or ["https://oam.fi/"])[0]
+            status=f"AUTO — Finnish ESEF dimension facts: {len(segments)} segment(s), {numeric} with extracted economics; years={meta.get('years') or years}"
+            return _write_sheet(
+                wb,ticker,years,segments,[],source,status,
+                source_label="Finnish OAM / ESEF",
+            )
+        # If dimensioned ESEF segment facts are unavailable, preserve a transparent Finland
+        # state rather than mislabeling the missing data as an SEC/10-K parsing failure.
+        years=_years(wb)
+        detail="; ".join(meta.get("errors") or [])[:220]
+        status=f"REVIEW — Finnish ESEF segment dimensions not recovered ({meta.get('status','NO_DATA')})"
+        if detail:
+            status+=f"; {detail}"
+        return _write_sheet(
+            wb,ticker,years,[],[],"https://oam.fi/",status,
+            source_label="Finnish OAM / ESEF",
+        )
+
+    raw_html,url=_latest_10k_html(ticker,headers); tables,parser_status=_tables(raw_html); cfg=CONFIGS.get(ticker,{})
     configured=list(cfg.get("segments",[])); discovered=_discover_segments(tables,raw_html); seg_labels=[]; seg_keys=set()
     for lab in discovered+configured:
         key=_label_key(lab)
