@@ -965,3 +965,242 @@ def finland_latest_results(ticker: str, info: dict | None = None, horizon_days: 
                     "rows":rows[:limit],
                 },{"status":"PASS","source":url,"provider":"Issuer stock-exchange release","news":news_meta}
     return {},{"status":"NO_TABLE","candidates":len(candidates),"errors":errors[:10],"news":news_meta}
+
+
+def _flatten_columns(columns) -> list[str]:
+    out=[]
+    for col in columns:
+        if isinstance(col,tuple):
+            text=" | ".join(str(x) for x in col if str(x).lower()!="nan")
+        else:
+            text=str(col)
+        out.append(re.sub(r"\s+"," ",text).strip())
+    return out
+
+
+def _vara_link_from_issuer(ticker: str, info: dict | None = None) -> tuple[str | None, dict]:
+    """Discover an issuer-linked Vara Research URL rather than guessing a provider slug."""
+    if not is_finnish_ticker(ticker):
+        return None,{"status":"NOT_APPLICABLE"}
+    pages=_issuer_candidate_pages(info,(
+        "/investors/financial-information","/en/investors/financial-information",
+        "/investors/consensus","/en/investors/consensus",
+        "/investor-relations/financial-information","/en/investor-relations/financial-information",
+    ))
+    errors=[]
+    for page in pages[:12]:
+        try:
+            r=requests.get(page,timeout=15,headers={"User-Agent":"Mozilla/5.0 AntzazEquityResearch"},allow_redirects=True)
+            r.raise_for_status()
+            if BeautifulSoup is None:
+                continue
+            soup=BeautifulSoup(r.text,"html.parser")
+        except Exception as exc:
+            errors.append(f"{page}: {exc}"[:240]); continue
+        for a in soup.find_all("a",href=True):
+            href=urljoin(r.url,a.get("href"))
+            label=(a.get_text(" ",strip=True)+" "+href).lower()
+            if "vara-services.com" in href.lower() or "vara research" in label:
+                return href,{"status":"PASS","issuer_page":page,"provider":"Vara Research GmbH"}
+        # Some consent widgets keep the external URL in scripts/data attributes rather than
+        # a normal anchor. Search the issuer HTML but still require the Vara domain explicitly.
+        m=re.search(r"https?://[^\"'<>\s]*vara-services\.com/[^\"'<>\s]*",r.text,re.I)
+        if m:
+            return m.group(0).replace("\\u002F","/"),{"status":"PASS","issuer_page":page,"provider":"Vara Research GmbH","discovery":"embedded URL"}
+    return None,{"status":"NO_LINK","pages_checked":pages[:12],"errors":errors[:10]}
+
+
+def _vara_fy_columns(columns: list[str]) -> dict[int,int]:
+    out={}
+    for idx,col in enumerate(columns):
+        text=str(col)
+        m=re.search(r"\bFY\s*(20\d{2})\b",text,re.I)
+        if m:
+            out[idx]=int(m.group(1))
+    return out
+
+
+def _vara_stat_name(value: str) -> str | None:
+    low=re.sub(r"\s+"," ",str(value or "")).strip().lower()
+    if "number of estimates" in low or "number of estimate" in low:
+        return "analysts"
+    if low in {"average","mean","consensus (mean)","consensus mean"} or "consensus (mean)" in low:
+        return "mean"
+    if low=="median":
+        return "median"
+    if low=="highest" or low=="high":
+        return "high"
+    if low=="lowest" or low=="low":
+        return "low"
+    return None
+
+
+def _vara_metric_name(metric: str) -> str | None:
+    low=re.sub(r"\s+"," ",str(metric or "")).strip().lower()
+    if not low:
+        return None
+    if low=="revenue" or low.startswith("revenue "):
+        return "Revenue"
+    if "adjusted operating profit" in low or "adjusted operating result" in low:
+        return "Adjusted Operating Profit"
+    if low in {"operating profit","operating result","ebit"}:
+        return "EBIT"
+    if "result for the period" in low or "net income" in low or "profit for the period" in low:
+        return "Net Income"
+    if "earnings per share" in low or low in {"eps","eps, eur","eps eur"}:
+        return "EPS"
+    if "dividend per share" in low or low in {"dps","dps, eur","dps eur"}:
+        return "DPS"
+    if "free cash flow" in low or low=="fcf":
+        return "FCF"
+    if "capital expenditure" in low or "capex" in low:
+        return "Capex"
+    if low=="ebitda" or "adjusted ebitda" in low:
+        return "EBITDA"
+    return None
+
+
+def _parse_vara_detailed_tables(tables: list[pd.DataFrame]) -> list[dict]:
+    """Normalize Vara's detailed-consensus table into metric/year statistics."""
+    grouped={}
+    for raw in tables:
+        if raw is None or raw.empty or raw.shape[1]<4:
+            continue
+        df=raw.copy()
+        df.columns=_flatten_columns(df.columns)
+        cols=list(df.columns)
+        fy_cols=_vara_fy_columns(cols)
+        if not fy_cols:
+            continue
+        # Vara tables normally use KPI + statistic in the first two columns. Be tolerant of
+        # an extra unnamed/index column by finding rows with recognizable statistic labels.
+        for _,row in df.iterrows():
+            values=[row.iloc[i] for i in range(len(cols))]
+            stat_idx=None; stat=None
+            for i,v in enumerate(values[:min(4,len(values))]):
+                candidate=_vara_stat_name(v)
+                if candidate:
+                    stat_idx=i; stat=candidate; break
+            if stat_idx is None:
+                continue
+            metric=None
+            for i in range(stat_idx-1,-1,-1):
+                candidate=_vara_metric_name(values[i])
+                if candidate:
+                    metric=candidate; break
+            if metric is None:
+                # Repeated KPI labels sometimes land in the first column while the second
+                # column is the statistic.
+                metric=_vara_metric_name(values[0])
+            if metric is None:
+                continue
+            for idx,year in fy_cols.items():
+                if idx>=len(values):
+                    continue
+                number=_table_number(values[idx])
+                if number is None:
+                    continue
+                rec=grouped.setdefault((metric,year),{
+                    "metric":metric,"fiscal_year":year,"mean":None,"median":None,
+                    "low":None,"high":None,"analysts":None,
+                })
+                rec[stat]=number
+    return sorted(grouped.values(),key=lambda x:(x["fiscal_year"],x["metric"]))
+
+
+def _parse_vara_price_target_tables(tables: list[pd.DataFrame]) -> dict | None:
+    fields={}
+    for raw in tables:
+        if raw is None or raw.empty:
+            continue
+        df=raw.copy()
+        df.columns=_flatten_columns(df.columns)
+        for _,row in df.iterrows():
+            vals=[row.iloc[i] for i in range(len(df.columns))]
+            if not vals:
+                continue
+            label=str(vals[0] or "").strip().lower()
+            value=next((_table_number(v) for v in vals[1:] if _table_number(v) is not None),None)
+            if value is None:
+                continue
+            if "number of estimates" in label:
+                fields["analysts"]=value
+            elif label=="highest":
+                fields["high"]=value
+            elif label=="average":
+                fields["mean"]=value
+            elif label=="median":
+                fields["median"]=value
+            elif label=="lowest":
+                fields["low"]=value
+            elif "last closing" in label:
+                fields["last_price"]=value
+    return fields if any(k in fields for k in ("mean","median","low","high")) else None
+
+
+def finland_vara_consensus(ticker: str, info: dict | None = None) -> tuple[list[dict], dict | None, dict]:
+    """Retrieve free issuer-linked Vara Research consensus for Helsinki-listed companies.
+
+    Vara is only used when its URL is discovered from the issuer's own investor-relations pages.
+    This prevents guessing a provider slug and accidentally mixing another company's estimates.
+    """
+    if not is_finnish_ticker(ticker):
+        return [],None,{"status":"NOT_APPLICABLE","provider":"Vara Research"}
+    vara_url,discovery=_vara_link_from_issuer(ticker,info)
+    if not vara_url:
+        return [],None,{**discovery,"configured":True,"ok":False,"provider":"Vara Research"}
+
+    # Resolve a stable company root such as https://vara-services.com/yit/ from any issuer link.
+    m=re.match(r"(https?://[^/]+/[^/?#]+/)",vara_url,re.I)
+    root=m.group(1) if m else vara_url
+    detail_candidates=[
+        vara_url,
+        urljoin(root,"consensus-estimates/"),
+        root,
+    ]
+    records=[]; detail_url=None; errors=[]
+    seen=set()
+    for url in detail_candidates:
+        if url in seen:
+            continue
+        seen.add(url)
+        try:
+            r=requests.get(url,timeout=18,headers={"User-Agent":"Mozilla/5.0 AntzazEquityResearch"},allow_redirects=True)
+            r.raise_for_status()
+            tables=pd.read_html(StringIO(r.text))
+            parsed=_parse_vara_detailed_tables(tables)
+        except Exception as exc:
+            errors.append(f"{url}: {exc}"[:260]); continue
+        if parsed:
+            records=parsed; detail_url=r.url or url; break
+
+    price_target=None; target_url=None
+    target_candidates=[
+        urljoin(root,"consensus-analystoverview/"),
+        urljoin(root,"analystoverview/"),
+    ]
+    for url in target_candidates:
+        try:
+            r=requests.get(url,timeout=18,headers={"User-Agent":"Mozilla/5.0 AntzazEquityResearch"},allow_redirects=True)
+            r.raise_for_status()
+            target=_parse_vara_price_target_tables(pd.read_html(StringIO(r.text)))
+        except Exception as exc:
+            errors.append(f"{url}: {exc}"[:260]); continue
+        if target:
+            price_target=target; target_url=r.url or url; break
+
+    meta={
+        **discovery,
+        "status":"PASS" if records or price_target else "NO_DATA",
+        "configured":True,
+        "ok":bool(records),
+        "provider":"Vara Research",
+        "source_url":detail_url or vara_url,
+        "price_target_url":target_url,
+        "rows":len(records),
+        "errors":errors[:10],
+        "unit":"EUR m",
+    }
+    if price_target is not None:
+        price_target={**price_target,"source_url":target_url or vara_url}
+    return records,price_target,meta
