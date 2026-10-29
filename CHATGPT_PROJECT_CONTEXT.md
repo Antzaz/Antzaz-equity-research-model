@@ -207,6 +207,22 @@ Helsinki builds should be Finland-native across the workbook, not merely at the 
 
 The ESEF parser may use recognized consolidated standard IFRS concepts plus a narrow conservative allow-list of unadjusted issuer-extension concepts for core statutory metrics. It must not map adjusted/comparable/underlying KPIs into IFRS accounting rows. Unsupported concepts remain blank rather than inferred or fabricated. Numeric-coverage reporting should distinguish true extraction failures from analyst inputs, derived fields, optional provider coverage and legitimate IFRS presentation/non-disclosure.
 
+## Public showcase refresh policy
+
+The public repository `Antzaz/Antzaz-investment-research-showcase` must not rely on an old sanitized base snapshot for market freshness. The public repo owns a daily market-data overlay that runs after the U.S. cash close (currently 22:30 UTC every calendar day) and atomically refreshes:
+
+- `data/portfolio_snapshot.json` as the canonical website payload;
+- `data/public_analytics.json`;
+- `data/public_fundamentals.json`;
+- `data/short_term_performance.json`;
+- `data/stock_quotes.json`.
+
+The public workflow recalculates market-derived holdings characteristics, portfolio performance/risk, attribution, factors, public alpha proxies, stress scenarios, reverse DCF, timeseries, latest closes and standard return windows. It validates freshness and complete holding coverage before publishing.
+
+Private-to-public synchronization from the main repository remains the source of truth for actual portfolio composition, published weights and recruiter-safe thesis/philosophy inputs. Those inputs only need to change when the user changes the private portfolio or thesis workbook. A missing/expired cross-repository token must not freeze daily public market data.
+
+Public payload privacy remains strict: no ticker/symbol fields, shares, average cost, cost basis, exact market value, unrealized P&L, transactions, private notes or credentials. Company names, public weights, market prices, return windows and aggregate analytics may be public.
+
 ## Current repository areas
 
 ### Single-company model
