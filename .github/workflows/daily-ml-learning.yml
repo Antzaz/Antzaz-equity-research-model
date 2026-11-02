@@ -52,6 +52,7 @@ jobs:
           python -m pip install pyzipper
 
       - name: Validate SEC automated-access configuration
+    if: ${{ github.event_name != 'schedule' || github.event.schedule == '17 6 * * *' }}
         env:
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
         run: python automation/sec_preflight.py
@@ -111,6 +112,7 @@ jobs:
           python -m machine_learning.learning_runner
 
       - name: Restore private holdings for monthly model retraining
+    if: ${{ github.event_name != 'schedule' || github.event.schedule == '17 6 * * *' }}
         env:
           PORTFOLIO_CSV_B64: ${{ secrets.PORTFOLIO_CSV_B64 }}
         run: |
@@ -162,6 +164,7 @@ jobs:
           echo "Monthly retraining: $count holding(s), $failures research/ML failure(s)."
 
       - name: Publish recruiter-safe ML results
+    if: ${{ github.event_name != 'schedule' || github.event.schedule == '17 6 * * *' }}
         env:
           PORTFOLIO_CSV_B64: ${{ secrets.PORTFOLIO_CSV_B64 }}
           PORTFOLIO_THESIS_JSON: ${{ secrets.PORTFOLIO_THESIS_JSON }}
