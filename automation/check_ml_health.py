@@ -29,6 +29,12 @@ def inspect(db: Path, max_age_days: int = 7, min_coverage: float = 0.60) -> dict
         ).fetchone()[0]
         feature_count = con.execute("SELECT COUNT(*) FROM features").fetchone()[0]
         last_fetched = con.execute("SELECT MAX(fetched_at) FROM prices").fetchone()[0]
+        prediction_count = con.execute("SELECT COUNT(*) FROM predictions").fetchone()[0] if "predictions" in required else 0
+        training_count = con.execute("SELECT COUNT(*) FROM training_runs").fetchone()[0] if "training_runs" in required else 0
+        latest_prediction = (
+            con.execute("SELECT MAX(created_at) FROM predictions").fetchone()[0]
+            if "predictions" in required else None
+        )
     if not latest or not registered:
         raise RuntimeError("ML market price history has no usable observations")
     last_date = date.fromisoformat(str(latest)[:10])
@@ -62,6 +68,10 @@ def inspect(db: Path, max_age_days: int = 7, min_coverage: float = 0.60) -> dict
         "recent_symbol_coverage": round(coverage, 4),
         "feature_rows": feature_count,
         "last_price_fetch_utc": str(last_fetched),
+        "recorded_predictions": prediction_count,
+        "training_runs": training_count,
+        "latest_prediction_utc": latest_prediction,
+        "model_state": "TRAINING_RECORDED" if training_count else "NO_RECORDED_TRAINING_YET",
     }
 
 
