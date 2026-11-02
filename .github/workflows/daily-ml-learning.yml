@@ -111,7 +111,7 @@ jobs:
           python automation/check_ml_health.py --max-age-days 7 --min-coverage 0.60
           python -m machine_learning.learning_runner
 
-      - name: Restore private holdings for monthly model retraining
+      - name: Restore private holdings for governed retraining
         if: ${{ github.event_name != 'schedule' || github.event.schedule == '17 6 * * *' }}
         env:
           PORTFOLIO_CSV_B64: ${{ secrets.PORTFOLIO_CSV_B64 }}
@@ -128,15 +128,15 @@ jobs:
           p.write_bytes(base64.b64decode(raw))
           PY
 
-      - name: Monthly governed retraining
+      - name: Twice-monthly governed retraining
         env:
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
           SCHEDULE_SLOT: ${{ github.event.schedule }}
         run: |
           set -euo pipefail
           day="$(TZ=Europe/Helsinki date +%d)"
-          if [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ] && { [ "$day" != "01" ] || [ "${SCHEDULE_SLOT:-}" != "17 6 * * *" ]; }; then
-            echo "Heavy retraining is reserved for the 06:17 UTC slot on the first day of each month (or manual dispatch)."
+          if [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ] && { { [ "$day" != "01" ] && [ "$day" != "15" ]; } || [ "${SCHEDULE_SLOT:-}" != "17 6 * * *" ]; }; then
+            echo "Heavy retraining runs on the 1st and 15th at 06:17 UTC (or manual dispatch)."
             exit 0
           fi
           if [ ! -f institutional_research/portfolio.csv ]; then
@@ -161,7 +161,7 @@ jobs:
             fi
           done < "$RUNNER_TEMP/tickers.txt"
           python -m machine_learning.learning_runner || true
-          echo "Monthly retraining: $count holding(s), $failures research/ML failure(s)."
+          echo "Governed retraining: $count holding(s), $failures research/ML failure(s)."
 
       - name: Publish recruiter-safe ML results
         if: ${{ github.event_name != 'schedule' || github.event.schedule == '17 6 * * *' }}
