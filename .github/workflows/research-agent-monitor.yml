@@ -64,9 +64,12 @@ jobs:
           done < "$RUNNER_TEMP/universe.txt"
 
       - name: Select rotating batch without logging holdings
+        env:
+          SCHEDULE_SLOT: ${{ github.event.schedule }}
         run: |
           python - <<'PY'
           import math, os, time
+          from datetime import datetime, timezone
           from pathlib import Path
           root = Path(os.environ["RUNNER_TEMP"])
           names = list(dict.fromkeys(
@@ -74,9 +77,16 @@ jobs:
           ))
           if not names:
               raise SystemExit("Private agent monitoring universe is empty")
-          batch_size = 2
+          # Daily LLM-capable slot rotates independently across every company.
+          # A 15-name portfolio receives deterministic agent checks roughly every 2 days
+          # and optional evidence-bound LLM interpretation for all names roughly every 5 days.
+          ai_slot = os.getenv("SCHEDULE_SLOT") == "45 7 * * *"
+          batch_size = 3 if ai_slot else 2
           groups = max(1, math.ceil(len(names) / batch_size))
-          slot = int(time.time() // (6 * 3600)) % groups
+          if ai_slot:
+              slot = datetime.now(timezone.utc).date().toordinal() % groups
+          else:
+              slot = int(time.time() // (6 * 3600)) % groups
           selection = names[slot * batch_size:(slot + 1) * batch_size]
           (root / "selected_tickers.txt").write_text("\n".join(selection) + "\n", encoding="utf-8")
           print(f"Selected {len(selection)} of {len(names)} private companies in rotating batch.")
