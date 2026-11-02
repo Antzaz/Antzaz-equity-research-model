@@ -205,7 +205,7 @@ jobs:
 
       - name: Verify completed ML maintenance before persistence
         run: |
-          python automation/check_ml_health.py --max-age-days 7 --min-coverage 0.60
+          python automation/check_ml_health.py --max-age-days 7 --min-coverage 0.60 | tee -a "$GITHUB_STEP_SUMMARY"
           python -m py_compile automation/check_ml_health.py ml_history.py machine_learning/learning_runner.py
 
       - name: Encrypt updated learning state
