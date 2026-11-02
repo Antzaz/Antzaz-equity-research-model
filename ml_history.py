@@ -222,7 +222,9 @@ def main():
     if args.command=="backfill-macro": backfill_macro(store); print_status(store); return 0
     rows,symbols=_universe(store,args.universe,args.limit)
     if args.command=="daily-refresh":
-        refresh_recent_prices(store,symbols,args.years)
+        refreshed=refresh_recent_prices(store,symbols,args.years)
+        if refreshed <= 0:
+            raise RuntimeError("ML refresh returned zero price observations. Refusing to mark an empty provider response successful.")
         if not args.skip_deep:
             deepen_incomplete_history(store,rows,symbols,args.deep_years,args.deep_batch)
         if not args.skip_macro:
