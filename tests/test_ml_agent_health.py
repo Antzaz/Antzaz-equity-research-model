@@ -15,6 +15,7 @@ from agent_research import (
     FilingsAgent,
     KPIEarningsAgent,
     ResearchQAAgent,
+    SourceHealthAgent,
     ThesisMonitorAgent,
 )
 
@@ -73,15 +74,18 @@ def test_five_agents_execute_on_finnish_esef_workbook(tmp_path):
         ticker="YIT.HE",repo_root=tmp_path,workbook_path=filename,
         run_dir=tmp_path/"research_runs"/"YIT.HE"/"latest",
     )
-    agents=[FilingsAgent(),KPIEarningsAgent(),ThesisMonitorAgent(),ResearchQAAgent()]
+    source_health=SourceHealthAgent(timeout=1)
+    # Exercise the actual Source Health Agent without depending on live HTTP in CI.
+    source_health._check=lambda label,url,source_type: {
+        "label":label,"url":url,"source_type":source_type,"reachable":True,"status_code":200,
+    }
+    agents=[source_health,FilingsAgent(),KPIEarningsAgent(),ThesisMonitorAgent(),ResearchQAAgent()]
     results=[agent.run(ctx) for agent in agents]
-    assert results[0].status=="PASS"
-    assert results[0].details["filings"][0]["form"]=="ESEF AFR"
     assert all(x.status in {"PASS","WARN"} for x in results)
-
-    # Include a source-health result as the fifth contract. Source probes are tested
-    # independently to avoid live HTTP calls inside the smoke suite.
-    names=["Source Health Agent"]+[x.name for x in results]
+    filings=next(x for x in results if x.name=="Filings & Financials Agent")
+    assert filings.status=="PASS"
+    assert filings.details["filings"][0]["form"]=="ESEF AFR"
+    names=[x.name for x in results]
     manifest={"ticker":"YIT.HE","results":[{"name":n,"status":"PASS"} for n in names]}
     location=tmp_path/"runs"/"YIT.HE"/"latest"
     location.mkdir(parents=True)
