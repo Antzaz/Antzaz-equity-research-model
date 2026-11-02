@@ -4,7 +4,8 @@ on:
   schedule:
     # Four research-data checks daily. The 06:17 UTC slot also performs deep historical
     # backfill and macro refresh; other slots reuse the encrypted persistent database.
-    - cron: '17 0,6,12,18 * * *'
+    - cron: '17 6 * * *'
+    - cron: '17 0,12,18 * * *'
   workflow_dispatch:
   push:
     branches: [main]
@@ -97,14 +98,8 @@ jobs:
           # 06:17 UTC (or manual dispatch): full source maintenance.
           # Other slots: market data + point-in-time features only, avoiding unnecessary
           # SEC/FRED calls and monthly model retraining.
-          if [ "$GITHUB_EVENT_NAME" = "schedule" ] && [ "$SCHEDULE_SLOT" != "17 0,6,12,18 * * *" ]; then
-            echo "Unknown cron event; using safe lightweight refresh."
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ] && [ "$SCHEDULE_SLOT" != "17 6 * * *" ]; then
             flags+=(--skip-deep --skip-macro)
-          elif [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
-            slot_hour="$(date -u +%H)"
-            if [ "$slot_hour" != "06" ]; then
-              flags+=(--skip-deep --skip-macro)
-            fi
           fi
           python ml_history.py daily-refresh \
             --universe sp500 \
@@ -134,11 +129,11 @@ jobs:
       - name: Monthly governed retraining
         env:
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+          SCHEDULE_SLOT: ${{ github.event.schedule }}
         run: |
           set -euo pipefail
           day="$(TZ=Europe/Helsinki date +%d)"
-          hour="$(date -u +%H)"
-          if [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ] && { [ "$day" != "01" ] || [ "$hour" != "06" ]; }; then
+          if [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ] && { [ "$day" != "01" ] || [ "${SCHEDULE_SLOT:-}" != "17 6 * * *" ]; }; then
             echo "Heavy retraining is reserved for the 06:17 UTC slot on the first day of each month (or manual dispatch)."
             exit 0
           fi
