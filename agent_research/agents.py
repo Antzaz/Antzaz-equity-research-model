@@ -35,7 +35,7 @@ class FilingsAgent(BaseAgent):
             for r in range(1, min(ws.max_row, 40) + 1):
                 values = [normalize_json_value(ws.cell(r, c).value) for c in range(1, min(ws.max_column, 8) + 1)]
                 form = str(values[0] or "").strip().upper() if values else ""
-                if form in {"10-K", "10-Q", "8-K", "DEF 14A", "20-F", "6-K"}:
+                if form in {"10-K", "10-K/A", "10-Q", "8-K", "DEF 14A", "20-F", "20-F/A", "40-F", "6-K", "ESEF AFR", "ESEF", "OAM"}:
                     rows.append({
                         "form": values[0],
                         "report_date": values[1] if len(values) > 1 else None,
