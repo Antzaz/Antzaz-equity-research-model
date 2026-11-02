@@ -161,3 +161,37 @@ The private `institutional_research` layer now supports a transaction-ledger tru
 ## Windows desktop app
 
 For normal Windows use, clone this private repo and double-click `install_desktop_app.bat` once. It creates an **Antzaz Investment Research** desktop shortcut. The launcher can update from GitHub, run full equity research, build a guarded model, refresh/open the portfolio dashboard and open the latest workbook. See `DESKTOP_APP.md`.
+
+
+## ML learning and research-agent schedules
+
+The unattended learning workflow `.github/workflows/daily-ml-learning.yml` uses an encrypted persistent
+`ml_data/` SQLite state. It refreshes S&P 500/public benchmark prices and point-in-time features
+**four times per day** (00:17, 06:17, 12:17 and 18:17 UTC). The **06:17 UTC** cycle additionally
+runs the staged 20-year history/issuer fundamentals and macro refresh. Governed holding-level
+model retraining runs on the **1st and 15th** of each month in the 06:17 cycle (or when
+manually dispatched), rather than training large models from almost unchanged data every six
+hours. Matured predictions are evaluated after each successful market refresh.
+
+`automation/check_ml_health.py` refuses to report a healthy refresh when the price feed is
+empty/stale, fewer than 60% of registered names have recent prices, or the feature table is
+empty. Its report separately shows how many actual predictions and training runs have been
+recorded: a fresh price feed alone is **not** evidence that predictions were retrained.
+Concurrent runs are serialized so they cannot overwrite different copies of the encrypted
+learning state. The cloud workflow requires `LIVE_BUNDLE_PASSWORD` and uses an authenticated
+SEC identity when available; no private positions or training databases are committed.
+
+The `.github/workflows/research-agent-monitor.yml` workflow runs every six hours
+(01:45, 07:45, 13:45 and 19:45 UTC) and rotates through the private portfolio. It builds a
+fresh deterministic workbook and runs all five research agents for the selected names, with
+a structured manifest validator and encrypted, persistent agent/KPI history. The daily 07:45 UTC
+slot can enable the optional evidence-bound OpenAI narrative with `OPENAI_API_KEY`; this
+slot rotates independently across names to limit paid LLM calls. Without that key,
+deterministic source/filings/KPI/thesis/skeptic checks still run. GitHub scheduled runs may
+start late, and the workflows must be inspected for genuine success; a scheduled definition
+alone does not verify successful external data retrieval.
+
+Both workflows require an appropriately configured `PORTFOLIO_CSV_B64` secret to work on
+private holdings. Detailed reports remain in encrypted workflow artifacts, not the public
+portfolio showcase. Run `PYTHONPATH=. python -m pytest -q tests/test_ml_agent_health.py`
+to smoke-test the five-agent interface and ML freshness gates locally.
