@@ -4,7 +4,8 @@ on:
   schedule:
     # Rotate two privately configured holdings through all five research agents
     # every six hours; a 15-name portfolio is covered roughly every two days.
-    - cron: '45 1,7,13,19 * * *'
+    - cron: '45 7 * * *'
+    - cron: '45 1,13,19 * * *'
   workflow_dispatch:
   push:
     branches: [main]
@@ -116,16 +117,19 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+          SCHEDULE_SLOT: ${{ github.event.schedule }}
         run: |
           set -euo pipefail
           failed=0
           count=0
           flags=(--no-ml --strict)
-          if [ -n "${OPENAI_API_KEY:-}" ]; then
+          # Limit paid LLM interpretation to one daily slot (or explicit manual runs).
+          # Deterministic source/filing/KPI/thesis/QA monitoring still runs every six hours.
+          if [ -n "${OPENAI_API_KEY:-}" ] && { [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] || [ "$SCHEDULE_SLOT" = "45 7 * * *" ]; }; then
             flags+=(--ai)
-            echo "Evidence-bound AI interpretation enabled."
+            echo "Evidence-bound AI interpretation enabled for the daily reasoning slot."
           else
-            echo "OPENAI_API_KEY not configured: running deterministic research agents."
+            echo "Running deterministic monitoring; scheduled AI reasoning uses the daily 07:45 UTC slot when configured."
           fi
           while IFS= read -r ticker; do
             [ -z "$ticker" ] && continue
