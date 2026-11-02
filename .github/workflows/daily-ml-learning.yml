@@ -2,8 +2,9 @@ name: Daily ML learning maintenance
 
 on:
   schedule:
-    # 06:17 UTC = 08:17 Helsinki in winter / 09:17 in summer.
-    - cron: '17 6 * * *'
+    # Four research-data checks daily. The 06:17 UTC slot also performs deep historical
+    # backfill and macro refresh; other slots reuse the encrypted persistent database.
+    - cron: '17 0,6,12,18 * * *'
   workflow_dispatch:
   push:
     branches: [main]
@@ -17,10 +18,17 @@ on:
       - 'machine_learning/learning_runner.py'
       - 'machine_learning/__init__.py'
       - 'ml_history.py'
+      - 'automation/check_ml_health.py'
 
 permissions:
   contents: read
   actions: read
+
+# Never let two hosted runners restore and overwrite independent copies of the same
+# encrypted SQLite learning store.
+concurrency:
+  group: ml-learning-persistent-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   learn:
@@ -79,27 +87,33 @@ jobs:
             --destination .
           python ml_history.py status
 
-      - name: Refresh maximum-data history and evaluate matured forecasts
+      - name: Refresh market history and evaluate matured forecasts
         env:
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+          SCHEDULE_SLOT: ${{ github.event.schedule }}
         run: |
-          set +e
+          set -euo pipefail
+          flags=()
+          # 06:17 UTC (or manual dispatch): full source maintenance.
+          # Other slots: market data + point-in-time features only, avoiding unnecessary
+          # SEC/FRED calls and monthly model retraining.
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ] && [ "$SCHEDULE_SLOT" != "17 0,6,12,18 * * *" ]; then
+            echo "Unknown cron event; using safe lightweight refresh."
+            flags+=(--skip-deep --skip-macro)
+          elif [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
+            slot_hour="$(date -u +%H)"
+            if [ "$slot_hour" != "06" ]; then
+              flags+=(--skip-deep --skip-macro)
+            fi
+          fi
           python ml_history.py daily-refresh \
             --universe sp500 \
             --limit 500 \
             --years 1 \
             --deep-years 20 \
-            --deep-batch 25
-          refresh_code=$?
+            --deep-batch 25 "${flags[@]}"
+          python automation/check_ml_health.py --max-age-days 7 --min-coverage 0.60
           python -m machine_learning.learning_runner
-          learning_code=$?
-          set -e
-          if [ "$refresh_code" -ne 0 ]; then
-            echo "::warning::One or more public data providers failed during the daily history refresh. Existing persistent history is preserved."
-          fi
-          if [ "$learning_code" -ne 0 ]; then
-            echo "::warning::Continual-learning evaluation failed. No fabricated outcome data will be written."
-          fi
 
       - name: Restore private holdings for monthly model retraining
         env:
@@ -123,8 +137,9 @@ jobs:
         run: |
           set -euo pipefail
           day="$(TZ=Europe/Helsinki date +%d)"
-          if [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ] && [ "$day" != "01" ]; then
-            echo "Daily maintenance complete; heavy retraining is scheduled for the first day of each month."
+          hour="$(date -u +%H)"
+          if [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ] && { [ "$day" != "01" ] || [ "$hour" != "06" ]; }; then
+            echo "Heavy retraining is reserved for the 06:17 UTC slot on the first day of each month (or manual dispatch)."
             exit 0
           fi
           if [ ! -f institutional_research/portfolio.csv ]; then
@@ -189,6 +204,11 @@ jobs:
               git push origin HEAD:main
             fi
           fi
+
+      - name: Verify completed ML maintenance before persistence
+        run: |
+          python automation/check_ml_health.py --max-age-days 7 --min-coverage 0.60
+          python -m py_compile automation/check_ml_health.py ml_history.py machine_learning/learning_runner.py
 
       - name: Encrypt updated learning state
         env:
