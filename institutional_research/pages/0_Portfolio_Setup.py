@@ -136,11 +136,26 @@ if st.button("Build / refresh portfolio analysis (online)", type="primary", use_
                 f"Portfolio analysis exited with code {proc.returncode}. "
                 "The last working analysis, if any, was preserved."
             )
-        elif not (LATEST / "summary.json").is_file():
-            st.error("The research command ended without producing outputs/latest/summary.json.")
+        elif not all(
+            (LATEST / filename).is_file()
+            for filename in ("summary.json", "holdings_analysis.csv")
+        ):
+            st.error(
+                "The research command finished without producing a complete "
+                "outputs/latest snapshot. Open the log below to see the last completed step."
+            )
         else:
-            st.success("Analysis files generated. Refreshing the dashboard navigation.")
-            st.rerun()
+            verified, diagnostics = offline_readiness_check()
+            if verified:
+                st.success("Analysis and offline price cache are ready. Opening the full dashboard.")
+                st.rerun()
+            else:
+                st.warning(
+                    "The analysis files were generated, but some offline prerequisites "
+                    "are still missing. Check the diagnostics below; the saved results remain available."
+                )
+                for diagnostic in diagnostics:
+                    st.write("• " + diagnostic)
     except subprocess.TimeoutExpired:
         st.error("The build exceeded the 30-minute safety limit. Check the local log for its last step.")
     except Exception as exc:
