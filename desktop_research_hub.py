@@ -393,10 +393,11 @@ class ResearchHub(tk.Tk):
             raise RuntimeError(
                 "Local portfolio.csv is missing. Connect to GitHub and pull the latest main branch first."
             )
-        if not (IR / "outputs" / "latest" / "summary.json").is_file():
-            raise RuntimeError(
-                "Your portfolio file is present, but this computer has no saved portfolio analytics yet. "
-                "Connect once and choose Sync All Data to build the offline dashboard."
+        has_analysis = (IR / "outputs" / "latest" / "summary.json").is_file()
+        if not has_analysis:
+            self.emit(
+                "No saved analytics yet. Opening Setup & Holdings instead of an empty dashboard. "
+                "You can build the complete analysis from there when online."
             )
         available = subprocess.run(
             [py, "-c", "import streamlit"],
@@ -408,9 +409,15 @@ class ResearchHub(tk.Tk):
                 "Streamlit is not installed for the Python used by this Hub. "
                 "Run install_desktop_app.bat while online, then reopen the Hub."
             )
-        self.emit("Validating offline portfolio inputs…")
-        self._run([py, "offline_portfolio_check.py"], cwd=IR)
-        self.emit("Starting saved Streamlit portfolio on http://localhost:8501 …")
+        if has_analysis:
+            self.emit("Checking saved offline portfolio inputs…")
+            validation_code = self._run([py, "offline_portfolio_check.py"], cwd=IR, check=False)
+            if validation_code != 0:
+                self.emit(
+                    "Offline data coverage is incomplete. The app will remain available "
+                    "with a diagnostic and the option to rebuild while online."
+                )
+        self.emit("Starting portfolio Streamlit app on http://localhost:8501 …")
         logs = IR / ".offline_cache"
         logs.mkdir(parents=True, exist_ok=True)
         log_path = logs / "dashboard_startup.log"
