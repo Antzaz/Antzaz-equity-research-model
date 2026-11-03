@@ -130,3 +130,38 @@ def test_standalone_launcher_never_refreshes_online():
     assert "antzaz_offline=1" in content
     assert "pip install" not in content
     assert "python run_research.py" not in content
+
+
+
+def test_random_forest_weekly_prediction_avoids_sklearn_feature_name_warnings(monkeypatch):
+    import warnings
+    import numpy as np
+    from sklearn.ensemble import RandomForestRegressor
+    from src import short_horizon_rf
+
+    original_forest = RandomForestRegressor
+
+    # Keep the test quick without changing production's 500-tree forecast.
+    def small_forest(*args, **kwargs):
+        kwargs["n_estimators"] = 8
+        kwargs["n_jobs"] = 1
+        return original_forest(*args, **kwargs)
+
+    monkeypatch.setattr(short_horizon_rf, "RandomForestRegressor", small_forest)
+    dates = pd.bdate_range("2024-01-02", periods=330)
+    returns = np.sin(np.arange(330, dtype=float) / 13.0) * 0.004
+    closes = pd.Series(100.0 * np.cumprod(1.0 + returns), index=dates)
+
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always", UserWarning)
+        forecast, metadata = short_horizon_rf._one_ticker_path(closes, horizon=5)
+
+    feature_name_warnings = [
+        str(w.message) for w in recorded
+        if "feature names" in str(w.message).lower()
+    ]
+    assert feature_name_warnings == []
+    assert metadata["status"] == "PASS"
+    assert len(forecast) == 5
+    assert all(np.isfinite(row["predicted_price"]) for row in forecast)
+    assert all(row["predicted_price"] > 0 for row in forecast)
