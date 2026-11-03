@@ -14,3 +14,4 @@ __pycache__/
 transaction_ledger.csv
 benchmark_sector_history.csv
 fundamental_scenarios.csv
+.offline_cache/
