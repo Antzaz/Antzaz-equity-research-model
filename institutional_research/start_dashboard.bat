@@ -13,11 +13,8 @@ if not exist "portfolio.csv" (
   exit /b 1
 )
 if not exist "outputs\latest\summary.json" (
-  echo ERROR: No cached portfolio analytics on this computer yet.
-  echo While connected, open Research Hub and choose Sync All Data.
-  echo Your portfolio.csv is present, but GitHub does not store private calculated outputs.
-  pause
-  exit /b 1
+  echo No saved analysis was found. The app will open Setup ^& Holdings,
+  echo where you can inspect the portfolio and build the full analysis when online.
 )
 
 echo Opening saved portfolio data in offline mode.
