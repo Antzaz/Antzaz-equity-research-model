@@ -393,7 +393,10 @@ class ResearchHub(tk.Tk):
             raise RuntimeError(
                 "Local portfolio.csv is missing. Connect to GitHub and pull the latest main branch first."
             )
-        has_analysis = (IR / "outputs" / "latest" / "summary.json").is_file()
+        has_analysis = all(
+            (IR / "outputs" / "latest" / filename).is_file()
+            for filename in ("summary.json", "holdings_analysis.csv")
+        )
         if not has_analysis:
             self.emit(
                 "No saved analytics yet. Opening Setup & Holdings instead of an empty dashboard. "
