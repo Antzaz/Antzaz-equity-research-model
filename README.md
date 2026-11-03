@@ -195,3 +195,55 @@ Both workflows require an appropriately configured `PORTFOLIO_CSV_B64` secret to
 private holdings. Detailed reports remain in encrypted workflow artifacts, not the public
 portfolio showcase. Run `PYTHONPATH=. python -m pytest -q tests/test_ml_agent_health.py`
 to smoke-test the five-agent interface and ML freshness gates locally.
+
+
+## Offline Windows portfolio — same computer
+
+The committed `institutional_research/portfolio.csv` contains the current 15-holding
+input portfolio. A new computer still needs **one connected setup/sync** to install Python
+dependencies and download market data: calculated private dashboard outputs and adjusted-price
+history are intentionally not stored in GitHub.
+
+From PowerShell with internet access:
+
+```powershell
+cd C:\Users\Antza\Documents\Antzaz-equity-research-model
+powershell -NoProfile -ExecutionPolicy Bypass -File .\prepare_offline_portfolio.ps1
+```
+
+This script backs up a pre-existing local portfolio under
+`institutional_research/.offline_cache/`, safely fast-forwards GitHub when possible,
+installs portfolio dependencies, runs current portfolio research, saves the adjusted-close
+history and company metadata locally, then checks that **all holdings** have cached
+prices and consistent dashboard outputs. It never silently overwrites a tracked local edit.
+
+After setup, **disconnect from the internet** and launch either the existing Windows
+**Antzaz Research Hub → Open Portfolio Dashboard** or:
+
+```powershell
+cd C:\Users\Antza\Documents\Antzaz-equity-research-model\institutional_research
+.\start_dashboard.bat
+```
+
+Both routes use `ANTZAZ_OFFLINE=1`: they do not run `git pull`,
+`pip install`, `run_research.py`, or make Yahoo calls on opening.
+Portfolio performance, risk charts, existing RF predictions and saved research display
+from `outputs/latest`. The private **Stock Prices & Purchase Costs** page uses local
+`.offline_cache/adjusted_closes.csv` and shows its last market date rather than
+pretending stored closes are live. If no initial online sync has succeeded, an explicit
+readiness diagnostic explains what is missing.
+
+Check readiness at any time:
+
+```powershell
+cd C:\Users\Antza\Documents\Antzaz-equity-research-model\institutional_research
+python .\offline_portfolio_check.py
+```
+
+While connected, use **Research Hub → Sync All Data** to refresh the local cached
+analytics and price history. A failed refresh preserves the last working dashboard
+snapshot. Neither `outputs/` nor `.offline_cache/` is committed to GitHub.
+
+**Privacy:** GitHub's `.gitignore` does not make a previously committed portfolio
+private. If this main repository is public, the tracked CSV exposes portfolio position
+sizes and cost basis. Make the repository private and address the exposed history.
