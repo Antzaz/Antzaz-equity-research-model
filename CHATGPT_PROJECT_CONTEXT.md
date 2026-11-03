@@ -223,6 +223,38 @@ Private-to-public synchronization from the main repository remains the source of
 
 Public payload privacy remains strict: no ticker/symbol fields, shares, average cost, cost basis, exact market value, unrealized P&L, transactions, private notes or credentials. Company names, public weights, market prices, return windows and aggregate analytics may be public.
 
+## Offline first-run recovery (2026-11-03)
+
+A fresh Windows checkout can have all 15 current portfolio holdings and local
+adjusted-close prices cached while `institutional_research/outputs/latest/summary.json`
+is absent. This previously produced the blocking Streamlit message "No analysis outputs
+found". The app now automatically runs
+`institutional_research/recover_cached_portfolio.py` once on the Setup & Holdings page,
+if and only if the current holdings are covered by saved price data and no local summary
+exists. The command builds a self-contained LOCAL core dashboard without network calls,
+using current-weight historical price backcasts; it writes the standard portfolio
+summary, holdings analysis, portfolio timeseries, sector exposure, covariance,
+correlation and risk tables. Unavailable benchmark, FX-normalized market values,
+historical realized returns and advanced optimizer/alpha metrics remain absent or
+clearly flagged. It does not replace a completed full research snapshot.
+
+The app navigation switches to the dashboard after successful recovery, with a clear
+`RECOVERY_CACHED_PRICES` badge in the underlying summary and a prominent warning
+in the dashboard. The setup page keeps an explicit **Build / refresh portfolio analysis
+(online)** button for the full research pipeline. Its last log is privately saved under
+`institutional_research/.offline_cache/portfolio_build.log`. The Windows
+`prepare_offline_portfolio.ps1` script now invokes cache-only recovery automatically
+if the full online research calculation fails, instead of leaving no dashboard.
+The main offline CI includes regression tests for these cases.
+
+For users who already have 15/15 cached quotes but no analysis, the shortest Windows
+recovery is to close the old Streamlit process, pull `main`, then run from
+`institutional_research`:
+`python recover_cached_portfolio.py`,
+`python offline_portfolio_check.py`, and
+`python -m streamlit run app.py --server.port 8501`.
+No Yahoo/network access is necessary for cached-only recovery.
+
 ## Windows offline portfolio contract
 
 The private portfolio input is currently tracked in the main repository at
