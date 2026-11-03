@@ -13,8 +13,11 @@ import streamlit as st
 
 BASE = Path(__file__).resolve().parent
 
+HAS_ANALYSIS = (BASE / "outputs" / "latest" / "summary.json").is_file()
+
 PAGES = [
-    ("dashboard.py", "Portfolio Dashboard", "📊", True),
+    ("pages/0_Portfolio_Setup.py", "Setup & Holdings", "🗂️", not HAS_ANALYSIS),
+    ("dashboard.py", "Portfolio Dashboard", "📊", HAS_ANALYSIS),
     ("pages/1_Alpha_Analysis.py", "Alpha Analysis", "📈", False),
     ("pages/2_Portfolio_Optimization.py", "Portfolio Optimization", "⚖️", False),
     ("pages/3_Model_Learning.py", "Model Learning", "🧠", False),
