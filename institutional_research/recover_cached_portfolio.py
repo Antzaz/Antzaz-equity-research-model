@@ -141,7 +141,20 @@ def recover(
     summary["weight_method"] = holdings.attrs.get("weight_method", "unknown")
     summary["holdings"] = len(tickers)
     summary["benchmark"] = BENCHMARK
-    summary["current_market_value"] = _valid_number(holdings["MarketValue"].sum())
+    # The portfolio mixes at least one non-USD listing with US securities.
+    # Summing local listing currencies would invent a single-currency NAV. The
+    # user's locally supplied quantities and currency-specific prices are shown
+    # per holding; a cross-currency NAV requires historical/current FX.
+    currencies = holdings["Currency"].dropna().astype(str).str.strip()
+    currency_uniform = (
+        len(currencies) == len(holdings)
+        and currencies.nunique() == 1
+        and currencies.iloc[0] != ""
+    )
+    summary["current_market_value"] = (
+        _valid_number(holdings["MarketValue"].sum())
+        if currency_uniform else None
+    )
 
     bench = pd.Series(dtype=float)
     if BENCHMARK in prices.columns:
@@ -260,6 +273,7 @@ def recover(
             "method": "Current-weight historic return backcast from cached adjusted closes",
             "market_date": market_date,
             "benchmark_available": bool(benchmark_available),
+            "single_reporting_currency": bool(currency_uniform),
             "advanced_models": "NOT_RUN",
             "realized_portfolio_returns": "NOT_CALCULATED",
             "warnings": [
@@ -267,6 +281,8 @@ def recover(
                 "Historical returns apply present weights to historical adjusted prices.",
                 "No historical transaction ledger or cash flow has been inferred.",
                 "Unobserved benchmark statistics and advanced outputs remain unavailable.",
+                "Holding market values are quoted in listing currencies; without full FX "
+                "normalization, portfolio weights are only a listing-currency approximation.",
             ],
         },
         "portfolio_optimization": {"status": "NOT_RUN_RECOVERY_ONLY"},
