@@ -207,7 +207,7 @@ history are intentionally not stored in GitHub.
 From PowerShell with internet access:
 
 ```powershell
-cd C:\Users\Antza\Documents\Antzaz-equity-research-model
+cd "$env:USERPROFILE\Documents\Antzaz-equity-research-model"
 powershell -NoProfile -ExecutionPolicy Bypass -File .\prepare_offline_portfolio.ps1
 ```
 
@@ -217,11 +217,18 @@ installs portfolio dependencies, runs current portfolio research, saves the adju
 history and company metadata locally, then checks that **all holdings** have cached
 prices and consistent dashboard outputs. It never silently overwrites a tracked local edit.
 
-After setup, **disconnect from the internet** and launch either the existing Windows
-**Antzaz Research Hub → Open Portfolio Dashboard** or:
+If the first-run analysis has not finished, the launcher now opens **Setup & Holdings**
+rather than showing an empty dashboard. This screen displays the existing 15-company
+portfolio and any cached closing prices. Select **Build / refresh portfolio analysis
+(online)** to generate the full analytics; the local build log is saved to
+`institutional_research/.offline_cache/portfolio_build.log` when troubleshooting.
+Opening the saved holdings page itself does not contact the internet.
+
+After a successful build, **disconnect from the internet** and launch either the
+existing Windows **Antzaz Research Hub → Open Portfolio Dashboard** or:
 
 ```powershell
-cd C:\Users\Antza\Documents\Antzaz-equity-research-model\institutional_research
+cd "$env:USERPROFILE\Documents\Antzaz-equity-research-model"\institutional_research
 .\start_dashboard.bat
 ```
 
@@ -236,7 +243,7 @@ readiness diagnostic explains what is missing.
 Check readiness at any time:
 
 ```powershell
-cd C:\Users\Antza\Documents\Antzaz-equity-research-model\institutional_research
+cd "$env:USERPROFILE\Documents\Antzaz-equity-research-model"\institutional_research
 python .\offline_portfolio_check.py
 ```
 
