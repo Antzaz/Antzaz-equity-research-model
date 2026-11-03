@@ -67,7 +67,12 @@ try {
     Write-Host 'Building current portfolio outputs and persistent offline market cache...'
     & $pythonCmd @pythonArgs run_research.py
     if ($LASTEXITCODE -ne 0) {
-        throw 'Portfolio research sync failed. Existing offline outputs have been preserved.'
+        Write-Warning 'The advanced research pipeline failed; trying a core portfolio recovery from already cached prices instead.'
+        & $pythonCmd @pythonArgs recover_cached_portfolio.py
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Neither the advanced research run nor offline cached-price recovery succeeded. Existing local data was preserved.'
+        }
+        Write-Warning 'A core offline dashboard has been restored. Complete advanced models still require a successful full online research build.'
     }
 
     Write-Host 'Checking that saved analytics and price histories cover every holding...'
@@ -80,5 +85,6 @@ try {
 }
 
 Write-Host ''
-Write-Host 'Offline portfolio is ready on this computer.'
+Write-Host 'A portfolio dashboard is ready on this computer.'
+Write-Host 'The Setup & Holdings page will label a recovery snapshot separately from the full research model.'
 Write-Host 'Open Antzaz Research Hub or institutional_research\start_dashboard.bat even when disconnected.'
