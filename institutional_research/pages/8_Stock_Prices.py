@@ -4,6 +4,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 from src.portfolio import load_portfolio
+from src.data import cached_prices, download_prices, offline_mode, price_cache_status
 
 BASE = Path(__file__).resolve().parents[1]
 st.title("Stock Prices & Purchase Costs")
@@ -14,19 +15,30 @@ if not path.exists():
     st.stop()
 holdings = load_portfolio(path)
 tickers = holdings["Ticker"].tolist()
+@st.cache_data(ttl=900, show_spinner=False)
+def prices_for(names, use_offline):
+    # The Research Hub launches the dashboard with ANTZAZ_OFFLINE=1. In that mode
+    # the shared market-data adapter never makes network requests.
+    return download_prices(list(names), period="2y")
+
+cache_status = price_cache_status()
+saved_date = cache_status.get("latest_observed_market_date")
+saved_at = cache_status.get("last_online_refresh_utc")
+if offline_mode():
+    st.info(
+        "Offline mode — showing locally saved adjusted closes. "
+        + (f"Latest cached market date: {saved_date}." if saved_date else "No cached quotes yet.")
+        + (f" Last online sync: {saved_at}." if saved_at else "")
+    )
+else:
+    st.caption("Online quotes when available; locally saved adjusted closes are the fallback.")
+
 try:
-    import yfinance as yf
-    @st.cache_data(ttl=900, show_spinner=False)
-    def prices_for(names):
-        raw = yf.download(list(names), period="2y", auto_adjust=True, progress=False, threads=True)
-        if isinstance(raw.columns, pd.MultiIndex):
-            return raw["Close"]
-        return raw[["Close"]].rename(columns={"Close":names[0]})
-    with st.spinner("Loading market prices…"):
-        closes = prices_for(tuple(tickers))
+    with st.spinner("Loading locally saved prices…" if offline_mode() else "Loading market prices…"):
+        closes = prices_for(tuple(tickers), offline_mode())
 except Exception as exc:
-    st.warning(f"Live quotes unavailable ({exc}). Showing any available saved analytics below.")
-    closes = pd.DataFrame()
+    st.warning(f"Market prices unavailable: {exc}. Showing share costs without inventing quotes.")
+    closes = cached_prices()
 
 rows = []
 for _, h in holdings.iterrows():
@@ -47,4 +59,4 @@ if selected in closes.columns:
     chart = closes[selected].dropna()
     if not chart.empty:
         st.line_chart(chart.rename("Adjusted close"))
-st.caption("Bought at uses AverageCost from your private portfolio.csv; it is not inferred from the inception date. Historical adjusted closes are not intraday quotes. Returns exclude dividends paid as cash and transaction costs; currency effects may differ.")
+st.caption("Bought at uses AverageCost from your private portfolio.csv; it is not inferred from the inception date. Offline values reflect the last successful online sync and never claim to be current intraday quotes. Adjusted-price returns include provider corporate-action adjustments, but may not represent cash dividends received or your transaction costs. Currency effects can differ.")
