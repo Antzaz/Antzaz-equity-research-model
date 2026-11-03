@@ -32,3 +32,4 @@ research_data/*/forecast_accuracy_summary.csv
 research_data/*/forecast_history.json
 
 .desktop_launcher_state.json
+institutional_research/.offline_cache/
