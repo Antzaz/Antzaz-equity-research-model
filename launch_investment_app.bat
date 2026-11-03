@@ -16,14 +16,14 @@ if not errorlevel 1 (
 
 where pythonw >nul 2>nul
 if not errorlevel 1 (
-  start "" pythonw "%~dp0desktop_launcher.py"
+  start "" pythonw "%~dp0desktop_research_hub.py"
   exit /b 0
 )
 
 where py >nul 2>nul
 if not errorlevel 1 (
-  start "" py -3 "%~dp0desktop_launcher.py"
+  start "" py -3 "%~dp0desktop_research_hub.py"
   exit /b 0
 )
 
-python "%~dp0desktop_launcher.py"
+python "%~dp0desktop_research_hub.py"
