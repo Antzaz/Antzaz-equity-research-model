@@ -156,6 +156,21 @@ def download_prices(tickers: Iterable[str], period: str = "5y") -> pd.DataFrame:
             if attempt == 0:
                 time.sleep(1.5)
     if not new_prices.empty:
+        # Yahoo sometimes returns a partially populated batch. Retry missing series
+        # individually before falling back to older cached prices.
+        incomplete = [
+            ticker for ticker in requested
+            if ticker not in new_prices or new_prices[ticker].dropna().empty
+        ]
+        for ticker in incomplete:
+            try:
+                retry = _download_closes([ticker], period)
+                new_prices = retry.combine_first(new_prices)
+            except Exception as exc:
+                warnings.warn(
+                    f"Individual market-data retry did not recover one missing security: {exc}",
+                    stacklevel=2,
+                )
         try:
             _save_prices(new_prices)
         except OSError as exc:
