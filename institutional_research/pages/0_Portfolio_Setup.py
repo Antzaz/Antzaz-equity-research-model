@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""First-run and offline recovery screen for the private portfolio workstation."""
+# First-run and offline recovery screen for the private portfolio workstation.
 
 from collections import deque
 from datetime import datetime, timezone
