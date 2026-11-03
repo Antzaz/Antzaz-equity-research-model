@@ -10,7 +10,10 @@ import streamlit as st
 
 BASE = Path(__file__).resolve().parent
 
-HAS_ANALYSIS = (BASE / "outputs" / "latest" / "summary.json").is_file()
+HAS_ANALYSIS = all(
+    (BASE / "outputs" / "latest" / filename).is_file()
+    for filename in ("summary.json", "holdings_analysis.csv")
+)
 
 PAGES = [
     ("pages/0_Portfolio_Setup.py", "Setup & Holdings", "🗂️", not HAS_ANALYSIS),
