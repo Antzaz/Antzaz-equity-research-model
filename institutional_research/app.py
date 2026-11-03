@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-"""Explicit multipage launcher for the institutional research Streamlit app.
-
-Using st.navigation avoids relying on Streamlit's implicit pages/ discovery and makes
-new research modules visible in a stable, intentional sidebar order.
-"""
+# Explicit Streamlit multipage navigation, with a first-run fallback when no
+# local private analysis has been generated. Comments are not rendered in the UI.
 
 from pathlib import Path
 
