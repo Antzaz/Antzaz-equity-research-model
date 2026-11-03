@@ -288,7 +288,39 @@ class ResearchHub(tk.Tk):
         if branch != "main":
             self.emit(f"Current branch is {branch or '(detached)'}. Switching to main…")
             self._run(["git", "switch", "main"])
-        self._run(["git", "pull", "--ff-only", "origin", "main"])
+        code = self._run(["git", "pull", "--ff-only", "origin", "main"], check=False)
+        if code != 0:
+            # A legacy local portfolio.csv may be ignored/untracked while GitHub now
+            # tracks that path. Preserve it privately before retrying the fast-forward.
+            portfolio = IR / "portfolio.csv"
+            tracked = subprocess.run(
+                ["git", "ls-files", "--error-unmatch", "--", "institutional_research/portfolio.csv"],
+                cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            ).returncode == 0
+            remote_has_portfolio = subprocess.run(
+                ["git", "cat-file", "-e", "origin/main:institutional_research/portfolio.csv"],
+                cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            ).returncode == 0
+            if portfolio.is_file() and not tracked and remote_has_portfolio:
+                backup_dir = IR / ".offline_cache"
+                backup_dir.mkdir(parents=True, exist_ok=True)
+                backup = backup_dir / f"portfolio_before_git_{time.strftime('%Y%m%d_%H%M%S')}.csv"
+                portfolio.rename(backup)
+                self.emit(f"Preserved old local portfolio in {backup}. Retrying GitHub update…")
+                try:
+                    self._run(["git", "pull", "--ff-only", "origin", "main"])
+                except Exception:
+                    if not portfolio.exists():
+                        backup.rename(portfolio)
+                    raise
+                self.emit("GitHub portfolio.csv is now active. Previous local version remains backed up.")
+            else:
+                raise RuntimeError(
+                    "GitHub update did not complete. If local files were modified, "
+                    "review git status in PowerShell before retrying. Offline data is unchanged."
+                )
         sha = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
             cwd=ROOT,
