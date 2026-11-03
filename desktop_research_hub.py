@@ -327,46 +327,87 @@ class ResearchHub(tk.Tk):
 
     def _sync_all(self):
         self._prepare_latest()
+        # Macro and portfolio are independent modules: a temporary macro-data/provider
+        # failure must not prevent the private portfolio from caching fresh local results.
         if MACRO_ROOT.exists():
-            self._run(["git", "pull", "--ff-only", "origin", "main"], cwd=MACRO_ROOT)
-            macro_python = MACRO_ROOT / ".venv" / "Scripts" / "python.exe"
-            if macro_python.exists():
-                self._run([str(macro_python), "-m", "global_macro_lab.cli", "refresh"], cwd=MACRO_ROOT)
-                self._run([str(macro_python), "-m", "global_macro_lab.cli", "build"], cwd=MACRO_ROOT)
-            else:
-                self.emit("Macro environment missing: run setup_windows.bat.")
+            try:
+                self._run(["git", "pull", "--ff-only", "origin", "main"], cwd=MACRO_ROOT)
+                macro_python = MACRO_ROOT / ".venv" / "Scripts" / "python.exe"
+                if macro_python.exists():
+                    self._run([str(macro_python), "-m", "global_macro_lab.cli", "refresh"], cwd=MACRO_ROOT)
+                    self._run([str(macro_python), "-m", "global_macro_lab.cli", "build"], cwd=MACRO_ROOT)
+                else:
+                    self.emit("Macro environment missing; run the macro setup_windows.bat when convenient.")
+            except Exception as exc:
+                self.emit(f"Macro sync failed, continuing with independent portfolio sync: {exc}")
         else:
-            self.emit("Macro repository missing: run install_desktop_app.bat.")
-        self.emit("Refreshing portfolio research and saved forecast data…")
+            self.emit("Macro repository not installed; continuing with portfolio data.")
+        self.emit("Refreshing portfolio research and persistent offline price cache…")
         self._run([python_executable(), "run_research.py"], cwd=IR)
-        self.emit("Sync complete. Local data is available for offline dashboard use.")
+        self._run([python_executable(), "offline_portfolio_check.py"], cwd=IR)
+        self.emit("Portfolio sync complete. You can disconnect and open the saved dashboard offline.")
 
     def open_portfolio(self):
         self.run_task("Opening latest portfolio dashboard", self._portfolio_task)
 
     def _portfolio_task(self):
         py = python_executable()
-        self.emit("Opening locally saved portfolio data. Use Sync All Data to refresh when online.")
+        self.emit("Opening locally saved portfolio data; no internet or market-data downloads are used.")
         if server_running(port=8501):
-            self.emit("Portfolio server is already running. Opening it in your browser.")
+            self.emit("Portfolio dashboard is already running on port 8501.")
             open_dashboard_once(PORTFOLIO_URL)
             return
-        self.emit("Starting Streamlit portfolio dashboard…")
-        subprocess.Popen(
-            [py, "-m", "streamlit", "run", "app.py", "--server.headless", "true", "--browser.gatherUsageStats", "false"],
-            cwd=str(IR),
+        if not (IR / "portfolio.csv").is_file():
+            raise RuntimeError(
+                "Local portfolio.csv is missing. Connect to GitHub and pull the latest main branch first."
+            )
+        if not (IR / "outputs" / "latest" / "summary.json").is_file():
+            raise RuntimeError(
+                "Your portfolio file is present, but this computer has no saved portfolio analytics yet. "
+                "Connect once and choose Sync All Data to build the offline dashboard."
+            )
+        available = subprocess.run(
+            [py, "-c", "import streamlit"],
+            cwd=str(IR), capture_output=True, text=True, encoding="utf-8", errors="replace",
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
         )
-        for _ in range(40):
+        if available.returncode != 0:
+            raise RuntimeError(
+                "Streamlit is not installed for the Python used by this Hub. "
+                "Run install_desktop_app.bat while online, then reopen the Hub."
+            )
+        self.emit("Validating offline portfolio inputs…")
+        self._run([py, "offline_portfolio_check.py"], cwd=IR)
+        self.emit("Starting saved Streamlit portfolio on http://localhost:8501 …")
+        logs = IR / ".offline_cache"
+        logs.mkdir(parents=True, exist_ok=True)
+        log_path = logs / "dashboard_startup.log"
+        environment = os.environ.copy()
+        environment["ANTZAZ_OFFLINE"] = "1"
+        with log_path.open("ab") as log:
+            proc = subprocess.Popen(
+                [py, "-m", "streamlit", "run", "app.py",
+                 "--server.port", "8501", "--server.headless", "true",
+                 "--browser.gatherUsageStats", "false"],
+                cwd=str(IR), env=environment,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                stdout=log, stderr=subprocess.STDOUT,
+            )
+        for _ in range(80):
+            if proc.poll() is not None:
+                raise RuntimeError(
+                    f"Portfolio dashboard exited with code {proc.returncode}. "
+                    f"Read the local log for details: {log_path}"
+                )
             if server_running(port=8501):
                 open_dashboard_once(PORTFOLIO_URL)
-                self.emit("Portfolio dashboard opened.")
+                self.emit("Offline portfolio dashboard opened successfully.")
                 return
             time.sleep(0.25)
-        open_dashboard_once(PORTFOLIO_URL)
-        self.emit("Streamlit was started. The browser may need a few more seconds to connect.")
+        raise RuntimeError(
+            f"The portfolio server did not become reachable on port 8501. "
+            f"Read the startup log: {log_path}"
+        )
 
     def open_macro(self):
         self.run_task("Opening Bonds & Macro dashboard", self._macro_task)
