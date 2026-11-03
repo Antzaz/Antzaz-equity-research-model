@@ -199,3 +199,58 @@ def test_dashboard_missing_analysis_has_recovery_instead_of_unhelpful_error():
     assert "has not generated" in dashboard
     assert "Open **Setup & Holdings**" in dashboard
     assert "No analysis outputs found. Run:" not in dashboard
+
+
+
+def test_local_recovery_generates_core_offline_dashboard_without_benchmark(tmp_path, monkeypatch):
+    import numpy as np
+    from recover_cached_portfolio import recover
+
+    _sample_portfolio_folder(tmp_path)
+    # Recovery succeeds from cached holdings alone. SPY/factor data is optional,
+    # and absent benchmark values must not be fabricated or filled with zeros.
+    status = recover(tmp_path)
+    assert status["status"] == "RECOVERED_OFFLINE"
+    output = tmp_path / "outputs" / "latest"
+    summary = json.loads((output / "summary.json").read_text(encoding="utf-8"))
+    assert summary["analysis_mode"] == "RECOVERY_CACHED_PRICES"
+    assert summary["data_quality"]["benchmark_available"] is False
+    assert "benchmark_annualized_return" not in summary["portfolio"]
+    holdings = pd.read_csv(output / "holdings_analysis.csv")
+    assert set(holdings["Ticker"]) == {"AAA", "BBB"}
+    assert np.isclose(holdings["Weight"].sum(), 1.0)
+    assert (output / "portfolio_timeseries.csv").is_file()
+    assert (output / "risk_contribution.csv").is_file()
+    assert (output / "sector_exposure.csv").is_file()
+
+
+def test_local_recovery_does_not_replace_existing_full_analysis(tmp_path):
+    from recover_cached_portfolio import recover
+
+    _sample_portfolio_folder(tmp_path)
+    summary_file = tmp_path / "outputs" / "latest" / "summary.json"
+    full_summary = {"portfolio": {"full_run": True}}
+    summary_file.write_text(json.dumps(full_summary), encoding="utf-8")
+    result = recover(tmp_path)
+    assert result["status"] == "SKIPPED_EXISTING_FULL_ANALYSIS"
+    assert json.loads(summary_file.read_text(encoding="utf-8")) == full_summary
+
+
+def test_portfolio_setup_auto_restores_cached_prices_without_network():
+    setup_code = (IR / "pages" / "0_Portfolio_Setup.py").read_text(encoding="utf-8")
+    assert "cache_covers_holdings" in setup_code
+    assert "recover_from_local_prices()" in setup_code
+    assert "offline_recovery_attempted" in setup_code
+    assert "RECOVERED_OFFLINE" in setup_code
+
+
+def test_recovery_snapshot_does_not_claim_to_be_realized_performance(tmp_path):
+    from recover_cached_portfolio import recover
+
+    _sample_portfolio_folder(tmp_path)
+    recover(tmp_path)
+    summary = json.loads(
+        (tmp_path / "outputs" / "latest" / "summary.json").read_text(encoding="utf-8")
+    )
+    assert summary["data_quality"]["realized_portfolio_returns"] == "NOT_CALCULATED"
+    assert summary["portfolio_optimization"]["status"] == "NOT_RUN_RECOVERY_ONLY"
