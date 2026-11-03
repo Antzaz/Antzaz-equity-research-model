@@ -23,8 +23,36 @@ st.caption(
     "Private/local portfolio workstation · professional reporting views plus deeper institutional diagnostics."
 )
 
-if not OUT.exists() or not (OUT / "summary.json").exists():
-    st.error("No analysis outputs found. Run: python run_research.py")
+if not (OUT / "summary.json").is_file():
+    st.warning(
+        "The portfolio file can be viewed, but this computer has not generated "
+        "its private portfolio analytics yet. No market data or performance "
+        "statistics will be invented."
+    )
+    local_input = BASE / "portfolio.csv"
+    if local_input.is_file():
+        try:
+            from src.portfolio import load_portfolio
+            existing_holdings = load_portfolio(local_input)
+            st.success(f"Portfolio input found: {len(existing_holdings)} holding(s).")
+            st.dataframe(
+                existing_holdings[
+                    [col for col in ("Ticker", "Shares", "AverageCost", "Notes") if col in existing_holdings]
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
+        except Exception as exc:
+            st.error(f"Cannot read local portfolio input: {type(exc).__name__}: {exc}")
+    st.info(
+        "Open **Setup & Holdings** in the sidebar, then select "
+        "**Build / refresh portfolio analysis (online)**. "
+        "Once it finishes, the full dashboard will appear and work offline."
+    )
+    st.code(
+        "cd institutional_research\\npython run_research.py",
+        language="powershell",
+    )
     st.stop()
 
 with open(OUT / "summary.json", "r", encoding="utf-8") as f:
