@@ -105,7 +105,22 @@ If these files are absent, the related analytics remain REVIEW/unavailable rathe
 
 ## Private portfolio inputs
 
-Copy the templates below to the private filenames shown. The private files are ignored by Git.
+If `portfolio.csv` is already present from your GitHub checkout, **do not replace it with the
+template**. The active portfolio presently has 15 holdings. Always keep a private local
+backup before pulling changes. Although `.gitignore` lists the filename, a file already
+tracked in GitHub remains tracked; make the main GitHub repository private if it contains
+actual quantities and purchase costs.
+
+On a new Windows installation, run `prepare_offline_portfolio.ps1` from the main repository
+root **while online**. That command checks out the current portfolio, installs portfolio
+dependencies, creates saved analysis and adjusted-price caches, then validates every holding.
+
+Once the check passes, the desktop Research Hub's **Open Portfolio Dashboard** button or
+`start_dashboard.bat` opens the last saved analysis **without any network request or
+dependency installation**. Offline current-price/return charts display the last cached market
+date. Use **Sync All Data** when back online.
+
+If you are creating an entirely new portfolio, copy a template instead:
 
 ### Holdings
 
@@ -183,7 +198,8 @@ Snapshots preserve how the portfolio analysis looked at different dates.
 python -m streamlit run dashboard.py
 ```
 
-or double-click `start_dashboard.bat`.
+or double-click `start_dashboard.bat` after the first successful online sync.
+Unlike older versions, that batch file is offline-only and never downloads quotes.
 
 The dashboard now contains dedicated views for:
 - portfolio
