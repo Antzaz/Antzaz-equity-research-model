@@ -53,7 +53,15 @@ def _one_ticker_path(close: pd.Series, horizon: int=HORIZON_DAYS) -> tuple[list[
     for date in dates:
         feat=_features(rolling).iloc[-1][FEATURES]
         if feat.isna().any(): break
-        tree_preds=np.array([est.predict(pd.DataFrame([feat],columns=FEATURES))[0] for est in model.estimators_],dtype=float)
+        # Each fitted DecisionTreeRegressor is trained internally on NumPy arrays,
+        # even though the outer forest receives a named DataFrame. Give individual
+        # trees a 2D NumPy row in the exact trained feature order to avoid thousands
+        # of sklearn "X has feature names" warnings during the 5-day forecast.
+        feature_row=feat.to_numpy(dtype=float).reshape(1,-1)
+        tree_preds=np.array(
+            [est.predict(feature_row)[0] for est in model.estimators_],
+            dtype=float,
+        )
         pred=float(np.median(tree_preds))
         # Bound recursive daily returns to the historical 1st/99th percentile to prevent
         # unstable compounding from an outlier tree/path.
