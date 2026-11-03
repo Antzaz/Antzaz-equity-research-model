@@ -165,3 +165,37 @@ def test_random_forest_weekly_prediction_avoids_sklearn_feature_name_warnings(mo
     assert len(forecast) == 5
     assert all(np.isfinite(row["predicted_price"]) for row in forecast)
     assert all(row["predicted_price"] > 0 for row in forecast)
+
+
+
+def test_first_launch_routes_to_setup_when_no_analysis():
+    app_code = (IR / "app.py").read_text(encoding="utf-8")
+    setup_page = IR / "pages" / "0_Portfolio_Setup.py"
+    assert setup_page.exists()
+    assert "HAS_ANALYSIS = " in app_code
+    assert '"pages/0_Portfolio_Setup.py", "Setup & Holdings"' in app_code
+    assert "not HAS_ANALYSIS" in app_code
+    assert "Build / refresh portfolio analysis (online)" in setup_page.read_text(encoding="utf-8")
+
+
+def test_windows_hub_launches_first_run_page_without_saved_outputs():
+    hub = (IR.parent / "desktop_research_hub.py").read_text(encoding="utf-8")
+    assert "No saved analytics yet. Opening Setup & Holdings" in hub
+    assert 'if has_analysis:' in hub
+    assert '"ANTZAZ_OFFLINE"] = "1"' in hub
+    assert '"dashboard_startup.log"' in hub
+
+
+def test_standalone_batch_opens_setup_when_analysis_missing():
+    batch = (IR / "start_dashboard.bat").read_text(encoding="utf-8").lower()
+    assert "the app will open setup" in batch
+    assert 'if not exist "outputs\\latest\\summary.json"' in batch
+    assert "python run_research.py" not in batch
+    assert "set \"antzaz_offline=1\"" in batch
+
+
+def test_dashboard_missing_analysis_has_recovery_instead_of_unhelpful_error():
+    dashboard = (IR / "dashboard.py").read_text(encoding="utf-8")
+    assert "has not generated" in dashboard
+    assert "Open **Setup & Holdings**" in dashboard
+    assert "No analysis outputs found. Run:" not in dashboard
