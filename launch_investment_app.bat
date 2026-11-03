@@ -2,11 +2,8 @@
 setlocal
 cd /d "%~dp0"
 
-rem Keep the launcher itself current before it opens. Log failures instead of hiding them.
-where git >nul 2>nul
-if not errorlevel 1 (
-  git pull --ff-only origin main > "%TEMP%\antzaz_investment_launcher_update.log" 2>&1
-)
+rem Offline-first: NEVER call GitHub when merely opening the desktop application.
+rem The Research Hub has explicit Update from GitHub and Sync All Data actions.
 
 where pyw >nul 2>nul
 if not errorlevel 1 (
