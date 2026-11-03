@@ -207,6 +207,7 @@ def test_local_recovery_generates_core_offline_dashboard_without_benchmark(tmp_p
     from recover_cached_portfolio import recover
 
     _sample_portfolio_folder(tmp_path)
+    (tmp_path / "outputs" / "latest" / "summary.json").unlink()
     # Recovery succeeds from cached holdings alone. SPY/factor data is optional,
     # and absent benchmark values must not be fabricated or filled with zeros.
     status = recover(tmp_path)
@@ -248,6 +249,7 @@ def test_recovery_snapshot_does_not_claim_to_be_realized_performance(tmp_path):
     from recover_cached_portfolio import recover
 
     _sample_portfolio_folder(tmp_path)
+    (tmp_path / "outputs" / "latest" / "summary.json").unlink()
     recover(tmp_path)
     summary = json.loads(
         (tmp_path / "outputs" / "latest" / "summary.json").read_text(encoding="utf-8")
