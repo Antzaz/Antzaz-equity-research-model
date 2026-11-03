@@ -61,6 +61,17 @@ with open(OUT / "summary.json", "r", encoding="utf-8") as f:
 portfolio = summary.get("portfolio", {})
 mc = summary.get("monte_carlo", {})
 
+if summary.get("analysis_mode") == "RECOVERY_CACHED_PRICES":
+    st.warning(
+        "Offline recovery dashboard — calculated from locally cached adjusted prices. "
+        "Historical performance is a current-weight backcast, NOT realized account returns. "
+        "Advanced optimization and missing benchmark/alpha statistics remain unavailable. "
+        "Use the Setup & Holdings page to run the full online research analysis."
+    )
+    as_of = (summary.get("data_quality") or {}).get("market_date")
+    if as_of:
+        st.caption(f"Most recent cached price date: {as_of}. No live quotes were used.")
+
 
 def read(name: str) -> pd.DataFrame:
     path = OUT / f"{name}.csv"
