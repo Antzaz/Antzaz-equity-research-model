@@ -223,6 +223,37 @@ Private-to-public synchronization from the main repository remains the source of
 
 Public payload privacy remains strict: no ticker/symbol fields, shares, average cost, cost basis, exact market value, unrealized P&L, transactions, private notes or credentials. Company names, public weights, market prices, return windows and aggregate analytics may be public.
 
+## Windows offline portfolio contract
+
+The private portfolio input is currently tracked in the main repository at
+`institutional_research/portfolio.csv` and has 15 holdings. The repo is still publicly
+visible as of 2026-11-03, so quantities and average costs in that tracked file are
+exposed: `.gitignore` cannot undo past tracking. Explicitly warn the user to set the
+main repository private and address Git history; never copy these economics into the
+public showcase.
+
+Offline startup **must not** call GitHub, pip, Yahoo or the research generator.
+The Windows launchers now open `desktop_research_hub.py` without an automatic Git pull,
+and `institutional_research/start_dashboard.bat` sets `ANTZAZ_OFFLINE=1`. The Hub
+checks `outputs/latest/summary.json` plus the portfolio's offline readiness before
+starting the local Streamlit server, with startup logs under
+`institutional_research/.offline_cache/`.
+
+The shared market-data adapter `institutional_research/src/data.py` persists adjusted
+closes and public issuer snapshots to the gitignored private local directory
+`institutional_research/.offline_cache/`. The Stock Prices & Purchase Costs page
+loads these cached closes when offline, showing the cached market date instead of a
+fake current quote. `institutional_research/src/export.py` stages a complete new
+snapshot and preserves the previous `outputs/latest` if refresh fails.
+
+For a new Windows checkout, do one connected run of
+`prepare_offline_portfolio.ps1` to install dependencies, sync GitHub safely while
+backing up prior local portfolio CSVs, generate private research outputs and populate
+the offline cache. Then run `python institutional_research/offline_portfolio_check.py`
+and confirm 15 holdings and complete quote cache before disconnecting.
+The portfolio can be launched offline afterwards, but GitHub alone cannot supply
+the uncommitted local analytics/prices; a first successful connected sync is required.
+
 ## Current repository areas
 
 ### Single-company model
