@@ -1,0 +1,38 @@
+name: Offline Windows portfolio smoke tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'institutional_research/src/data.py'
+      - 'institutional_research/src/export.py'
+      - 'institutional_research/pages/8_Stock_Prices.py'
+      - 'institutional_research/offline_portfolio_check.py'
+      - 'institutional_research/start_dashboard.bat'
+      - 'desktop_research_hub.py'
+      - 'launch_investment_app.bat'
+      - 'tests/test_portfolio_offline.py'
+      - '.github/workflows/portfolio-offline-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-portfolio:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install only the offline-test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "pandas>=2.2" "numpy>=1.26" "yfinance>=0.2.65" pytest
+      - name: Check offline portfolio code compiles
+        run: |
+          python -m py_compile institutional_research/src/data.py institutional_research/src/export.py institutional_research/offline_portfolio_check.py institutional_research/pages/8_Stock_Prices.py desktop_research_hub.py
+      - name: Test cached prices, offline launch and last-good export
+        run: PYTHONPATH=. python -m pytest -q tests/test_portfolio_offline.py
