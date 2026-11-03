@@ -21,6 +21,7 @@ if str(BASE) not in sys.path:
 from src.portfolio import load_portfolio
 from src.data import cached_prices, price_cache_status
 from offline_portfolio_check import check as offline_readiness_check
+from recover_cached_portfolio import recover as recover_from_local_prices
 
 LATEST = BASE / "outputs" / "latest"
 LOG_PATH = BASE / ".offline_cache" / "portfolio_build.log"
@@ -50,30 +51,85 @@ except Exception as exc:
     st.error(f"Portfolio input cannot be read: {type(exc).__name__}: {exc}")
     st.stop()
 
-ready, notes = offline_readiness_check()
 last_saved = price_cache_status()
 cache = cached_prices()
 has_summary = (LATEST / "summary.json").is_file()
 has_holdings = (LATEST / "holdings_analysis.csv").is_file()
 
+# A complete cached holdings/price set already permits a useful private dashboard.
+# Do not require the first-run user to click an online rebuild just to see analytics.
+# Only attempt this once per UI session; if the market history is unsuitable, show
+# the reason and retain the raw holdings rather than getting stuck in a rerun loop.
+cache_covers_holdings = (
+    not cache.empty
+    and all(t in cache.columns and not cache[t].dropna().empty for t in portfolio["Ticker"])
+)
+if not has_summary and cache_covers_holdings and not st.session_state.get("offline_recovery_attempted", False):
+    st.session_state["offline_recovery_attempted"] = True
+    try:
+        with st.spinner("Restoring portfolio analytics from already saved prices (no internet)…"):
+            result = recover_from_local_prices()
+        if result.get("status") == "RECOVERED_OFFLINE":
+            st.session_state["offline_recovery_result"] = result
+            st.rerun()
+    except Exception as exc:
+        st.session_state["offline_recovery_error"] = f"{type(exc).__name__}: {exc}"
+
+ready, notes = offline_readiness_check()
+has_summary = (LATEST / "summary.json").is_file()
+has_holdings = (LATEST / "holdings_analysis.csv").is_file()
+analysis_mode = None
+if has_summary:
+    try:
+        analysis_mode = json.loads((LATEST / "summary.json").read_text(encoding="utf-8")).get("analysis_mode")
+    except (OSError, ValueError):
+        pass
+
 p1, p2, p3, p4 = st.columns(4)
 p1.metric("Holdings loaded", len(portfolio))
-p2.metric("Saved analytics", "Present" if has_summary and has_holdings else "Not generated")
+p2.metric(
+    "Saved analytics",
+    "Cached recovery" if analysis_mode == "RECOVERY_CACHED_PRICES"
+    else "Full" if has_summary and has_holdings else "Not generated",
+)
 p3.metric(
     "Cached price coverage",
     f"{sum(t in cache.columns and not cache[t].dropna().empty for t in portfolio['Ticker'])}/{len(portfolio)}",
 )
 p4.metric("Offline ready", "Yes" if ready else "Not yet")
 
-if ready:
-    st.success("Offline portfolio is ready. Open Portfolio Dashboard from the sidebar.")
+if ready and analysis_mode == "RECOVERY_CACHED_PRICES":
+    st.success("Core portfolio dashboard restored from locally cached prices. No network access was needed.")
+    st.warning(
+        "This is a recovery snapshot, not the full research pipeline. Portfolio weights, "
+        "saved prices, historical model returns, volatility and concentration are available. "
+        "Advanced optimization, full alpha models and realized returns are not inferred "
+        "from missing inputs. Use the full online build button below to complete them."
+    )
+elif ready:
+    st.success("Saved portfolio analytics are ready. Open Portfolio Dashboard from the sidebar.")
 else:
     st.warning(
-        "Your holdings file is available, but the computer does not yet have everything "
-        "needed for the complete offline dashboard. It is safe to view the holdings below."
+        "The holdings file is available, but the complete offline dashboard is not yet ready. "
+        "Any existing local prices can still be viewed."
     )
     for note in notes:
         st.write("• " + note)
+
+if st.session_state.get("offline_recovery_error"):
+    st.error(
+        "Automatic offline recovery could not finish: "
+        + str(st.session_state["offline_recovery_error"])
+    )
+    st.caption("You can retry manually below or inspect any online build log.")
+if not ready and cache_covers_holdings and st.button("Restore dashboard from cached prices (offline)"):
+    try:
+        recovered = recover_from_local_prices()
+        st.session_state.pop("offline_recovery_error", None)
+        st.success(f"Local recovery: {recovered.get('status')}.")
+        st.rerun()
+    except Exception as exc:
+        st.error(f"Local recovery failed: {type(exc).__name__}: {exc}")
 
 if last_saved.get("latest_observed_market_date"):
     st.caption(
@@ -105,10 +161,10 @@ if not cache.empty:
 st.divider()
 st.subheader("Build or repair the full portfolio dashboard")
 st.write(
-    "Run this only when you have internet access. The full analysis downloads market "
-    "history, calculates risk/performance/valuation models, and builds the weekly "
-    "Random Forest forecasts. It saves results for later offline use. A failed "
-    "rebuild preserves the last good saved analysis."
+    "Use the complete online research run to update market history, benchmark/factor "
+    "analysis, risk models, advanced portfolio optimization and weekly Random Forest "
+    "forecasts. The cached-price recovery above requires no internet. The online run "
+    "updates the saved dashboard only after exporting its results successfully."
 )
 
 if st.button("Build / refresh portfolio analysis (online)", type="primary", use_container_width=False):
