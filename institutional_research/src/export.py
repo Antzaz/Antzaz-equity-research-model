@@ -24,24 +24,46 @@ def write_outputs(
     latest = base / "latest"
 
     snapshot.mkdir(parents=True, exist_ok=True)
-    if latest.exists():
-        shutil.rmtree(latest)
-    latest.mkdir(parents=True, exist_ok=True)
+    staging = base / ".latest_staging"
+    backup = base / ".latest_previous"
+    # Recover a prior interrupted replacement before attempting a new one.
+    if not latest.exists() and backup.exists():
+        backup.rename(latest)
+    if staging.exists():
+        shutil.rmtree(staging)
+    staging.mkdir(parents=True, exist_ok=True)
 
-    for name, df in tables.items():
-        if df is None:
-            continue
-        # A completely schema-less DataFrame writes a zero-byte/blank CSV that
-        # pandas cannot read back (EmptyDataError). Missing optional analyses
-        # are represented by an absent file instead; DataFrames with defined
-        # columns but zero rows still export their headers normally.
-        if isinstance(df, pd.DataFrame) and len(df.columns) == 0:
-            continue
-        for target in [snapshot, latest]:
-            df.to_csv(target / f"{name}.csv", index=False)
+    # Export a complete new version before touching the currently working offline
+    # dashboard snapshot. A failed refresh must not destroy the last good data.
+    try:
+        for name, df in tables.items():
+            if df is None:
+                continue
+            # A schema-less DataFrame would write an unreadable empty CSV.
+            if isinstance(df, pd.DataFrame) and len(df.columns) == 0:
+                continue
+            for target in [snapshot, staging]:
+                df.to_csv(target / f"{name}.csv", index=False)
 
-    for target in [snapshot, latest]:
-        with open(target / "summary.json", "w", encoding="utf-8") as f:
-            json.dump(summaries, f, indent=2, default=_json_default)
+        for target in [snapshot, staging]:
+            with open(target / "summary.json", "w", encoding="utf-8") as f:
+                json.dump(summaries, f, indent=2, default=_json_default)
+
+        if backup.exists():
+            shutil.rmtree(backup)
+        had_previous = latest.exists()
+        if had_previous:
+            latest.rename(backup)
+        try:
+            staging.rename(latest)
+        except Exception:
+            if had_previous and backup.exists() and not latest.exists():
+                backup.rename(latest)
+            raise
+        if backup.exists():
+            shutil.rmtree(backup)
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)
 
     return snapshot, latest
