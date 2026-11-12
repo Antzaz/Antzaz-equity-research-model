@@ -1,0 +1,32 @@
+name: Swing Trading Lab Hub integration smoke
+on:
+  push:
+    paths:
+      - 'desktop_research_hub.py'
+      - 'swing_lab_hub.py'
+      - 'tests/test_swing_lab_hub.py'
+      - '.github/workflows/swing-lab-hub-smoke.yml'
+  pull_request:
+    paths:
+      - 'desktop_research_hub.py'
+      - 'swing_lab_hub.py'
+      - 'tests/test_swing_lab_hub.py'
+      - '.github/workflows/swing-lab-hub-smoke.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  syntax-and-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check Python syntax
+        run: python -m py_compile desktop_research_hub.py swing_lab_hub.py
+      - name: Install test runner
+        run: python -m pip install 'pytest>=8,<10'
+      - name: Test isolated Swing Hub interface
+        run: python -m pytest -q tests/test_swing_lab_hub.py
