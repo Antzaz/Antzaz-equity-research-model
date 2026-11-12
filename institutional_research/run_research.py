@@ -18,7 +18,7 @@ from src.reverse_dcf import reverse_dcf_table
 from src.stress import beta_stress_test
 from src.forecast_tracker import analyze_forecasts
 from src.export import write_outputs
-from src.macro_bridge import load_macro_context
+from src.macro_bridge import select_macro_context
 from src.portfolio_optimization import build_portfolio_optimization
 from src.short_horizon_rf import write_portfolio_rf_forecast
 from src.decision_loop import (
@@ -419,7 +419,7 @@ def main():
     )
 
     summaries = {
-        "macro_context": load_macro_context(BASE / ".offline_cache" / "macro_context.json"),
+        "macro_context": select_macro_context([BASE / ".offline_cache" / "macro_context.json", ROOT / "research_data" / "macro_context.json"]),
         "random_forest_next_week": rf_meta,
         "portfolio": {
             **risk_summary,
