@@ -62,3 +62,23 @@ def load_macro_context(path: Path, *, today: date | None = None) -> dict:
             "reason": f"{type(exc).__name__}: {exc}",
             "source": "Optional Global Macro Lab context; no model values modified",
         }
+
+
+
+def select_macro_context(paths, *, today: date | None = None) -> dict:
+    """Prefer the newest validated local or public-synchronized macro context.
+
+    Missing or stale inputs are observationally unavailable, never imputed.
+    """
+    valid = []
+    for path in paths:
+        snapshot = load_macro_context(Path(path), today=today)
+        if snapshot.get("status") == "PASS":
+            valid.append(snapshot)
+    if valid:
+        return max(valid, key=lambda x: (x["as_of"], x["generated_utc"]))
+    return {
+        "status": "UNAVAILABLE",
+        "reason": "No fresh, validated local or public-synchronized macro context",
+        "source": "Global Macro Lab; none available; no model assumptions changed",
+    }
