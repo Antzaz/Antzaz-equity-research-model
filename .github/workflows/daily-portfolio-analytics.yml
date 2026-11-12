@@ -103,6 +103,10 @@ jobs:
           done < "$RUNNER_TEMP/tickers.txt"
           echo "Portfolio companies: $count"
 
+      - name: Sync validated read-only Global Macro Lab context
+        run: |
+          python automation/sync_macro_context.py || echo "::warning::Macro context unavailable; continuing without inferred regime."
+
       - name: Run institutional portfolio research and optimizers
         run: |
           python institutional_research/run_research.py
