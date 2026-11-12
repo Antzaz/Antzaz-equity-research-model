@@ -39,3 +39,27 @@ Updates use git pull --ff-only. If a computer has unresolved local changes, the 
 ## Removing the desktop shortcut
 
 Delete Antzaz Investment Research from the Windows desktop. This does not delete the repository.
+
+## Current Antzaz Research Hub: four research tools
+
+The desktop shortcut launches `desktop_research_hub.py`, an **offline-first**
+Research Hub with **Portfolio Research**, **Bonds & Macro**, **Equity Research**
+and **Swing Trading Lab** (separate, research-only, Finnish and US).
+
+The Swing card has **Install / Update Swing Lab**, **Open Swing Dashboard** and
+**Refresh Swing Data**. Its separate dashboard runs on localhost port **8503**,
+alongside Portfolio on 8501 and Macro on 8502. It uses a dedicated Python
+virtual environment and GitHub repository. **Update from GitHub** also pulls an
+installed Swing Lab checkout; **Sync All Data (Online)** attempts a swing market
+refresh without blocking portfolio research when Yahoo is unavailable.
+
+The new Swing Lab repository **must be published once** to a separate **private**
+GitHub repository before Git-based updates or automatic cloning work. Download
+the latest ZIP and run its `publish_to_github.ps1` script after authenticating
+GitHub CLI. See [SWING_LAB_HUB.md](SWING_LAB_HUB.md) for complete instructions.
+
+**Correction to legacy notes above:** opening the desktop shortcut does not
+automatically update from GitHub. The current Research Hub intentionally starts
+offline and updates only through explicit update and synchronization actions.
+The main GitHub repository visibility should be verified in GitHub Settings;
+do not assume that it is private or store private holdings in tracked files.
