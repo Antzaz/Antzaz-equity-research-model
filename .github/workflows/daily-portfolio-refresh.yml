@@ -75,6 +75,10 @@ jobs:
           done < "$RUNNER_TEMP/portfolio_tickers.txt"
           echo "Active portfolio companies: $count"
 
+      - name: Sync validated read-only Global Macro Lab context
+        run: |
+          python automation/sync_macro_context.py || echo "::warning::Macro research context is unavailable; continuing without inferred regime."
+
       - name: Refresh portfolio analytics
         run: |
           if python institutional_research/run_research.py > "$RUNNER_TEMP/portfolio_refresh.log" 2>&1; then
