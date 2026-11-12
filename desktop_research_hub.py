@@ -17,9 +17,17 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 import webbrowser
 
+from swing_lab_hub import (
+    SWING_DASHBOARD_PORT, SWING_DASHBOARD_URL, SWING_REPOSITORY,
+    swing_root, swing_git_checkout_present, valid_swing_origin, swing_python,
+    swing_clone_command, swing_pull_command, swing_refresh_commands,
+    swing_dashboard_command,
+)
+
 ROOT = Path(__file__).resolve().parent
 IR = ROOT / "institutional_research"
 MACRO_ROOT = ROOT.parent / "Antzaz-global-macro-lab"
+SWING_ROOT = swing_root(ROOT)
 STATE_FILE = ROOT / ".desktop_launcher_state.json"
 PORTFOLIO_URL = "http://localhost:8501"
 MACRO_URL = "http://localhost:8502"
@@ -82,8 +90,8 @@ class ResearchHub(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Antzaz Research Hub")
-        self.geometry("1180x700")
-        self.minsize(980, 600)
+        self.geometry("1180x780")
+        self.minsize(980, 670)
         self.configure(bg="#0b1220")
         self.log_queue: queue.Queue[str] = queue.Queue()
         self.busy = False
@@ -175,6 +183,27 @@ class ResearchHub(tk.Tk):
         b2 = ttk.Button(row, text="Workbook Only", style="Normal.TButton", command=self.run_workbook_only)
         b2.pack(side="left", fill="x", expand=True, padx=(5, 0))
         self.task_buttons.extend([b1, b2])
+
+        swing = ttk.Frame(outer, style="Card.TFrame", padding=14)
+        swing.pack(fill="x", pady=(10, 0))
+        swing_info = ttk.Frame(swing, style="Card.TFrame")
+        swing_info.pack(side="left", fill="x", expand=True)
+        ttk.Label(swing_info, text="Swing Trading Lab", style="CardTitle.TLabel").pack(anchor="w")
+        ttk.Label(
+            swing_info,
+            text="Separate Finnish & US quantitative research • 5/10/20-day signals • local Yahoo history",
+            style="CardText.TLabel",
+        ).pack(anchor="w", pady=(2, 0))
+        swing_buttons = ttk.Frame(swing, style="Card.TFrame")
+        swing_buttons.pack(side="right")
+        for caption, action in (
+            ("Open Swing Dashboard", self.open_swing),
+            ("Install / Update Swing Lab", self.install_swing),
+            ("Refresh Swing Data", self.refresh_swing),
+        ):
+            button = ttk.Button(swing_buttons, text=caption, style="Normal.TButton", command=action)
+            button.pack(side="left", padx=4)
+            self.task_buttons.append(button)
 
         controls = ttk.Frame(outer, style="Root.TFrame")
         controls.pack(fill="x", pady=(14, 10))
@@ -356,6 +385,13 @@ class ResearchHub(tk.Tk):
 
     def _update_only(self):
         self._prepare_latest()
+        if SWING_ROOT.exists():
+            try:
+                self._sync_swing_code(allow_clone=False)
+            except Exception as exc:
+                self.emit(f"Swing Lab update unavailable; main Hub update succeeded: {exc}")
+        else:
+            self.emit("Swing Lab not installed. Use Install / Update Swing Lab after publishing the private repository.")
 
     def _sync_all(self):
         self._prepare_latest()
@@ -374,6 +410,16 @@ class ResearchHub(tk.Tk):
                 self.emit(f"Macro sync failed, continuing with independent portfolio sync: {exc}")
         else:
             self.emit("Macro repository not installed; continuing with portfolio data.")
+        # Swing Lab is independent. A Yahoo outage or unpublished private repo must
+        # not prevent the macro and institutional portfolio from updating.
+        if SWING_ROOT.exists():
+            try:
+                self._sync_swing_code(allow_clone=False)
+                self._refresh_swing_data()
+            except Exception as exc:
+                self.emit(f"Swing Lab sync failed; continuing with portfolio: {exc}")
+        else:
+            self.emit("Swing Lab not installed; use Install / Update Swing Lab to add it later.")
         self.emit("Refreshing portfolio research and persistent offline price cache…")
         self._run([python_executable(), "run_research.py"], cwd=IR)
         self._run([python_executable(), "offline_portfolio_check.py"], cwd=IR)
@@ -492,6 +538,124 @@ class ResearchHub(tk.Tk):
             time.sleep(0.25)
         open_dashboard_once(MACRO_URL)
         self.emit("Bonds & Macro dashboard was started. The browser may need a few more seconds to connect.")
+
+    def _verify_swing_checkout(self) -> None:
+        if not swing_git_checkout_present(SWING_ROOT):
+            raise RuntimeError(
+                f"Swing Lab at {SWING_ROOT} is not a Git checkout with the required project files. "
+                "If extracted from ZIP, first run publish_to_github.ps1 in that folder, "
+                "then use Install / Update Swing Lab. Existing Yahoo caches are preserved."
+            )
+        probe = subprocess.run(
+            ["git", "remote", "get-url", "origin"], cwd=str(SWING_ROOT),
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if probe.returncode != 0 or not valid_swing_origin(probe.stdout.strip()):
+            raise RuntimeError(
+                "Swing Lab origin does not point to Antzaz/Antzaz-swing-trading-lab. "
+                "Refusing to pull untrusted code."
+            )
+        active = subprocess.run(
+            ["git", "branch", "--show-current"], cwd=str(SWING_ROOT),
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if active.returncode != 0 or active.stdout.strip() != "main":
+            raise RuntimeError("Swing Lab is not on main. Switch branches manually before updating.")
+
+    def _sync_swing_code(self, allow_clone: bool = True) -> bool:
+        if not SWING_ROOT.exists():
+            if not allow_clone:
+                self.emit("Swing Lab not installed. Skipping optional code update.")
+                return False
+            self.emit("Cloning the independent private Swing Trading Lab repository…")
+            try:
+                self._run(swing_clone_command(SWING_ROOT), cwd=SWING_ROOT.parent)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Could not clone {SWING_REPOSITORY}. Publish the new private repo "
+                    "with publish_to_github.ps1 and authenticate Git on this computer."
+                ) from exc
+        else:
+            self._verify_swing_checkout()
+            old_pyproject = (SWING_ROOT / "pyproject.toml").read_bytes()
+            self._run(swing_pull_command(), cwd=SWING_ROOT)
+        if not swing_git_checkout_present(SWING_ROOT):
+            raise RuntimeError("The Swing Lab checkout is incomplete.")
+        python = swing_python(SWING_ROOT)
+        changed_deps = "old_pyproject" not in locals() or old_pyproject != (SWING_ROOT / "pyproject.toml").read_bytes()
+        if not python.is_file():
+            self.emit("Installing the isolated Swing Lab Python environment…")
+            self._run(["cmd.exe", "/c", str(SWING_ROOT / "setup_windows.bat")], cwd=SWING_ROOT)
+        elif changed_deps:
+            self.emit("Swing Lab dependencies changed; updating isolated environment…")
+            self._run([str(python), "-m", "pip", "install", "-e", ".[dashboard,dev]"], cwd=SWING_ROOT)
+        self.emit(f"Swing Lab ready at {SWING_ROOT}. The local Yahoo cache was not overwritten.")
+        return True
+
+    def install_swing(self):
+        self.run_task("Installing or updating Swing Trading Lab", self._sync_swing_code)
+
+    def refresh_swing(self):
+        self.run_task("Refreshing Swing Trading research", self._refresh_swing_data)
+
+    def _refresh_swing_data(self):
+        if not SWING_ROOT.exists():
+            raise RuntimeError(
+                "Swing Lab not installed. Publish the independent private repository and "
+                "click Install / Update Swing Lab first."
+            )
+        self._verify_swing_checkout()
+        if not swing_python(SWING_ROOT).is_file():
+            raise RuntimeError("Swing Lab Python environment missing. Click Install / Update Swing Lab.")
+        self.emit("Downloading only genuine Yahoo Finance history and updating the research scan…")
+        for cmd in swing_refresh_commands(SWING_ROOT):
+            self._run(cmd, cwd=SWING_ROOT)
+        self.emit("Swing Yahoo market-history refresh and local scan finished.")
+
+    def open_swing(self):
+        self.run_task("Opening Swing Trading Lab", self._swing_task)
+
+    def _swing_task(self):
+        if not SWING_ROOT.exists() or not (SWING_ROOT / "dashboard.py").is_file():
+            raise RuntimeError(
+                "Swing Lab is not installed. Use Install / Update Swing Lab after "
+                "publishing the private repository."
+            )
+        python = swing_python(SWING_ROOT)
+        if not python.is_file():
+            raise RuntimeError(
+                "Swing Lab Python environment missing; click Install / Update Swing Lab first."
+            )
+        if server_running(port=SWING_DASHBOARD_PORT):
+            self.emit(f"Swing dashboard already listening at {SWING_DASHBOARD_URL}.")
+            open_dashboard_once(SWING_DASHBOARD_URL)
+            return
+        self.emit("Starting the local Swing Trading dashboard from saved market data…")
+        log_dir = SWING_ROOT / "cache"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / "hub_dashboard_startup.log"
+        with log_path.open("ab") as log:
+            proc = subprocess.Popen(
+                swing_dashboard_command(SWING_ROOT), cwd=str(SWING_ROOT),
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                stdout=log, stderr=subprocess.STDOUT,
+            )
+        for _ in range(80):
+            if proc.poll() is not None:
+                raise RuntimeError(
+                    f"Swing dashboard exited with {proc.returncode}. See {log_path}"
+                )
+            if server_running(port=SWING_DASHBOARD_PORT):
+                open_dashboard_once(SWING_DASHBOARD_URL)
+                self.emit("Swing Trading Lab opened at " + SWING_DASHBOARD_URL)
+                return
+            time.sleep(0.25)
+        raise RuntimeError(
+            f"Swing dashboard did not become reachable on port {SWING_DASHBOARD_PORT}. "
+            f"Check the log: {log_path}"
+        )
 
     def _get_ticker(self) -> str:
         return normalize_ticker(self.ticker.get())
