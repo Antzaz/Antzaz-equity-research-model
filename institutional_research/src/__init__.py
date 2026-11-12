@@ -9,5 +9,5 @@ try:
     from .continual_patch import install as _install_continual_portfolio_governance
     _install_continual_portfolio_governance()
 except ModuleNotFoundError as exc:
-    if exc.name not in {"scipy", "sklearn"}:
+    if exc.name not in {"numpy", "pandas", "scipy", "sklearn"}:
         raise
