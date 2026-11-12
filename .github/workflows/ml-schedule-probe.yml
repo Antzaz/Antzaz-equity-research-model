@@ -1,0 +1,24 @@
+name: ML scheduler readiness probe
+
+on:
+  schedule:
+    # Minimal independent probe separates GitHub scheduler failures from ML code failures.
+    - cron: '29 5 * * *'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/ml-schedule-probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  scheduler-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Confirm Actions runner can start
+        run: |
+          echo "GitHub runner started; ML startup failures need workflow-specific diagnosis."
+          echo "Runner probe passed at $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_STEP_SUMMARY"
