@@ -8,6 +8,7 @@ on:
     paths:
       - '.github/workflows/continuous-research-integration.yml'
       - '.github/workflows/daily-ml-learning.yml'
+      - '.github/workflows/macro-context-sync.yml'
       - 'automation/ml_learning_state.py'
       - 'automation/sync_macro_context.py'
       - 'institutional_research/src/macro_bridge.py'
