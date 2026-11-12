@@ -11,6 +11,7 @@ on:
       - 'automation/ml_learning_state.py'
       - 'automation/sync_macro_context.py'
       - 'institutional_research/src/macro_bridge.py'
+      - 'institutional_research/src/__init__.py'
       - 'institutional_research/run_research.py'
       - 'research.py'
       - 'tests/test_macro_bridge_contract.py'
