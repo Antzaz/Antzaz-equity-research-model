@@ -1,0 +1,27 @@
+name: Validate scheduled workflow definitions
+
+on:
+  push:
+    branches:
+      - 'integration/continuous-ml-macro-20261112'
+      - main
+    paths:
+      - '.github/workflows/**'
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate scheduled ML and portfolio workflow syntax
+        uses: docker://rhysd/actionlint:1.7.12
+        with:
+          args: .github/workflows/daily-ml-learning.yml .github/workflows/daily-portfolio-analytics.yml .github/workflows/daily-portfolio-refresh.yml .github/workflows/recruiter-portfolio-refresh.yml .github/workflows/research-agent-monitor.yml
