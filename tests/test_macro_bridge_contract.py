@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from institutional_research.src.macro_bridge import validate_macro_context, load_macro_context
+from institutional_research.src.macro_bridge import validate_macro_context, load_macro_context, select_macro_context
 
 
 GOOD = {
@@ -32,3 +32,12 @@ def test_missing_or_stale_context_remains_unavailable(tmp_path):
     path = tmp_path / "macro.json"
     path.write_text(json.dumps(GOOD), encoding="utf-8")
     assert load_macro_context(path, today=date(2027, 4, 1))["status"] == "UNAVAILABLE"
+
+
+def test_prefers_newer_valid_context(tmp_path):
+    old = {**GOOD, "as_of": "2026-09-30"}
+    a = tmp_path / "offline.json"
+    b = tmp_path / "published.json"
+    a.write_text(json.dumps(old), encoding="utf-8")
+    b.write_text(json.dumps(GOOD), encoding="utf-8")
+    assert select_macro_context([a, b], today=date(2026, 11, 12))["as_of"] == "2026-10-31"
