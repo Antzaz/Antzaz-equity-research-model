@@ -45,7 +45,7 @@ from agent_research import (
 from chart_excel_compat import apply_chart_compatibility_fix
 from chart_readability_v2 import apply_chart_readability
 from workbook_enhancements import apply_workbook_enhancements
-from institutional_research.src.macro_bridge import load_macro_context
+from institutional_research.src.macro_bridge import select_macro_context
 
 BASE = Path(__file__).resolve().parent
 UPDATED_MODELS = BASE / "updated_models"
@@ -261,7 +261,7 @@ def main() -> int:
             if args.strict:
                 return 3
 
-    macro_context = load_macro_context(BASE / "institutional_research" / ".offline_cache" / "macro_context.json")
+    macro_context = select_macro_context([BASE / "institutional_research" / ".offline_cache" / "macro_context.json", BASE / "research_data" / "macro_context.json"])
     manifest = {
         "macro_context": macro_context,
         "ticker": ticker,
