@@ -20,6 +20,7 @@ on:
       - 'machine_learning/__init__.py'
       - 'ml_history.py'
       - 'automation/check_ml_health.py'
+      - 'tests/test_ml_learning_state.py'
 
 permissions:
   contents: read
@@ -88,6 +89,11 @@ jobs:
             --input "$RUNNER_TEMP/restore/ml-learning-state.zip" \
             --destination .
           python ml_history.py status
+
+      - name: Validate state transport and learning source syntax
+        run: |
+          python -m py_compile automation/ml_learning_state.py machine_learning/learning_runner.py
+          python -m pytest -q tests/test_ml_learning_state.py
 
       - name: Refresh market history and evaluate matured forecasts
         env:
@@ -163,49 +169,12 @@ jobs:
           python -m machine_learning.learning_runner || true
           echo "Governed retraining: $count holding(s), $failures research/ML failure(s)."
 
-      - name: Publish recruiter-safe ML results
-        if: ${{ github.event_name != 'schedule' || github.event.schedule == '17 6 * * *' }}
-        env:
-          PORTFOLIO_CSV_B64: ${{ secrets.PORTFOLIO_CSV_B64 }}
-          PORTFOLIO_THESIS_JSON: ${{ secrets.PORTFOLIO_THESIS_JSON }}
-          SHOWCASE_REPO_TOKEN: ${{ secrets.SHOWCASE_REPO_TOKEN }}
-          SHOWCASE_REPOSITORY: ${{ vars.SHOWCASE_REPOSITORY }}
-        run: |
-          set -euo pipefail
-          if [ -z "${PORTFOLIO_CSV_B64:-}" ] || [ -z "${SHOWCASE_REPO_TOKEN:-}" ]; then
-            echo "::warning::Portfolio or showcase secret missing; skipping public ML result publication."
-          else
-            python - <<'PY'
-          import base64, json, os
-          from pathlib import Path
-          p=Path('institutional_research/portfolio.csv')
-          p.parent.mkdir(parents=True,exist_ok=True)
-          p.write_bytes(base64.b64decode(os.environ['PORTFOLIO_CSV_B64']))
-          raw=os.environ.get('PORTFOLIO_THESIS_JSON','').strip()
-          Path('institutional_research/portfolio_thesis_public.json').write_text(
-              json.dumps(json.loads(raw) if raw else {"portfolio_philosophy":{},"company_theses":[]}),
-              encoding='utf-8'
-          )
-          PY
-            python institutional_research/run_research.py
-            python automation/build_showcase_snapshot.py
-            repo="${SHOWCASE_REPOSITORY:-Antzaz/Antzaz-investment-research-showcase}"
-            dest="$RUNNER_TEMP/ml-showcase-repo"
-            git clone "https://x-access-token:${SHOWCASE_REPO_TOKEN}@github.com/${repo}.git" "$dest"
-            cp showcase/data/portfolio_snapshot.json "$dest/data/portfolio_snapshot.json"
-            cd "$dest"
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add data/portfolio_snapshot.json
-            if ! git diff --cached --quiet; then
-              git commit -m "Refresh public ML results"
-              git push origin HEAD:main
-            fi
-          fi
-
+      # Never publish the private portfolio's stock universe into the curated
+      # public 15-name AMD showcase. Macro context has its own strict publisher.
       - name: Verify completed ML maintenance before persistence
         run: |
           python automation/check_ml_health.py --max-age-days 7 --min-coverage 0.60 | tee -a "$GITHUB_STEP_SUMMARY"
+          python automation/ml_learning_state.py verify --source ml_data
           python -m py_compile automation/check_ml_health.py ml_history.py machine_learning/learning_runner.py
 
       - name: Encrypt updated learning state
@@ -222,5 +191,5 @@ jobs:
           name: ml-learning-state
           path: ${{ runner.temp }}/ml-learning-state.zip
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 21
           compression-level: 0
