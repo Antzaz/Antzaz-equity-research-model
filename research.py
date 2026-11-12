@@ -45,6 +45,7 @@ from agent_research import (
 from chart_excel_compat import apply_chart_compatibility_fix
 from chart_readability_v2 import apply_chart_readability
 from workbook_enhancements import apply_workbook_enhancements
+from institutional_research.src.macro_bridge import load_macro_context
 
 BASE = Path(__file__).resolve().parent
 UPDATED_MODELS = BASE / "updated_models"
@@ -260,7 +261,9 @@ def main() -> int:
             if args.strict:
                 return 3
 
+    macro_context = load_macro_context(BASE / "institutional_research" / ".offline_cache" / "macro_context.json")
     manifest = {
+        "macro_context": macro_context,
         "ticker": ticker,
         "workbook": str(workbook),
         "ai_model": ctx.ai_model,
@@ -275,6 +278,12 @@ def main() -> int:
     }
     (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False, default=str) + "\n", encoding="utf-8")
     report = render_report(ticker, workbook, results, ctx.ai_model, bool(args.ml))
+    report += ("\n## Global macro research context\n\n"
+               + (f"Latest completed-month regime: {macro_context['regime']} "
+                  f"(as of {macro_context['as_of']}). Context only; no valuation "
+                  f"assumptions or ML training targets changed.\n"
+                  if macro_context.get("status") == "PASS"
+                  else "Unavailable or stale; the equity research model does not infer a regime.\n"))
     report_path = run_dir / "agent_report.md"
     report_path.write_text(report, encoding="utf-8")
 
