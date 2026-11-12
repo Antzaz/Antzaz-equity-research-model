@@ -5,13 +5,13 @@ import json
 
 import streamlit as st
 
-from src.macro_bridge import load_macro_context
+from src.macro_bridge import select_macro_context
 
 st.title("Global Macro Research Context")
 st.caption("Connected macroeconomic context; never a stand-alone buy/sell signal.")
 
 base = Path(__file__).resolve().parents[1]
-payload = load_macro_context(base / ".offline_cache" / "macro_context.json")
+payload = select_macro_context([base / ".offline_cache" / "macro_context.json", base.parent / "research_data" / "macro_context.json"])
 
 if payload.get("status") != "PASS":
     st.info(
