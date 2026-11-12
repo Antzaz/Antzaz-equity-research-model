@@ -8,8 +8,12 @@ Never call from the offline desktop launcher. Never fetch from private GitHub re
 import argparse
 import json
 from pathlib import Path
+import sys
 from urllib.request import Request, urlopen
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 from institutional_research.src.macro_bridge import validate_macro_context
 
 SOURCE_URL = (
