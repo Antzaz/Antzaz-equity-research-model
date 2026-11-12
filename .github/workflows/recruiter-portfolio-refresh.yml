@@ -84,28 +84,11 @@ jobs:
           python automation/build_showcase_snapshot.py
           python automation/validate_showcase.py
 
-      - name: Publish recruiter snapshot
-        env:
-          SHOWCASE_REPO_TOKEN: ${{ secrets.SHOWCASE_REPO_TOKEN }}
-          SHOWCASE_REPOSITORY: ${{ vars.SHOWCASE_REPOSITORY }}
-        run: |
-          if [ -z "$SHOWCASE_REPO_TOKEN" ]; then
-            echo "Missing SHOWCASE_REPO_TOKEN; cannot publish recruiter snapshot."
-            exit 1
-          fi
-          repo="${SHOWCASE_REPOSITORY:-Antzaz/Antzaz-investment-research-showcase}"
-          dest="$RUNNER_TEMP/showcase-repo"
-          git clone "https://x-access-token:${SHOWCASE_REPO_TOKEN}@github.com/${repo}.git" "$dest"
-          mkdir -p "$dest/data"
-          cp showcase/data/portfolio_snapshot.json "$dest/data/portfolio_snapshot.json"
-          cd "$dest"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/portfolio_snapshot.json
-          if git diff --cached --quiet; then
-            echo "Recruiter snapshot already current."
-          else
-            git commit -m "Refresh recruiter portfolio snapshot"
-            git push origin HEAD:main
-            echo "Recruiter portfolio snapshot published."
-          fi
+      # The public showcase intentionally excludes NVIDIA although the private
+      # portfolio still holds it. Publishing private-universe aggregates or
+      # fundamentals would silently restore a removed stock and invalid metrics.
+      # The public repository's validated market refresh now owns all public
+      # holdings, weights, fundamentals, performance and risk datasets.
+      - name: Preserve curated public portfolio boundary
+        run: echo "Public-only 14-holding refresh owns published market datasets; private holdings stay unchanged."
+
