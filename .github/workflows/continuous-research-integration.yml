@@ -1,0 +1,38 @@
+name: Continuous research integration verification
+
+on:
+  push:
+    branches:
+      - 'integration/continuous-ml-macro-20261112'
+      - main
+    paths:
+      - '.github/workflows/continuous-research-integration.yml'
+      - '.github/workflows/daily-ml-learning.yml'
+      - 'automation/ml_learning_state.py'
+      - 'automation/sync_macro_context.py'
+      - 'institutional_research/src/macro_bridge.py'
+      - 'institutional_research/run_research.py'
+      - 'research.py'
+      - 'tests/test_macro_bridge_contract.py'
+      - 'tests/test_ml_learning_state.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install light CI dependencies
+        run: python -m pip install pyzipper pytest
+      - name: Check Python imports and syntax
+        run: |
+          python -m py_compile automation/ml_learning_state.py automation/sync_macro_context.py institutional_research/src/macro_bridge.py institutional_research/run_research.py research.py
+      - name: Validate encrypted ML state and public macro boundary
+        run: python -m pytest -q tests/test_ml_learning_state.py tests/test_macro_bridge_contract.py
