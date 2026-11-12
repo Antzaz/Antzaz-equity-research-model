@@ -1,0 +1,52 @@
+name: Sync public macro context to equity research
+
+on:
+  schedule:
+    # Run after the private Macro Lab's scheduled 07:17 UTC publication.
+    - cron: '11 9 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/macro-context-sync.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: macro-context-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Import validated public-only macro research
+        id: import
+        run: |
+          if python automation/sync_macro_context.py --output research_data/macro_context.json; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::No fresh published Macro Lab context; no inferred data will be committed."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Commit allowlisted macro context, never private holdings
+        if: steps.import.outputs.ready == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add research_data/macro_context.json
+          if git diff --cached --quiet; then
+            echo "Macro context unchanged."
+          else
+            git commit -m "Sync validated completed-month macro research context"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
