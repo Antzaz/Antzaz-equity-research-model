@@ -8,11 +8,21 @@ The repositories are connected without sharing private holdings:
 2. **Public investment showcase** — displays a dated, observational macro card.
    This JSON is independent of, and must never modify, the curated 15-holding
    AMD portfolio or its analytics.
-3. **Main equity / institutional portfolio research** — explicitly downloads
-   that exact sanitized public JSON into the *gitignored* local
+3. **Main equity / institutional portfolio research** — the lightweight
+   `.github/workflows/macro-context-sync.yml` job automatically imports the
+   validated public JSON into `research_data/macro_context.json`, and optional
+   local manual sync keeps a gitignored
    `institutional_research/.offline_cache/macro_context.json` cache.
 
-Online synchronization (not part of offline startup):
+Automatic synchronization is scheduled at **09:11 UTC daily**, after the
+private Macro Lab publishes at 07:17 UTC. Missing, invalid, or stale public
+context causes a warning and **no commit**; no fake regime is substituted.
+When the publisher first works, an actual dated 11-field context file is
+committed, and both the company research and portfolio layers prefer the
+newest valid local/published snapshot. This scheduled import never reads
+private GitHub files or position economics.
+
+Manual online synchronization (not part of offline startup):
 
 ```powershell
 python automation/sync_macro_context.py
@@ -34,5 +44,6 @@ feature, because retroactive regime labels must not leak into historical models.
 
 Live three-repository updates require the private Macro Lab's
 `FRED_API_KEY` and limited `SHOWCASE_REPO_TOKEN` secrets, a passing macro
-publisher run, and successful sync on the equity research machine or hosted
-workflow. No tokens or private data are stored in the JSON.
+publisher run, and a passing main-repository scheduled macro sync. Neither
+the separate main-repository private portfolio refresh nor its
+private-universe public publisher is required for this read-only context. No tokens or private data are stored in the JSON.
