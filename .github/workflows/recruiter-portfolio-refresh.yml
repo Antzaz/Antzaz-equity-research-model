@@ -76,6 +76,10 @@ jobs:
           print(f'Expected-return values restored: {expected}')
           PY
 
+      - name: Sync validated read-only Global Macro Lab context
+        run: |
+          python automation/sync_macro_context.py || echo "::warning::Macro research context is unavailable; continuing without inferred regime."
+
       - name: Refresh portfolio analytics
         run: python institutional_research/run_research.py
 
